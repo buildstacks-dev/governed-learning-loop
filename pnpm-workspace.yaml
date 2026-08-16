@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - examples/*
+# Validation commands must never mutate a linked dependency directory.
+verifyDepsBeforeRun: false
+# Supply-chain window, mirroring Cormidia's posture: resolve only versions at
+# least 3 days old so a compromised release is likely yanked before admission.
+# (The host has a wider global window; this repo pins the org standard.)
+minimumReleaseAge: 4320
+# esbuild's postinstall fetches the platform binary vitest/vite need.
+allowBuilds:
+  esbuild: true

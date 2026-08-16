@@ -1,0 +1,3 @@
+# Public API snapshot — one line per exported symbol, `<entrypoint>:<name>`.
+# Changing this file is an explicit public-surface decision; justify it in the PR body.
+root:PROTOCOL_SCHEMA_VERSION

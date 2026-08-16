@@ -29,5 +29,18 @@ export { parseCandidateReview, reviewInvalidReasons } from "./records/review.js"
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";
 export type { ProjectedMeasurement, ProjectedObservation, RegisteredSource } from "./ports/evidence.js";
-export { defineSourceRegistration } from "./ports/evidence.js";
+// The root registration helper is the engine's wrapper: the ports-layer
+// helper computes the same branded registration, but only the wrapper pairs
+// the adapter with it so the engine can stream pages during ingest.
+export { defineSourceRegistration } from "./engine/source-registration.js";
 export type { Clock, IdGenerator } from "./ports/clock.js";
+
+export type { LearningPolicy } from "./engine/policy.js";
+export { conservativePolicy } from "./engine/policy.js";
+export type { GovernanceView } from "./engine/governance.js";
+export type { IngestReceipt } from "./engine/ingest.js";
+export type { CandidateInput, ProposeOutcome } from "./engine/propose.js";
+export type { CandidateReviewer, CandidateReviewInput } from "./engine/review.js";
+export type { LearningReport, LearningReportQuery } from "./engine/report.js";
+export type { LearningLoop, LearningLoopConfig } from "./engine/loop.js";
+export { createLearningLoop } from "./engine/loop.js";

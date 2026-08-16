@@ -9,3 +9,7 @@ export { runLearningStoreConformance } from "./store-conformance.js";
 // the exact scope policy from the /testing entrypoint; the implementation is
 // kernel domain code and also ships from the root.
 export { createExactScopePolicy } from "../records/scope.js";
+export { createTestIdentityPort } from "./test-identity.js";
+export type { ManualEvidenceInput } from "./manual-evidence.js";
+export { createManualEvidenceSource } from "./manual-evidence.js";
+export { createStructuredContentPolicy } from "./structured-content.js";

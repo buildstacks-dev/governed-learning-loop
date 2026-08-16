@@ -23,6 +23,12 @@ importers:
 
   packages/learning-loop: {}
 
+  packages/transcript-sources:
+    dependencies:
+      '@cormidia/learning-loop':
+        specifier: workspace:*
+        version: link:../learning-loop
+
 packages:
 
   '@biomejs/biome@2.5.7':

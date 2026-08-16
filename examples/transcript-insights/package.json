@@ -1,0 +1,18 @@
+{
+  "name": "transcript-insights",
+  "version": "0.0.0",
+  "description": "Demo consumer of @cormidia/learning-loop: ingest local Claude Code and Codex session logs day by day and report recurring friction plus inert candidates",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/cli.ts"
+  },
+  "dependencies": {
+    "@cormidia/learning-loop": "workspace:*",
+    "@cormidia/learning-loop-transcript-sources": "workspace:*"
+  }
+}

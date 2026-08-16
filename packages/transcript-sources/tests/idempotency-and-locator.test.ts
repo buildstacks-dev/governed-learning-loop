@@ -78,13 +78,14 @@ describe("idempotency and keyed locator", () => {
     expect(firstClaude[0]?.sourceRevision).toBe(createHash("sha256").update(readFileSync(claudePath)).digest("hex"));
     expect(firstCodex[0]?.sourceRevision).toBe(createHash("sha256").update(readFileSync(codexPath)).digest("hex"));
 
-    // sourceRecordIds are stable and line-addressed.
+    // sourceRecordIds are stable, line-addressed, and unique: same-line
+    // projections carry a deterministic occurrence suffix.
     const ids = firstClaude[0]?.observations.map((observation) => observation.sourceRecordId);
     expect(ids).toEqual([
-      `claude-code/${SESSION_ID}/1`,
-      `claude-code/${SESSION_ID}/1`,
-      `claude-code/${SESSION_ID}/2`,
-      `claude-code/${SESSION_ID}/2`,
+      `claude-code/${SESSION_ID}/1#0`,
+      `claude-code/${SESSION_ID}/1#1`,
+      `claude-code/${SESSION_ID}/2#0`,
+      `claude-code/${SESSION_ID}/2#1`,
     ]);
   });
 

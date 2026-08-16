@@ -18,7 +18,7 @@ import { addBandFailure, addObservation, hasCorrectionSignal, truncateType, vali
 import type { FileRef, ParsedLine } from "./session-file.js";
 
 /** Accepted version band: Codex CLI 0.x rollout JSONL (observed structure). */
-export const CODEX_ADAPTER_VERSION = "0.1.0-experimental+codex-rollout-0.x";
+export const CODEX_ADAPTER_VERSION = "0.1.1-experimental+codex-rollout-0.x";
 
 const PROVIDER = "codex";
 

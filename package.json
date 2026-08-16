@@ -1,0 +1,22 @@
+{
+  "name": "governed-learning-loop-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "check": "biome ci . && pnpm typecheck && node scripts/check-casts.mjs && node scripts/check-exports.mjs",
+    "typecheck": "tsc --noEmit -p packages/learning-loop",
+    "test": "vitest run",
+    "build": "tsc -p packages/learning-loop/tsconfig.build.json",
+    "lint": "biome ci ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.7",
+    "@types/node": "^22.0.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.6"
+  }
+}

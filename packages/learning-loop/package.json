@@ -1,0 +1,17 @@
+{
+  "name": "@cormidia/learning-loop",
+  "version": "0.0.0",
+  "description": "Governed adaptation kernel: evidence, inert candidates, independent review, exact activation, measured outcomes",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node/index.ts",
+    "./testing": "./src/testing/index.ts"
+  }
+}

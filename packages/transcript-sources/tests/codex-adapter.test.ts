@@ -208,7 +208,7 @@ describe("codex transcript source", () => {
 
     for (const observation of page.observations) {
       expect(observation.episodeId).toBe(`codex/${SESSION_ID}`);
-      expect(observation.sourceRecordId).toMatch(new RegExp(`^codex/${SESSION_ID}/\\d+$`));
+      expect(observation.sourceRecordId).toMatch(new RegExp(`^codex/${SESSION_ID}/\\d+#\\d+$`));
       expect(observation.completeness).toBe("complete");
     }
   });

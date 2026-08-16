@@ -123,7 +123,7 @@ describe("claude-code transcript source", () => {
     const episode = page.episodes[0];
     if (episode === undefined) throw new Error("missing episode");
     expect(episode.episodeId).toBe(`claude-code/${SESSION_ID}`);
-    expect(episode.sourceRecordId).toBe(`claude-code/${SESSION_ID}/0`);
+    expect(episode.sourceRecordId).toBe(`claude-code/${SESSION_ID}/0#0`);
     expect(episode.scope).toEqual([
       { type: "provider", id: "claude-code" },
       { type: "project", id: "sample-project" },
@@ -136,7 +136,7 @@ describe("claude-code transcript source", () => {
     // Session meta: keyed locator, cwd basename only, provider version band.
     const meta = ofKind(page, "transcript.session.meta");
     expect(meta).toHaveLength(1);
-    expect(meta[0]?.sourceRecordId).toBe(`claude-code/${SESSION_ID}/1`);
+    expect(meta[0]?.sourceRecordId).toBe(`claude-code/${SESSION_ID}/1#0`);
     expect(meta[0]?.data).toEqual({
       provider: "claude-code",
       adapterVersion: CLAUDE_CODE_ADAPTER_VERSION,
@@ -181,7 +181,7 @@ describe("claude-code transcript source", () => {
     // sourceRecordIds are <provider>/<sessionId>/<line>; completeness complete.
     for (const observation of page.observations) {
       expect(observation.episodeId).toBe(`claude-code/${SESSION_ID}`);
-      expect(observation.sourceRecordId).toMatch(new RegExp(`^claude-code/${SESSION_ID}/\\d+$`));
+      expect(observation.sourceRecordId).toMatch(new RegExp(`^claude-code/${SESSION_ID}/\\d+#\\d+$`));
       expect(observation.completeness).toBe("complete");
     }
     expect(kindsOf(page)).toHaveLength(1 + 4 + 3 + 2 + 1);

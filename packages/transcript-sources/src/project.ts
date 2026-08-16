@@ -156,7 +156,19 @@ export function assemblePage(input: {
     );
   }
   const episodeId = `${draft.provider}/${nativeSessionId}`;
-  const recordId = (line: number): string => `${draft.provider}/${nativeSessionId}/${line}`;
+  // One source line can yield several projections (e.g. a Claude Code
+  // assistant record projects both a message and a usage observation), so a
+  // bare line number is not a unique sourceRecordId — colliding ids made the
+  // engine drop every later same-line observation as a store conflict. Each
+  // line therefore carries a deterministic occurrence suffix: emission order
+  // is fixed (session.meta first, then draft order), so ids are stable across
+  // re-reads of the same source revision.
+  const lineOccurrences = new Map<number, number>();
+  const recordId = (line: number): string => {
+    const occurrence = lineOccurrences.get(line) ?? 0;
+    lineOccurrences.set(line, occurrence + 1);
+    return `${draft.provider}/${nativeSessionId}/${line}#${occurrence}`;
+  };
 
   let openedAt = draft.timestamps[0] ?? "";
   let closedAt = openedAt;

@@ -94,15 +94,13 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
   ]);
   expect(first.code).toBe(0);
   expect(first.text).toContain("files considered: 2");
-  // 15 observations are projected, but 11 survive: the upstream claude-code
-  // adapter reuses one sourceRecordId per LINE, so a line yielding two
-  // projections (assistant message+usage; session meta vs the line-1
-  // observation) collides in the engine's derived ids and the later record is
-  // dropped as store.conflict. Reported as adapter feedback in the demo PR;
-  // this assertion breaks loudly when upstream fixes it.
-  expect(first.text).toContain("observations: 11 new");
+  // All 16 projected observations survive: sourceRecordIds carry a per-line
+  // occurrence suffix, so same-line projections (assistant message+usage;
+  // session meta vs the line-1 observation) no longer collide in the
+  // engine's derived ids.
+  expect(first.text).toContain("observations: 16 new");
   expect(first.text).toContain("episodes: 2 new");
-  expect(first.text).toContain("store.conflict: 5");
+  expect(first.text).not.toContain("store.conflict");
 
   // Idempotent re-ingest: zero net-new, everything already known.
   const again = await cli([
@@ -119,7 +117,7 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
   expect(again.code).toBe(0);
   expect(again.text).toContain("observations: 0 new");
   expect(again.text).toContain("episodes: 0 new");
-  expect(again.text).toContain("already-known records (idempotent re-ingest): 13");
+  expect(again.text).toContain("already-known records (idempotent re-ingest): 18");
 
   // Codex ingest: no id collisions, no diagnostics.
   const codex = await cli([

@@ -51,8 +51,10 @@ describe("drift and ceilings", () => {
     // Records after the corrupt line keep their physical line numbers.
     const messages = ofKind(page, "transcript.message");
     expect(messages.map((observation) => observation.sourceRecordId)).toEqual([
-      `claude-code/${SESSION_ID}/1`,
-      `claude-code/${SESSION_ID}/3`,
+      // line 1 anchors the session.meta observation first (#0); the
+      // message projected from the same line takes the next occurrence.
+      `claude-code/${SESSION_ID}/1#1`,
+      `claude-code/${SESSION_ID}/3#0`,
     ]);
     for (const observation of page.observations) expect(observation.completeness).toBe("partial");
     expect(page.episodes).toHaveLength(1);

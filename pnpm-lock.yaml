@@ -21,6 +21,15 @@ importers:
         specifier: 3.2.6
         version: 3.2.6(@types/node@22.20.1)
 
+  examples/transcript-insights:
+    dependencies:
+      '@cormidia/learning-loop':
+        specifier: workspace:*
+        version: link:../../packages/learning-loop
+      '@cormidia/learning-loop-transcript-sources':
+        specifier: workspace:*
+        version: link:../../packages/transcript-sources
+
   packages/learning-loop: {}
 
   packages/transcript-sources:

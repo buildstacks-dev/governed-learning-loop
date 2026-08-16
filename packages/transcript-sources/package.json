@@ -1,0 +1,18 @@
+{
+  "name": "@cormidia/learning-loop-transcript-sources",
+  "version": "0.0.0",
+  "description": "Transcript source adapters for the governed learning loop (Claude Code, Codex): explicit input, advisory trust, redaction before persistence",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cormidia/learning-loop": "workspace:*"
+  }
+}

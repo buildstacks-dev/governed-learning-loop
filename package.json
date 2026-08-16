@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check": "biome ci . && pnpm typecheck && node scripts/check-casts.mjs && node scripts/check-exports.mjs",
-    "typecheck": "tsc --noEmit -p packages/learning-loop",
+    "typecheck": "tsc --noEmit -p packages/learning-loop && tsc --noEmit -p packages/transcript-sources",
     "test": "vitest run",
     "build": "tsc -p packages/learning-loop/tsconfig.build.json",
     "lint": "biome ci ."

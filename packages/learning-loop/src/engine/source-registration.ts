@@ -5,14 +5,9 @@
 // grant via the ports helper and retains the adapter in a module-private
 // WeakMap the engine reads. Nothing outside the engine can enumerate or
 // replace an adapter through this table.
-//
-// The ports implementation is reached through a namespace obtained with a
-// top-level dynamic import: the cast gate bans rename-import syntax outright,
-// and this keeps exactly one registry-revision digest implementation.
+import { defineSourceRegistration as bindPortsRegistration } from "../ports/evidence.js";
 import type { EvidenceSource, RegisteredSource } from "../ports/evidence.js";
 import type { TrustClass } from "../records/provenance.js";
-
-const ports = await import("../ports/evidence.js");
 
 const adapters = new WeakMap<RegisteredSource<unknown>, EvidenceSource<unknown>>();
 
@@ -28,7 +23,7 @@ export function defineSourceRegistration<I>(input: {
   readonly trustCeiling: TrustClass;
   readonly contentPolicyId: string;
 }): RegisteredSource<I> {
-  const registered = ports.defineSourceRegistration(input);
+  const registered = bindPortsRegistration(input);
   adapters.set(registered, input.source);
   return registered;
 }

@@ -69,6 +69,8 @@ root:LearningReportQuery
 root:LearningLoop
 root:LearningLoopConfig
 root:createLearningLoop
+node:FileStoreOptions
+node:createFileStore
 testing:createInMemoryStore
 testing:FixedClock
 testing:createFixedClock

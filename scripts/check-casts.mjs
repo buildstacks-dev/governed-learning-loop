@@ -1,6 +1,8 @@
 // Gate: no `as` casts in library or example source. `as const` is the only
 // sanctioned form; `unknown` plus a runtime validator is the exit for trust
 // boundaries. Tests are exempt (malformed inputs there are plain `unknown`).
+// Import/export rename syntax (`import { x as y }`) and comments are not
+// casts and are not flagged.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,14 +28,20 @@ function walk(dir) {
 }
 
 const castPattern = /\bas\s+(?!const\b)[A-Za-z_$[{(]/;
+// Lines that are (part of) import/export statements: rename syntax there is
+// module syntax, not a cast. Covers single-line forms and the members of
+// multi-line import/export braces.
+const moduleSyntaxLine =
+  /^\s*(?:import\b|export\s*(?:type\s*)?\{|\}?\s*from\s+["']|(?:type\s+)?[\w$]+\s+as\s+[\w$]+,?\s*$)/;
 
 function scan(path) {
-  const lines = readFileSync(path, "utf8").split("\n");
+  const source = readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "));
+  const lines = source.split("\n");
   lines.forEach((line, index) => {
     const code = line.replace(/\/\/.*$/, "");
-    if (castPattern.test(code)) {
-      violations.push(`${path}:${index + 1}: ${line.trim()}`);
-    }
+    if (!castPattern.test(code)) return;
+    if (moduleSyntaxLine.test(code)) return;
+    violations.push(`${path}:${index + 1}: ${line.trim()}`);
   });
 }
 

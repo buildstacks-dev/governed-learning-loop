@@ -56,6 +56,19 @@ root:RegisteredSource
 root:defineSourceRegistration
 root:Clock
 root:IdGenerator
+root:LearningPolicy
+root:conservativePolicy
+root:GovernanceView
+root:IngestReceipt
+root:CandidateInput
+root:ProposeOutcome
+root:CandidateReviewer
+root:CandidateReviewInput
+root:LearningReport
+root:LearningReportQuery
+root:LearningLoop
+root:LearningLoopConfig
+root:createLearningLoop
 testing:createInMemoryStore
 testing:FixedClock
 testing:createFixedClock
@@ -63,3 +76,7 @@ testing:createSequentialIds
 testing:LearningStoreFactory
 testing:runLearningStoreConformance
 testing:createExactScopePolicy
+testing:createTestIdentityPort
+testing:ManualEvidenceInput
+testing:createManualEvidenceSource
+testing:createStructuredContentPolicy

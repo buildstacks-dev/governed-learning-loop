@@ -2,12 +2,13 @@
 // the suite, not this file, is the contract. Plus the reference-store extras
 // (operation replay, duplicate entry ids, query validation, aliasing safety)
 // and cursor stability exercised through the real filesystem.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { LearningLoopError } from "../src/diagnostics.js";
 import { createFileStore } from "../src/node/index.js";
+import { recordFile } from "../src/node/paths.js";
 import type { RecordKey } from "../src/ports/store.js";
 import { runLearningStoreConformance } from "../src/testing/store-conformance.js";
 
@@ -95,6 +96,32 @@ describe("createFileStore extras (mirror of the in-memory reference)", () => {
 });
 
 describe("createFileStore cursor stability through the filesystem", () => {
+  it("advancing a cursor does not reopen records from earlier pages", async () => {
+    const root = freshRoot();
+    const store = createFileStore({ rootDir: root });
+    const key = (id: string): RecordKey => ({ namespace: "ns-a", kind: "observation", id });
+    for (let index = 0; index < 5; index += 1) {
+      await store.create(key(`r-${index}`), { index }, `digest-${index}`, `op-${index}`);
+    }
+
+    const first = await store.list({ namespace: "ns-a", kind: "observation", limit: 2 });
+    expect(first.records.map((record) => record.key.id)).toEqual(["r-0", "r-1"]);
+    expect(first.nextCursor).toBeDefined();
+    if (first.nextCursor === undefined) return;
+
+    // A seekable page must not touch an entry that is already behind its
+    // cursor. `get` still exposes the corruption explicitly.
+    truncateSync(recordFile(root, key("r-0")), 0);
+    const second = await store.list({
+      namespace: "ns-a",
+      kind: "observation",
+      cursor: first.nextCursor,
+      limit: 2,
+    });
+    expect(second.records.map((record) => record.key.id)).toEqual(["r-2", "r-3"]);
+    await expect(store.get(key("r-0"))).rejects.toMatchObject({ code: "store.corrupt" });
+  });
+
   it("never skips or duplicates while records are created between pages", async () => {
     const store = createFileStore({ rootDir: freshRoot() });
     const key = (id: string): RecordKey => ({ namespace: "ns-a", kind: "observation", id });

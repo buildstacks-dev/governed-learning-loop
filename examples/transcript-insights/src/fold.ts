@@ -17,19 +17,56 @@ import { jsonBoolean, jsonNumber, jsonObject, jsonString } from "./json.js";
 
 export const LEARNING_NAMESPACE = "learning";
 
-export async function listLearningRecords(store: LearningStore, kind: string): Promise<readonly StoredRecord[]> {
+export interface FoldListProgress {
+  readonly kind: "episodes" | "observations";
+  readonly records: number;
+  readonly pages: number;
+  readonly heartbeat: boolean;
+  readonly elapsedSeconds: number;
+}
+
+export type FoldProgress = (progress: FoldListProgress) => void;
+
+export async function listLearningRecords(
+  store: LearningStore,
+  kind: "episode" | "observation",
+  progress?: FoldProgress,
+): Promise<readonly StoredRecord[]> {
   const records: StoredRecord[] = [];
   let cursor: string | undefined;
-  for (;;) {
-    const page = await store.list({
-      namespace: LEARNING_NAMESPACE,
-      kind,
-      ...(cursor !== undefined ? { cursor } : {}),
-      limit: 200,
-    });
-    records.push(...page.records);
-    if (page.nextCursor === undefined) return records;
-    cursor = page.nextCursor;
+  let pages = 0;
+  const label = kind === "episode" ? "episodes" : "observations";
+  const startedAt = Date.now();
+  const elapsedSeconds = (): number => Math.max(0, Math.floor((Date.now() - startedAt) / 1_000));
+  const heartbeat = setInterval(() => {
+    progress?.({ kind: label, records: records.length, pages, heartbeat: true, elapsedSeconds: elapsedSeconds() });
+  }, 5_000);
+  heartbeat.unref();
+  try {
+    for (;;) {
+      const page = await store.list({
+        namespace: LEARNING_NAMESPACE,
+        kind,
+        ...(cursor !== undefined ? { cursor } : {}),
+        limit: 200,
+      });
+      pages += 1;
+      records.push(...page.records);
+      const done = page.nextCursor === undefined;
+      if (pages === 1 || pages % 25 === 0 || done) {
+        progress?.({
+          kind: label,
+          records: records.length,
+          pages,
+          heartbeat: false,
+          elapsedSeconds: elapsedSeconds(),
+        });
+      }
+      if (done) return records;
+      cursor = page.nextCursor;
+    }
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -129,9 +166,11 @@ function foldObservation(fold: ProjectFold, observation: Observation): void {
   }
 }
 
-export async function foldStore(store: LearningStore): Promise<StoreFold> {
-  const episodeRecords = await listLearningRecords(store, "episode");
-  const observationRecords = await listLearningRecords(store, "observation");
+export async function foldStore(store: LearningStore, progress?: FoldProgress): Promise<StoreFold> {
+  // Observations dominate real backfills, so name that phase immediately
+  // while the file store prepares its insertion catalog.
+  const observationRecords = await listLearningRecords(store, "observation", progress);
+  const episodeRecords = await listLearningRecords(store, "episode", progress);
   let corrupt = 0;
 
   const groups = new Map<string, EpisodeGroup>();

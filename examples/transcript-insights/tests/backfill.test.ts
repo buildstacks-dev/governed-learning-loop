@@ -40,6 +40,8 @@ test("backfill iterates days, survives a failing day, and is resumable", async (
     stateDir,
   ]);
   expect(first.code).toBe(1);
+  expect(first.lines[0]).toBe(`backfill: start state=${stateDir} provider=codex days=2026-08-10..2026-08-12`);
+  expect(first.text).toContain("backfill: day=2026-08-10 provider=codex files=1 start");
   expect(first.lines.some((line) => line.startsWith("2026-08-10") && line.includes("files=1"))).toBe(true);
   expect(first.lines.some((line) => line.startsWith("2026-08-11") && line.includes("FAILED"))).toBe(true);
   expect(first.lines.some((line) => line.startsWith("2026-08-12") && line.includes("files=1"))).toBe(true);

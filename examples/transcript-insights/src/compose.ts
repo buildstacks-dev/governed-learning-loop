@@ -19,7 +19,7 @@ import {
 import { TRANSCRIPT_CONTENT_POLICY_ID, createTranscriptContentPolicy } from "./content-policy.js";
 import type { Provider } from "./discovery.js";
 import { createDemoIdentityPort } from "./identity.js";
-import { ensureLocatorKey, ensureStateDir } from "./state.js";
+import { ensureLocatorKey, ensureStateDir, readLocatorKey } from "./state.js";
 
 export interface DemoLoop {
   readonly learning: LearningLoop;
@@ -30,10 +30,19 @@ export interface DemoLoop {
   readonly locatorKey: string;
 }
 
-export async function composeDemoLoop(stateDirInput: string): Promise<DemoLoop> {
+export interface ComposeDemoLoopOptions {
+  /** Create the state directory and locator key. Ingest paths require this; read paths do not. */
+  readonly initializeState?: boolean;
+}
+
+export async function composeDemoLoop(stateDirInput: string, options: ComposeDemoLoopOptions = {}): Promise<DemoLoop> {
   const stateDir = resolve(stateDirInput);
-  await ensureStateDir(stateDir);
-  const locatorKey = await ensureLocatorKey(stateDir);
+  const initializeState = options.initializeState ?? true;
+  if (initializeState) await ensureStateDir(stateDir);
+  const existingLocatorKey = initializeState ? await ensureLocatorKey(stateDir) : await readLocatorKey(stateDir);
+  // Non-ingest commands never pass the fallback to an adapter. Keeping it in
+  // the composed shape avoids making a read-only report create locator.key.
+  const locatorKey = existingLocatorKey ?? "0".repeat(64);
   const store = createFileStore({ rootDir: join(stateDir, "store") });
   const identity = createDemoIdentityPort();
   const distiller = await identity.verify({ principalId: "demo-distiller" });

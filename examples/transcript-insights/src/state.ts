@@ -30,6 +30,16 @@ function hasErrnoCode(error: unknown, code: string): boolean {
  */
 export async function ensureLocatorKey(stateDir: string): Promise<string> {
   const path = join(stateDir, "locator.key");
+  const existing = await readLocatorKey(stateDir);
+  if (existing !== undefined) return existing;
+  const key = randomBytes(32).toString("hex");
+  await writeFile(path, `${key}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  return key;
+}
+
+/** Read and validate an existing locator key without creating any state. */
+export async function readLocatorKey(stateDir: string): Promise<string | undefined> {
+  const path = join(stateDir, "locator.key");
   try {
     const text = (await readFile(path, "utf8")).trim();
     if (!/^[0-9a-f]{64}$/.test(text)) {
@@ -37,11 +47,9 @@ export async function ensureLocatorKey(stateDir: string): Promise<string> {
     }
     return text;
   } catch (error) {
-    if (!hasErrnoCode(error, "ENOENT")) throw error;
+    if (hasErrnoCode(error, "ENOENT")) return undefined;
+    throw error;
   }
-  const key = randomBytes(32).toString("hex");
-  await writeFile(path, `${key}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  return key;
 }
 
 export interface DayIngestSummary {

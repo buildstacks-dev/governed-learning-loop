@@ -26,6 +26,16 @@ export interface DayResult {
   readonly diagnosticCounts: readonly (readonly [string, number])[];
 }
 
+export interface DayProgress {
+  readonly provider: Provider;
+  readonly day: string;
+  readonly files: number;
+  readonly heartbeat: boolean;
+  readonly elapsedSeconds: number;
+}
+
+export type DayProgressSink = (progress: DayProgress) => void;
+
 function alreadyKnownCount(receipt: IngestReceipt): number {
   for (const diagnostic of receipt.diagnostics) {
     if (diagnostic.code !== "ingest.duplicate") continue;
@@ -44,11 +54,18 @@ function diagnosticCountsByCode(receipt: IngestReceipt): readonly (readonly [str
   return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right));
 }
 
-export async function ingestDay(loop: DemoLoop, provider: Provider, root: string, day: string): Promise<DayResult> {
+export async function ingestDay(
+  loop: DemoLoop,
+  provider: Provider,
+  root: string,
+  day: string,
+  progress?: DayProgressSink,
+): Promise<DayResult> {
   // Host discovery decision: THIS demo enumerates candidate files under the
   // explicitly user-supplied --root and hands the adapter an explicit list.
   // The adapters never crawl.
   const paths = await discoverSessionFiles(provider, root, day);
+  progress?.({ provider, day, files: paths.length, heartbeat: false, elapsedSeconds: 0 });
   let result: DayResult;
   if (paths.length === 0) {
     result = {
@@ -63,11 +80,24 @@ export async function ingestDay(loop: DemoLoop, provider: Provider, root: string
       diagnosticCounts: [],
     };
   } else {
-    const receipt = await loop.learning.ingest(loop.sources[provider], {
-      kind: "explicit_files",
-      paths,
-      locatorKey: loop.locatorKey,
-    });
+    const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+      progress?.({
+        provider,
+        day,
+        files: paths.length,
+        heartbeat: true,
+        elapsedSeconds: Math.max(1, Math.floor((Date.now() - startedAt) / 1_000)),
+      });
+    }, 5_000);
+    heartbeat.unref();
+    const receipt = await loop.learning
+      .ingest(loop.sources[provider], {
+        kind: "explicit_files",
+        paths,
+        locatorKey: loop.locatorKey,
+      })
+      .finally(() => clearInterval(heartbeat));
     result = {
       provider,
       day,
@@ -98,6 +128,11 @@ export async function ingestDay(loop: DemoLoop, provider: Provider, root: string
   return result;
 }
 
+function writeDayProgress(out: CliOutput, command: "ingest" | "backfill", progress: DayProgress): void {
+  const status = progress.heartbeat ? `working elapsed=${progress.elapsedSeconds}s` : "start";
+  out.write(`${command}: day=${progress.day} provider=${progress.provider} files=${progress.files} ${status}`);
+}
+
 export async function runIngestCommand(
   loop: DemoLoop,
   provider: Provider,
@@ -105,7 +140,7 @@ export async function runIngestCommand(
   day: string,
   out: CliOutput,
 ): Promise<number> {
-  const result = await ingestDay(loop, provider, root, day);
+  const result = await ingestDay(loop, provider, root, day, (progress) => writeDayProgress(out, "ingest", progress));
   out.write(`ingest ${provider} ${day}`);
   out.write(`  files considered: ${result.files}`);
   if (result.files === 0) {
@@ -151,7 +186,10 @@ export async function runBackfillCommand(
   let failed = 0;
   for (const day of days) {
     try {
-      const result = await ingestDay(loop, provider, root, day);
+      out.write(`backfill: day=${day} provider=${provider} discovering`);
+      const result = await ingestDay(loop, provider, root, day, (progress) =>
+        writeDayProgress(out, "backfill", progress),
+      );
       out.write(dayLine(result));
       ok += 1;
     } catch (error) {

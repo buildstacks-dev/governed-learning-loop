@@ -56,7 +56,11 @@ export type RecordKind =
   | "candidate-admission-reservation"
   | "candidate-admission-binding"
   | "candidate-recurrence-admission"
-  | "detector-pack-run-receipt";
+  | "detector-pack-run-receipt"
+  | "semantic-workflow-reservation"
+  | "semantic-workflow-authorization"
+  | "semantic-workflow-dispatch"
+  | "semantic-workflow-result";
 
 export interface EngineContext {
   readonly store: LearningStore;

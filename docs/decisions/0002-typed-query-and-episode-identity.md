@@ -21,7 +21,10 @@ contract, so episode identity must be recovered without altering those records.
    ratified public contract for this repository. Its stale proposal-status line
    is corrected in this decision.
 2. **Campaign dependency order is explicit.** The active order is
-   `#25 → #23/#31 → #30 → #13 → #26 → #10 → #11 → #12 → #14`. This supersedes
+   `#25 → #23/#31 → #30 → #13a → #13b → #13c → #26 → #10 → #11 → #12 → #14`.
+   Decision 0021 refines #13 into a private no-egress substrate, typed
+   generation/provider integration, then advisory review; it does not move
+   decisive calibrated review ahead of #26. This supersedes
    decision 0001's coarse Observe/Govern-then-Activate-then-Validate order; it
    does not weaken the independence of the four lifecycle tiers.
 3. **Public reads are typed and bounded.** The façade exposes domain-specific

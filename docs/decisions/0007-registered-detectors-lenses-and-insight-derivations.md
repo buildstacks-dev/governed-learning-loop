@@ -170,9 +170,14 @@ remain duplicate-free. Scope entries recompute `scopeDigest`.
   hermetic controls, personal two-project isolation, and exact
   Support/Documentation lens examples. Source requirements remain inert rather
   than capability grants, and calibration remains deferred to #26.
-- **Deferred to #13:** provider-neutral semantic generation, exact outbound
-  previews and disclosure receipts, and independent calibrated qualitative
-  review.
+- **Implemented privately by decision 0021 for #13a:** provider-neutral
+  workflow/turn definitions, exact minimized application-content byte intent,
+  outbound authorization, create-only dispatch claims, closed sanitized result
+  metadata, and scope-private receipt-last persistence—without egress, a public
+  export, or completed output persistence.
+- **Deferred to #13b/#13c:** nonforgeable prepared preview/provider capabilities,
+  typed generation and actual handoff, then advisory qualitative review.
+  Decisive calibrated model review remains #26.
 - **Deferred to #26:** held-out candidate-utility calibration and any
   default-quality claim.
 

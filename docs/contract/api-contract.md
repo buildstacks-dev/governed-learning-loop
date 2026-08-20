@@ -144,7 +144,7 @@ Start with one package and subpath exports:
 ├── node          JSON Lines/filesystem store and journal adapters
 ├── testing       runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── reference-detectors  opt-in deterministic core/reference pack bundle
-└── workflows     optional distiller and reviewer workflows
+└── workflows     planned optional distiller and reviewer workflows (not exported by #13a)
 ```
 
 Recommended packaging properties:
@@ -1569,6 +1569,11 @@ provider fields and principal/attestation to be null. `disclosure` is optional
 only for local or otherwise non-outbound production; any outbound semantic
 workflow binds the exact durable receipt, minimized-byte digest, and receipt
 digest. Validation comparable-population content and digest are paired.
+Decision 0021 does not yet mint that producer lineage or an InsightDerivation:
+its private noncompleted turn receipts are substrate only. #13b must add a
+typed completed workflow execution and require the producer disclosure
+projection to resolve the exact turn/request lineage; the three disclosure
+fields are not sufficient as an unchecked dangling assertion.
 
 Digest inclusion is exact:
 
@@ -2156,11 +2161,14 @@ behavioral derivation for source unavailability. Positive evidence-health
 callback recovery remains outside this slice rather than being treated as
 implicitly solved.
 
-#30d supplies only L1 contract checks and L2 hermetic synthetic validation. It
-ships no L3 live-source evidence, L4 semantic/model eval, L5 operational/SLO
-evidence, or L6 longitudinal acceptance evidence. #13 owns provider-mediated
-semantic workflows and disclosure. #26 owns detector calibration, held-out
-candidate utility and every default-quality or improvement claim.
+#30d supplies only L1 contract checks and L2 hermetic synthetic validation.
+Decision 0021's #13a provider-turn substrate likewise supplies L1 records/
+goldens and L2 deterministic crash, concurrency, privacy and scope controls
+only. Both ship no L3 live-source/provider evidence, L4 semantic/model eval, L5
+operational/SLO evidence, or L6 longitudinal acceptance evidence. #13b owns
+typed prepared generation and provider handoff; #13c owns advisory review plus
+the L4/L6 scaffold. #26 owns detector/reviewer calibration, held-out candidate
+utility and every default-quality or improvement claim.
 
 Private derivation/Candidate recurrence claims are implemented by decision
 0016, observational receipt assessment by decision 0017, and serialized
@@ -2168,8 +2176,9 @@ proposal admission by decision 0018. Pack receipt classifications remain
 descriptive; admission separately freezes and enforces the same pure classifier
 before a subject Candidate writes any facts. Automatic population discovery
 and scheduling/routing remain outside this receipt. Decision 0019 implements
-the opt-in core/reference contents; host packs remain host data. Optional
-semantic-provider generation and disclosure are #13. Default-quality and
+the opt-in core/reference contents; host packs remain host data. Decision 0021
+implements only the private, no-egress #13a turn substrate. Typed generation/
+provider handoff is #13b and advisory review is #13c. Default-quality and
 candidate-utility claims remain #26.
 
 #### Private derivation and Candidate recurrence claims
@@ -3473,6 +3482,13 @@ The default root package should ship no destination that silently edits prompts,
 
 ### Semantic judgment
 
+The historical `CandidateGenerator` sketch below is not the #13 execution
+boundary. Decision 0007 and issue #30 established `InsightDerivation` as the
+provider-neutral seam: a future distiller consumes a kernel-materialized exact
+detector window and may produce an inert typed derivation, never a Candidate,
+verified proposer, review, or effect. The sketch remains directional host-port
+context until #13b ratifies the actual `/workflows` API.
+
 ```ts
 export interface CandidateGenerator {
   readonly id: string;
@@ -3502,7 +3518,90 @@ export interface CandidateReviewer {
 }
 ```
 
-The optional `/workflows` package validates both results and records exact provider, model, prompt, tool policy, and budget fingerprints. The kernel does not label an uncalibrated reviewer trustworthy merely because it returned valid JSON.
+The planned optional `/workflows` package validates both results and records
+exact provider, model, prompt, tool policy, and budget fingerprints. The kernel
+does not label an uncalibrated reviewer trustworthy merely because it returned
+valid JSON. Decision 0021 implements only the private #13a substrate; no
+`/workflows` export or provider callback exists yet.
+
+#### Private semantic provider-turn substrate (#13a)
+
+#13a introduces no public record or façade method. Its private facts are
+`SemanticWorkflowDefinition`, `SemanticTurnReservation`,
+`SemanticDisclosureAuthorization`, `SemanticDispatchMarker`,
+`SemanticResultBinding`, `SemanticTurnScopeIndex`, and
+`SemanticTurnReceipt`.
+
+A definition binds the exact generation/advisory lane, local/outbound
+transport, implementation, provider/model, prompt, renderer, output schema,
+deny-all tool policy, hard budgets, disclosure policy, producer attribution and
+explicit calibration posture. Generation calibration is null; advisory review
+is `unverified`. These self-digested bytes are configuration facts, not a
+provider, identity, authorization, or review capability.
+
+A reservation binds one exact run, loop/semantic registry, scope, definition,
+source/content-policy set and lane-specific target. Generation targets bind the
+exact detector/pack/lens, window/execution key, nonempty sorted population and
+disclosed EvidenceRef digests. The request binding contains only
+`application/json`, `utf-8`, exact byte length, tenant-keyed minimized-byte
+digest and key-policy digest. It never stores preview or request bytes. This is
+the exact content-bearing application payload a future prepared plan hands to a
+provider port; it is not a claim about credentials, transport headers, TLS
+framing or unverifiable SDK wire bytes.
+
+Outbound intent requires one exact authorization record before a dispatch
+claim; local intent requires null. Authorization binds the exact request,
+reservation, provider registration, authorizer attribution, policy and bounded
+time window. It proves only that those content bytes were authorized. #13b must
+verify a loop/plan-bound capability minted by a host disclosure-authority port;
+the bare record is insufficient.
+
+`claimSemanticDispatch` is private and performs no egress. For a new generation
+claim it reloads exact prerequisites, uses the kernel clock, derives one
+provider operation/idempotency key, and revalidates current loop/semantic
+registry, source ownership/content policies, selected detector/pack/lens,
+workflow-definition/implementation binding, public producer fingerprints,
+calibration absence and transport-specific privacy. It refuses advisory-review
+dispatch. `created` is necessary but not sufficient for a later provider call:
+#13b must also authenticate the exact prepared-plan/provider/workflow/
+disclosure-authority capabilities, revalidate the kernel-materialized window
+and recheck expiry at the actual handoff. `existing` is never permission to
+redispatch.
+
+The closed result statuses are `completed`, `provider_refused`,
+`provider_failed`, `result_invalid`, `result_limit`, and `outcome_unknown`.
+Completed parser bytes require reported usage, response metadata and an exact
+normalized-result digest with no reason. Noncompleted bytes contain no
+normalized output and exactly `workflow.<status>`; unreported usage is exactly
+`usage.not_reported`, except `outcome_unknown` uses
+`usage.outcome_unknown`. Provider errors and refusal prose never enter durable
+reason bytes. A `result_limit` may record a safe-integer observed response
+length above 16 MiB and a keyed digest while retaining no response body.
+
+Completed shapes are parser/golden reservations only. #13a persistence and
+reads reject completed results/terminal graphs with
+`semantic.workflow_output_unavailable`, because typed minimized generation
+execution/derivation and advisory-assessment sidecars do not exist. #13b/#13c
+must add and reload those exact records before completed persistence becomes
+legal.
+
+The fixed staged order is global private reservation, outbound authorization,
+dispatch, sanitized noncompleted result, exact-scope private index, then the
+exact-scope private turn receipt last. Every step reloads exact prerequisites
+and acknowledged raw bytes. A dispatch marker without a result is permanently
+classified `outcome_unknown`; #13a never invokes or retries a provider. An
+index without the terminal scoped receipt is invisible. Exact-scope reads
+consult the scope namespace first, and the composite revision includes both
+index and scoped-turn kind revisions so index-before-receipt and committed
+states differ without foreign-scope churn.
+
+Workflow records accept only own enumerable data for known fields and own data
+array indices; inherited, non-enumerable and accessor-backed known fields cannot
+enter parsed/canonical bytes. Normalized JSON uses an iterative descriptor
+preflight and fails closed above depth 100, 100,000 nodes or 16 MiB. Definitions
+cap populations at 500 episodes, disclosed evidence at 5,000 refs and attempts
+at one. No record grants trust, disclosure proof, Candidate/Review authority,
+publication, validation, utility, efficacy or calibration.
 
 ### Replay and outcomes
 
@@ -4769,6 +4868,8 @@ Decision 0020 keeps the 154-symbol pre-reference entrypoint budget and the two
 names on the opt-in `/reference-detectors` subpath:
 `ReferenceDetectorBundle` and `createReferenceDetectorBundle`. The
 all-entrypoint snapshot therefore remains 156.
+Decision 0021 adds only private workflow-turn records and persistence; it adds
+no `/workflows` entrypoint or public name, so the snapshot remains 156.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 

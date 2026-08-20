@@ -13,6 +13,8 @@ export const TRUST_CLASSES = ["untrusted", "advisory", "observed", "verified"] a
 export interface SourceDescriptor {
   readonly id: string;
   readonly adapterVersion: string;
+  /** Optional self-restriction; it can lower host trust but can never raise it. */
+  readonly maximumTrust?: TrustClass;
 }
 
 export interface ContentPolicy {

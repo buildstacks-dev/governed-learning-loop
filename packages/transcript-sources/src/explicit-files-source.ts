@@ -1,15 +1,43 @@
-// Generic explicit-files EvidenceSource: one EvidencePage per session file,
-// sourceRevision = sha256 of the file bytes (import idempotency), cursor =
-// index into the caller's ordered path list (resumability). Refused files
-// still yield a diagnostics-only page so the cursor stays index-aligned.
+// Generic explicit-files EvidenceSource: one EvidencePage per session file.
+// Each page carries a tenant-keyed sourceRef, a stable pageRef, and typed
+// source state. Private source revisions are tenant-keyed HMACs of the
+// transient content digest; refused files never receive a fake revision. The cursor remains an index
+// into the caller's ordered path list (resumability), and refused files still
+// yield a diagnostics-only page so the cursor stays index-aligned.
+import { createHmac } from "node:crypto";
 import type { EvidencePage, EvidenceSource } from "@cormidia/learning-loop";
 import type { TranscriptFilesInput } from "./input.js";
 import { parseTranscriptFilesInput, startIndexFromCursor } from "./input.js";
 import { probeExplicitFiles } from "./probe.js";
 import type { SessionDraft } from "./project.js";
-import { UNAVAILABLE_SOURCE_REVISION, assemblePage, newSessionDraft } from "./project.js";
-import type { FileRef, ParsedLine } from "./session-file.js";
+import { assemblePage, newSessionDraft } from "./project.js";
+import type { FileRef, ParsedLine, SessionFileResult } from "./session-file.js";
 import { readSessionFile, refOf } from "./session-file.js";
+
+const SESSION_PAGE_REF = "session";
+const SOURCE_REF_DOMAIN = "transcript-source-ref:v1\0";
+const SOURCE_REVISION_DOMAIN = "transcript-source-revision:v1\0";
+
+function sourceRefFor(locatorKey: string, path: string): string {
+  return createHmac("sha256", locatorKey).update(SOURCE_REF_DOMAIN, "utf8").update(path, "utf8").digest("hex");
+}
+
+function sourceRevisionFor(locatorKey: string, rawContentDigest: string): string {
+  return createHmac("sha256", locatorKey)
+    .update(SOURCE_REVISION_DOMAIN, "utf8")
+    .update(rawContentDigest, "utf8")
+    .digest("hex");
+}
+
+function refusedState(
+  file: Extract<SessionFileResult, { readonly status: "refused" }>,
+  observedRevision: string | undefined,
+): EvidencePage["state"] {
+  return {
+    status: file.refusalState,
+    ...(observedRevision === undefined ? {} : { observedRevision }),
+  };
+}
 
 export interface TranscriptProviderSpec {
   /** Scope/id prefix, e.g. "claude-code". */
@@ -25,11 +53,18 @@ export interface TranscriptProviderSpec {
 }
 
 export function createExplicitFilesSource(spec: TranscriptProviderSpec): EvidenceSource<TranscriptFilesInput> {
-  return {
-    descriptor: { id: spec.sourceId, adapterVersion: spec.adapterVersion },
+  const maximumTrust: "advisory" = "advisory";
+  const descriptor = Object.freeze({
+    id: spec.sourceId,
+    adapterVersion: spec.adapterVersion,
+    maximumTrust,
+  });
+  const source: EvidenceSource<TranscriptFilesInput> = {
+    descriptor,
     probe: (input) => probeExplicitFiles(input, spec.firstLineBand),
     read: (input, cursor) => readPages(spec, input, cursor),
   };
+  return Object.freeze(source);
 }
 
 async function* readPages(
@@ -53,11 +88,16 @@ async function projectFile(
   index: number,
   locatorKey: string,
 ): Promise<EvidencePage> {
-  const ref = refOf(path, index);
+  const ref = refOf(index);
   const file = await readSessionFile(path, ref);
+  const sourceRef = sourceRefFor(locatorKey, path);
+  const privateRevision =
+    file.sourceRevision === undefined ? undefined : sourceRevisionFor(locatorKey, file.sourceRevision);
   if (file.status === "refused") {
     return {
-      sourceRevision: file.sourceRevision ?? UNAVAILABLE_SOURCE_REVISION,
+      sourceRef,
+      pageRef: SESSION_PAGE_REF,
+      state: refusedState(file, privateRevision),
       observations: [],
       measurements: [],
       episodes: [],
@@ -69,7 +109,9 @@ async function projectFile(
   return assemblePage({
     draft,
     ref,
-    sourceRevision: file.sourceRevision,
+    sourceRef,
+    pageRef: SESSION_PAGE_REF,
+    sourceRevision: sourceRevisionFor(locatorKey, file.sourceRevision),
     adapterVersion: spec.adapterVersion,
     locatorKey,
     degraded: file.skippedLineCount > 0,

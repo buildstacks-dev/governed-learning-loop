@@ -202,8 +202,10 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
   expect(report.text).toContain("== Ingestion health ==");
   expect(report.text).toContain("== Friction signals ==");
   expect(report.text).toContain("== Candidates ==");
-  expect(report.text).toContain("claude-code/alpha");
-  expect(report.text).toContain("codex/bravo");
+  expect(report.text).toMatch(/claude-code\/[0-9a-f]{64}/);
+  expect(report.text).toMatch(/codex\/[0-9a-f]{64}/);
+  expect(report.text).not.toContain("alpha");
+  expect(report.text).not.toContain("bravo");
   expect(report.text).toContain("Bash: 3 across 2 episode(s)");
   expect(report.text).toContain("correction-signals=3 (across 2 episode(s))");
   expect(report.text).toContain("task signals: aborted=1");

@@ -96,13 +96,13 @@ export function conservativePolicy(): LearningPolicy {
   return policy;
 }
 
-/**
- * Recovers the rule data from a LearningPolicy value. The rules travel in a
- * runtime field beyond the public type, so they are validated from `unknown`
- * here, and the policy digest is recomputed from `{ id, rules }` — a policy
- * whose digest does not bind its rules is refused at construction time.
- */
-export function extractPolicyRules(policy: LearningPolicy): PolicyRules {
+export interface BoundLearningPolicy {
+  readonly policy: LearningPolicy;
+  readonly rules: PolicyRules;
+}
+
+/** Parses policy metadata and rules once, then returns immutable metadata for engine context. */
+export function bindLearningPolicy(policy: LearningPolicy): BoundLearningPolicy {
   const fields = readFields(policy, ["policy"]);
   const id = fields.req("id", parseNonEmptyText);
   const digest = fields.req("digest", parseNonEmptyText);
@@ -122,5 +122,18 @@ export function extractPolicyRules(policy: LearningPolicy): PolicyRules {
       ["policy", "digest"],
     );
   }
-  return parsePolicyRulesAt(rules, ["policy", "rules"]);
+  return {
+    policy: Object.freeze({ id, digest }),
+    rules: parsePolicyRulesAt(rules, ["policy", "rules"]),
+  };
+}
+
+/**
+ * Recovers the rule data from a LearningPolicy value. The rules travel in a
+ * runtime field beyond the public type, so they are validated from `unknown`
+ * here, and the policy digest is recomputed from `{ id, rules }` — a policy
+ * whose digest does not bind its rules is refused at construction time.
+ */
+export function extractPolicyRules(policy: LearningPolicy): PolicyRules {
+  return bindLearningPolicy(policy).rules;
 }

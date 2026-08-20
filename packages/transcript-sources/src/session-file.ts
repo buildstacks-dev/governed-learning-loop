@@ -8,18 +8,16 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { lstat, open } from "node:fs/promises";
-import { basename } from "node:path";
 import type { Diagnostic, JsonValue } from "@cormidia/learning-loop";
 import { MAX_FILE_BYTES, MAX_LINE_BYTES, MAX_RECORDS_PER_FILE } from "./limits.js";
 import { isRecord } from "./narrow.js";
 
 export interface FileRef {
   readonly index: number;
-  readonly name: string;
 }
 
-export function refOf(path: string, index: number): FileRef {
-  return { index, name: basename(path) };
+export function refOf(index: number): FileRef {
+  return { index };
 }
 
 export function fileDiagnostic(
@@ -33,10 +31,9 @@ export function fileDiagnostic(
   return {
     code,
     severity,
-    message: `${ref.name}: ${message}`,
+    message: `file[${ref.index}]: ${message}`,
     path: line === undefined ? [ref.index] : [ref.index, line],
     details: {
-      file: ref.name,
       fileIndex: ref.index,
       ...(line === undefined ? {} : { line }),
       ...extraDetails,
@@ -49,8 +46,15 @@ export interface ParsedLine {
   readonly record: Record<string, unknown>;
 }
 
+export type SessionFileRefusalState = "missing" | "unreadable" | "unsupported" | "corrupt";
+
 export type SessionFileResult =
-  | { readonly status: "refused"; readonly sourceRevision?: string; readonly diagnostics: readonly Diagnostic[] }
+  | {
+      readonly status: "refused";
+      readonly refusalState: SessionFileRefusalState;
+      readonly sourceRevision?: string;
+      readonly diagnostics: readonly Diagnostic[];
+    }
   | {
       readonly status: "parsed";
       readonly sourceRevision: string;
@@ -63,7 +67,13 @@ const MAX_PER_LINE_DIAGNOSTICS = 20;
 
 type RegularFile =
   | { readonly ok: true; readonly handle: FileHandle; readonly size: number }
-  | { readonly ok: false; readonly diagnostic: Diagnostic };
+  | { readonly ok: false; readonly refusalState: SessionFileRefusalState; readonly diagnostic: Diagnostic };
+
+function systemErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const code: unknown = Reflect.get(error, "code");
+  return typeof code === "string" ? code : undefined;
+}
 
 async function openRegularFile(path: string, ref: FileRef): Promise<RegularFile> {
   let size: number;
@@ -72,6 +82,7 @@ async function openRegularFile(path: string, ref: FileRef): Promise<RegularFile>
     if (stats.isSymbolicLink()) {
       return {
         ok: false,
+        refusalState: "unreadable",
         diagnostic: fileDiagnostic(
           "source.input_refused",
           "error",
@@ -81,18 +92,24 @@ async function openRegularFile(path: string, ref: FileRef): Promise<RegularFile>
       };
     }
     if (!stats.isFile()) {
-      return { ok: false, diagnostic: fileDiagnostic("source.input_refused", "error", ref, "not a regular file") };
+      return {
+        ok: false,
+        refusalState: "unreadable",
+        diagnostic: fileDiagnostic("source.input_refused", "error", ref, "not a regular file"),
+      };
     }
     size = stats.size;
-  } catch {
+  } catch (error) {
     return {
       ok: false,
+      refusalState: systemErrorCode(error) === "ENOENT" ? "missing" : "unreadable",
       diagnostic: fileDiagnostic("source.input_refused", "error", ref, "path does not exist or is not readable"),
     };
   }
   if (size > MAX_FILE_BYTES) {
     return {
       ok: false,
+      refusalState: "unsupported",
       diagnostic: fileDiagnostic(
         "source.limit_exceeded",
         "error",
@@ -108,6 +125,7 @@ async function openRegularFile(path: string, ref: FileRef): Promise<RegularFile>
   } catch {
     return {
       ok: false,
+      refusalState: "unreadable",
       diagnostic: fileDiagnostic(
         "source.input_refused",
         "error",
@@ -120,21 +138,27 @@ async function openRegularFile(path: string, ref: FileRef): Promise<RegularFile>
 
 export async function readSessionFile(path: string, ref: FileRef): Promise<SessionFileResult> {
   const opened = await openRegularFile(path, ref);
-  if (!opened.ok) return { status: "refused", diagnostics: [opened.diagnostic] };
+  if (!opened.ok) {
+    return { status: "refused", refusalState: opened.refusalState, diagnostics: [opened.diagnostic] };
+  }
   let bytes: Buffer;
   try {
     bytes = await opened.handle.readFile();
   } catch {
     return {
       status: "refused",
+      refusalState: "unreadable",
       diagnostics: [fileDiagnostic("source.input_refused", "error", ref, "file could not be read")],
     };
   } finally {
     await opened.handle.close();
   }
+  const sourceRevision = createHash("sha256").update(bytes).digest("hex");
   if (bytes.byteLength > MAX_FILE_BYTES) {
     return {
       status: "refused",
+      refusalState: "unsupported",
+      sourceRevision,
       diagnostics: [
         fileDiagnostic(
           "source.limit_exceeded",
@@ -145,8 +169,6 @@ export async function readSessionFile(path: string, ref: FileRef): Promise<Sessi
       ],
     };
   }
-  const sourceRevision = createHash("sha256").update(bytes).digest("hex");
-
   const rawLines = bytes.toString("utf8").split("\n");
   const lines: ParsedLine[] = [];
   const diagnostics: Diagnostic[] = [];
@@ -156,6 +178,7 @@ export async function readSessionFile(path: string, ref: FileRef): Promise<Sessi
 
   const refuseFirstLine = (code: string, lineNumber: number, message: string): SessionFileResult => ({
     status: "refused",
+    refusalState: code === "source.unsupported_format" ? "unsupported" : "corrupt",
     sourceRevision,
     diagnostics: [fileDiagnostic(code, "error", ref, message, lineNumber)],
   });
@@ -240,6 +263,7 @@ export async function readSessionFile(path: string, ref: FileRef): Promise<Sessi
   if (lines.length === 0) {
     return {
       status: "refused",
+      refusalState: "unsupported",
       sourceRevision,
       diagnostics: [
         ...diagnostics,

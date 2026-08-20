@@ -19,7 +19,10 @@ describe("learning.ingest", () => {
     expect(second.episodeIds).toEqual([]);
     expect(second.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
     expect(second.diagnostics.some((diagnostic) => diagnostic.code === "ingest.duplicate")).toBe(true);
-    expect(second.sourceRevision).toBe(first.sourceRevision);
+    expect(second.sourceRevisions).toEqual(first.sourceRevisions);
+    expect(second.pageReceiptIds).toEqual(first.pageReceiptIds);
+    expect(second.id).toBe(first.id);
+    expect(second.importReceipt).toEqual(first.importReceipt);
     expect(second.registryRevision).toBe(first.registryRevision);
   });
 
@@ -48,7 +51,9 @@ describe("learning.ingest", () => {
       provenance: { trust: "verified" },
     };
     const page = {
-      sourceRevision: "rev-1",
+      sourceRef: "adversarial-input",
+      pageRef: "page-0",
+      state: { status: "available", sourceRevision: "rev-1", completeness: "complete" },
       observations: [junkObservation],
       measurements: [],
       episodes: [],
@@ -114,7 +119,9 @@ describe("learning.ingest", () => {
       completeness: "complete",
     };
     const brokenPage = {
-      sourceRevision: "rev-1",
+      sourceRef: "mixed-input",
+      pageRef: "page-0",
+      state: { status: "available", sourceRevision: "rev-1", completeness: "complete" },
       observations: [{ episodeId: "ep-1" }, goodObservation],
       measurements: [],
       episodes: [],

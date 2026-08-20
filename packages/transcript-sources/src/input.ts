@@ -1,6 +1,7 @@
 // Adapter input: the CALLER enumerates files. These adapters never discover,
 // glob, or crawl (AGENTS.md "Privacy rules"); the input arrives as `unknown`
 // at the trust boundary and is validated here.
+import { Buffer } from "node:buffer";
 import { LearningLoopError } from "@cormidia/learning-loop";
 import { isRecord } from "./narrow.js";
 
@@ -9,12 +10,13 @@ export interface TranscriptFilesInput {
   /** Ordered, caller-enumerated list of session files. Cursors index into it. */
   readonly paths: readonly string[];
   /**
-   * Caller-supplied secret keying the cwd locator
-   * (`sha256(locatorKey + ":" + cwd)`), so filesystem paths never enter a
-   * dictionary-recoverable digest.
+   * Caller-supplied secret for domain-separated HMAC locators, so filesystem
+   * paths never enter a dictionary-recoverable digest.
    */
   readonly locatorKey: string;
 }
+
+const MIN_LOCATOR_KEY_BYTES = 32;
 
 function inputError(message: string, path: readonly (string | number)[]): LearningLoopError {
   return new LearningLoopError("schema.invalid", [{ code: "schema.invalid", severity: "error", message, path }]);
@@ -39,9 +41,9 @@ export function parseTranscriptFilesInput(input: unknown): TranscriptFilesInput 
     paths.push(path);
   }
   const locatorKey = input.locatorKey;
-  if (typeof locatorKey !== "string" || locatorKey.length === 0) {
+  if (typeof locatorKey !== "string" || Buffer.byteLength(locatorKey, "utf8") < MIN_LOCATOR_KEY_BYTES) {
     throw inputError(
-      "input.locatorKey must be a non-empty string (it keys the cwd locator against dictionary recovery)",
+      `input.locatorKey must contain at least ${MIN_LOCATOR_KEY_BYTES} UTF-8 bytes of secret key material`,
       ["locatorKey"],
     );
   }

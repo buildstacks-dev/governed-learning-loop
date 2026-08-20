@@ -17,8 +17,16 @@ import { parseObservation } from "../records/observation.js";
 import type { Completeness, TrustClass } from "../records/provenance.js";
 import { COMPLETENESS_VALUES, TRUST_CLASSES } from "../records/provenance.js";
 import type { Scope } from "../records/scope.js";
+import type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "../records/source-health.js";
+import { parseEvidenceHealthFinding, parseImportReceipt, parseSourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
-import { effectiveRisk, iterateRecordPages, loadCandidate, readRecordKindRevision } from "./context.js";
+import {
+  effectiveRisk,
+  iterateRecordPages,
+  loadCandidate,
+  loadRecordValue,
+  readRecordKindRevision,
+} from "./context.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
 import type { GovernanceView } from "./governance.js";
 import type { LearningReportQuery } from "./report.js";
@@ -31,6 +39,19 @@ const MAX_FILTER_VALUES = 1_000;
 const MAX_FILTER_TEXT_LENGTH = 4_096;
 const MAX_CURSOR_LENGTH = 16_384;
 const OUTCOME_STATUSES = ["succeeded", "failed", "cancelled", "unknown"] as const;
+const SOURCE_PAGE_STATES = ["available", "missing", "unreadable", "unsupported", "corrupt"] as const;
+const EVIDENCE_HEALTH_CODES = [
+  "source.missing",
+  "source.unreadable",
+  "source.unsupported",
+  "source.corrupt",
+  "source.partial",
+  "source.revision_changed",
+  "source.record_rejected",
+  "source.content_policy_refused",
+  "source.adapter_diagnostic",
+] as const;
+const EVIDENCE_HEALTH_EFFECTS = ["limits_claims", "blocks_audit", "blocks_use"] as const;
 
 export interface QueryPage<T> {
   readonly items: readonly T[];
@@ -74,6 +95,28 @@ export interface EpisodeQuery {
   readonly statuses?: readonly EpisodeOutcome["status"][];
   readonly since?: string;
   readonly until?: string;
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface SourcePageReceiptQuery {
+  readonly receiptIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly sourceRefs?: readonly string[];
+  readonly pageRefs?: readonly string[];
+  readonly sourceRevisions?: readonly string[];
+  readonly states?: readonly SourcePageReceipt["state"]["status"][];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface EvidenceHealthQuery {
+  readonly findingIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly sourceRefs?: readonly string[];
+  readonly pageRefs?: readonly string[];
+  readonly codes?: readonly EvidenceHealthFinding["code"][];
+  readonly effects?: readonly EvidenceHealthFinding["effect"][];
   readonly cursor?: string;
   readonly limit: number;
 }
@@ -138,7 +181,29 @@ interface ParsedEpisodeQuery extends ParsedPageQuery {
   readonly statuses?: readonly EpisodeOutcome["status"][];
 }
 
-type QueryKind = "observation" | "measurement" | "episode";
+interface ParsedSourcePageReceiptQuery {
+  readonly receiptIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly sourceRefs?: readonly string[];
+  readonly pageRefs?: readonly string[];
+  readonly sourceRevisions?: readonly string[];
+  readonly states?: readonly SourcePageReceipt["state"]["status"][];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+interface ParsedEvidenceHealthQuery {
+  readonly findingIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly sourceRefs?: readonly string[];
+  readonly pageRefs?: readonly string[];
+  readonly codes?: readonly EvidenceHealthFinding["code"][];
+  readonly effects?: readonly EvidenceHealthFinding["effect"][];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+type QueryKind = "observation" | "measurement" | "episode" | "source-page-receipt" | "evidence-health";
 
 function sortedUnique<T extends string>(values: readonly T[]): readonly T[] {
   return [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
@@ -347,6 +412,54 @@ function parseEpisodeQuery(context: EngineContext, input: unknown): ParsedEpisod
   };
 }
 
+function parseSourcePageReceiptQuery(input: unknown): ParsedSourcePageReceiptQuery {
+  assertAllowedFields(
+    input,
+    ["receiptIds", "sourceIds", "sourceRefs", "pageRefs", "sourceRevisions", "states", "cursor", "limit"],
+    ["query"],
+  );
+  const { fields, parsed } = commonQueryFields(input);
+  const receiptIds = optionalStrings(fields, "receiptIds");
+  const sourceIds = optionalStrings(fields, "sourceIds");
+  const sourceRefs = optionalStrings(fields, "sourceRefs");
+  const pageRefs = optionalStrings(fields, "pageRefs");
+  const sourceRevisions = optionalStrings(fields, "sourceRevisions");
+  const states = fields.opt("states", parseBoundedArrayOf(parseOneOf(SOURCE_PAGE_STATES)));
+  return {
+    ...parsed,
+    ...(receiptIds !== undefined ? { receiptIds } : {}),
+    ...(sourceIds !== undefined ? { sourceIds } : {}),
+    ...(sourceRefs !== undefined ? { sourceRefs } : {}),
+    ...(pageRefs !== undefined ? { pageRefs } : {}),
+    ...(sourceRevisions !== undefined ? { sourceRevisions } : {}),
+    ...(states !== undefined ? { states: sortedUnique(states) } : {}),
+  };
+}
+
+function parseEvidenceHealthQuery(input: unknown): ParsedEvidenceHealthQuery {
+  assertAllowedFields(
+    input,
+    ["findingIds", "sourceIds", "sourceRefs", "pageRefs", "codes", "effects", "cursor", "limit"],
+    ["query"],
+  );
+  const { fields, parsed } = commonQueryFields(input);
+  const findingIds = optionalStrings(fields, "findingIds");
+  const sourceIds = optionalStrings(fields, "sourceIds");
+  const sourceRefs = optionalStrings(fields, "sourceRefs");
+  const pageRefs = optionalStrings(fields, "pageRefs");
+  const codes = fields.opt("codes", parseBoundedArrayOf(parseOneOf(EVIDENCE_HEALTH_CODES)));
+  const effects = fields.opt("effects", parseBoundedArrayOf(parseOneOf(EVIDENCE_HEALTH_EFFECTS)));
+  return {
+    ...parsed,
+    ...(findingIds !== undefined ? { findingIds } : {}),
+    ...(sourceIds !== undefined ? { sourceIds } : {}),
+    ...(sourceRefs !== undefined ? { sourceRefs } : {}),
+    ...(pageRefs !== undefined ? { pageRefs } : {}),
+    ...(codes !== undefined ? { codes: sortedUnique(codes) } : {}),
+    ...(effects !== undefined ? { effects: sortedUnique(effects) } : {}),
+  };
+}
+
 export function parseLearningReportQuery(context: EngineContext, input: unknown): LearningReportQuery {
   assertAllowedFields(input, ["scope", "sourceIds", "episodeIds", "since", "until"], ["reportQuery"]);
   const fields = readFields(input, ["reportQuery"]);
@@ -414,7 +527,10 @@ function parseCursorPayload(input: unknown): CursorPayload {
   const fields = readFields(input, ["cursor"]);
   return {
     version: fields.req("version", parseCursorVersion),
-    kind: fields.req("kind", parseOneOf(["observation", "measurement", "episode"])),
+    kind: fields.req(
+      "kind",
+      parseOneOf(["observation", "measurement", "episode", "source-page-receipt", "evidence-health"]),
+    ),
     storeCursor: fields.req("storeCursor", parseNonEmptyText),
     filterDigest: fields.req("filterDigest", parseNonEmptyText),
     registryRevision: fields.req("registryRevision", parseNonEmptyText),
@@ -712,6 +828,110 @@ export async function* runEpisodeQuery(
       snapshotRevision: page.snapshotRevision,
     };
   }
+}
+
+function sourcePageReceiptMatches(receipt: SourcePageReceipt, query: ParsedSourcePageReceiptQuery): boolean {
+  const revision = receipt.state.status === "available" ? receipt.state.sourceRevision : receipt.state.observedRevision;
+  return (
+    includesValue(query.receiptIds, receipt.id) &&
+    includesValue(query.sourceIds, receipt.sourceId) &&
+    includesValue(query.sourceRefs, receipt.sourceRef) &&
+    includesValue(query.pageRefs, receipt.pageRef) &&
+    (query.sourceRevisions === undefined || (revision !== undefined && query.sourceRevisions.includes(revision))) &&
+    includesValue(query.states, receipt.state.status)
+  );
+}
+
+export async function* runSourcePageReceiptQuery(
+  context: EngineContext,
+  input: SourcePageReceiptQuery,
+): AsyncIterable<QueryPage<SourcePageReceipt>> {
+  const query = parseSourcePageReceiptQuery(input);
+  const filterDigest = queryFilterDigest(query);
+  const cursor = decodeCursor(
+    query.cursor,
+    "source-page-receipt",
+    filterDigest,
+    context.registryRevision,
+    context.queryCursorScopeDigest,
+  );
+  for await (const page of iterateRecordPages(context.store, "source-page-receipt", {
+    limit: query.limit,
+    ...(cursor !== undefined ? { cursor } : {}),
+  })) {
+    const items = page.records
+      .map((record) => parseSourcePageReceipt(record.value))
+      .filter((receipt) => sourcePageReceiptMatches(receipt, query));
+    const nextCursor = nextQueryCursor(
+      page.nextCursor,
+      "source-page-receipt",
+      filterDigest,
+      context.registryRevision,
+      context.queryCursorScopeDigest,
+    );
+    yield {
+      items,
+      ...(nextCursor !== undefined ? { nextCursor } : {}),
+      snapshotRevision: page.snapshotRevision,
+    };
+  }
+}
+
+function evidenceHealthMatches(finding: EvidenceHealthFinding, query: ParsedEvidenceHealthQuery): boolean {
+  return (
+    includesValue(query.findingIds, finding.id) &&
+    includesValue(query.sourceIds, finding.sourceId) &&
+    includesValue(query.sourceRefs, finding.sourceRef) &&
+    includesValue(query.pageRefs, finding.pageRef) &&
+    includesValue(query.codes, finding.code) &&
+    includesValue(query.effects, finding.effect)
+  );
+}
+
+export async function* runEvidenceHealthQuery(
+  context: EngineContext,
+  input: EvidenceHealthQuery,
+): AsyncIterable<QueryPage<EvidenceHealthFinding>> {
+  const query = parseEvidenceHealthQuery(input);
+  const filterDigest = queryFilterDigest(query);
+  const cursor = decodeCursor(
+    query.cursor,
+    "evidence-health",
+    filterDigest,
+    context.registryRevision,
+    context.queryCursorScopeDigest,
+  );
+  for await (const page of iterateRecordPages(context.store, "evidence-health", {
+    limit: query.limit,
+    ...(cursor !== undefined ? { cursor } : {}),
+  })) {
+    const items = page.records
+      .map((record) => parseEvidenceHealthFinding(record.value))
+      .filter((finding) => evidenceHealthMatches(finding, query));
+    const nextCursor = nextQueryCursor(
+      page.nextCursor,
+      "evidence-health",
+      filterDigest,
+      context.registryRevision,
+      context.queryCursorScopeDigest,
+    );
+    yield {
+      items,
+      ...(nextCursor !== undefined ? { nextCursor } : {}),
+      snapshotRevision: page.snapshotRevision,
+    };
+  }
+}
+
+export async function runGetImportReceipt(
+  context: EngineContext,
+  input: { readonly importReceiptId: string },
+): Promise<ImportReceipt | undefined> {
+  assertAllowedFields(input, ["importReceiptId"], ["importReceipt"]);
+  const fields = readFields(input, ["importReceipt"]);
+  const id = fields.req("importReceiptId", parseFilterText);
+  const value = await loadRecordValue(context, "import-receipt", id);
+  return value === undefined ? undefined : parseImportReceipt(value);
 }
 
 export async function runGetCandidateView(

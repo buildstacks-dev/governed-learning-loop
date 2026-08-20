@@ -47,7 +47,8 @@ test("claude-code ingest only picks files whose mtime falls on --day", async () 
   expect(result.text).toContain("files considered: 1");
 
   const report = await cli(["report", "--state", stateDir]);
-  expect(report.text).toContain("claude-code/alpha");
+  expect(report.text).toMatch(/claude-code\/[0-9a-f]{64}/);
+  expect(report.text).not.toContain("alpha");
   expect(report.text).not.toContain("bravo");
 });
 
@@ -78,7 +79,8 @@ test("codex ingest reads exactly the day directory", async () => {
   expect(result.text).toContain("files considered: 1");
 
   const report = await cli(["report", "--state", stateDir]);
-  expect(report.text).toContain("codex/charlie");
+  expect(report.text).toMatch(/codex\/[0-9a-f]{64}/);
+  expect(report.text).not.toContain("charlie");
   expect(report.text).not.toContain("delta");
 
   const empty = await cli([

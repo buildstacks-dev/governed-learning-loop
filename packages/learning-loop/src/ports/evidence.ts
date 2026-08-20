@@ -10,6 +10,7 @@ import type { MetricDefinition, EpisodeOutcome } from "../records/episode.js";
 import type { SourceDescriptor, TrustClass, Completeness } from "../records/provenance.js";
 import { TRUST_CLASSES } from "../records/provenance.js";
 import type { Scope } from "../records/scope.js";
+import type { SourcePageState } from "../records/source-health.js";
 import { registeredSourceBrand } from "../records/brands.js";
 
 const MAX_SOURCE_ID_LENGTH = 1_000;
@@ -61,7 +62,9 @@ export interface ProjectedEpisode {
 }
 
 export interface EvidencePage {
-  readonly sourceRevision: string;
+  readonly sourceRef: string;
+  readonly pageRef: string;
+  readonly state: SourcePageState;
   readonly nextCursor?: string;
   readonly observations: readonly ProjectedObservation[];
   readonly measurements: readonly ProjectedMeasurement[];
@@ -108,15 +111,17 @@ function withSourceBrand(base: RegisteredSourceBase): RegisteredSourceBase {
 /**
  * Binds an evidence-source adapter to its host-granted trust ceiling and
  * content policy. `registryRevision` is the SHA-256 of the canonical JSON of
- * `{ sourceId, adapterVersion, trustCeiling, contentPolicyId }`, so any change
- * to the adapter version or the host grant is a new registry revision.
+ * `{ sourceId, adapterVersion, trustCeiling, contentPolicyId, maximumTrust? }`,
+ * so any change to the adapter version, source self-restriction, or host grant
+ * is a new registry revision.
  */
 export function defineSourceRegistration<I>(input: {
   readonly source: EvidenceSource<I>;
   readonly trustCeiling: TrustClass;
   readonly contentPolicyId: string;
 }): RegisteredSource<I> {
-  const id = parseSourceId(input.source.descriptor.id);
+  const descriptor = input.source.descriptor;
+  const id = parseSourceId(descriptor.id);
   if (id.includes("/")) {
     throw invalid("config.invalid", "source id must not contain the reserved '/' separator", [
       "source",
@@ -124,23 +129,32 @@ export function defineSourceRegistration<I>(input: {
       "id",
     ]);
   }
-  const adapterVersion = parseNonEmptyText(input.source.descriptor.adapterVersion, [
-    "source",
-    "descriptor",
-    "adapterVersion",
-  ]);
+  const adapterVersion = parseNonEmptyText(descriptor.adapterVersion, ["source", "descriptor", "adapterVersion"]);
   const trustCeiling = parseOneOf(TRUST_CLASSES)(input.trustCeiling, ["trustCeiling"]);
+  const configuredMaximumTrust = descriptor.maximumTrust;
+  const maximumTrust =
+    configuredMaximumTrust === undefined
+      ? undefined
+      : parseOneOf(TRUST_CLASSES)(configuredMaximumTrust, ["source", "descriptor", "maximumTrust"]);
+  if (maximumTrust !== undefined && TRUST_CLASSES.indexOf(trustCeiling) > TRUST_CLASSES.indexOf(maximumTrust)) {
+    throw invalid("config.invalid", `host trust ceiling ${trustCeiling} exceeds the source maximum ${maximumTrust}`, [
+      "trustCeiling",
+    ]);
+  }
   const contentPolicyId = parseNonEmptyText(input.contentPolicyId, ["contentPolicyId"]);
   const registryRevision = sha256HexOfCanonicalJson({
     sourceId: id,
     adapterVersion,
     trustCeiling,
     contentPolicyId,
+    ...(maximumTrust !== undefined ? { maximumTrust } : {}),
   });
-  return withSourceBrand({
-    id,
-    registryRevision,
-    trustCeiling,
-    contentPolicyId,
-  });
+  return withSourceBrand(
+    Object.freeze({
+      id,
+      registryRevision,
+      trustCeiling,
+      contentPolicyId,
+    }),
+  );
 }

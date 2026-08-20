@@ -3,8 +3,10 @@
 // caller-shaped observation/measurement/episode records without provenance —
 // the engine stamps provenance; this source supplies sourceRecordIds from the
 // given ids and marks the caller's structured records complete). The source
-// revision is the digest of the canonical input, so re-reading identical
-// input reports an identical revision.
+// available-state revision is the digest of the canonical input. Each caller
+// batch is its own logical page, so independent append batches do not look
+// like unverifiable rewrites of one source artifact; re-reading identical
+// input still reports the same page identity and revision.
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
@@ -39,9 +41,20 @@ export interface ManualEvidenceInput {
   }[];
 }
 
+function revisionFor(input: ManualEvidenceInput): string {
+  return sha256HexOfCanonicalJson(toJsonValue(input));
+}
+
 function pageFor(input: ManualEvidenceInput): EvidencePage {
+  const revision = revisionFor(input);
   return {
-    sourceRevision: sha256HexOfCanonicalJson(toJsonValue(input)),
+    sourceRef: "manual-evidence",
+    pageRef: revision,
+    state: {
+      status: "available",
+      sourceRevision: revision,
+      completeness: "complete",
+    },
     observations: (input.observations ?? []).map((observation) => ({
       sourceRecordId: observation.id,
       episodeId: observation.episodeId,
@@ -77,8 +90,7 @@ function pageFor(input: ManualEvidenceInput): EvidencePage {
 export function createManualEvidenceSource(): EvidenceSource<ManualEvidenceInput> {
   return {
     descriptor: { id: "manual-evidence", adapterVersion: "1.0.0" },
-    probe: (input) =>
-      Promise.resolve({ supported: true, sourceRevision: pageFor(input).sourceRevision, diagnostics: [] }),
+    probe: (input) => Promise.resolve({ supported: true, sourceRevision: revisionFor(input), diagnostics: [] }),
     read: async function* (input): AsyncIterable<EvidencePage> {
       yield pageFor(input);
     },

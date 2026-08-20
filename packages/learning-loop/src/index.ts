@@ -26,6 +26,8 @@ export type { Candidate, CandidateDigestInput, CandidateIntervention, RiskTier }
 export { candidateContentDigest, maxRiskTier, parseCandidate } from "./records/candidate.js";
 export type { CandidateReview, ReviewDisposition, ReviewFinding } from "./records/review.js";
 export { parseCandidateReview, reviewInvalidReasons } from "./records/review.js";
+export type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "./records/source-health.js";
+export { parseEvidenceHealthFinding, parseImportReceipt, parseSourcePageReceipt } from "./records/source-health.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";
@@ -41,8 +43,9 @@ export { conservativePolicy } from "./engine/policy.js";
 export type { GovernanceView } from "./engine/governance.js";
 export type { IngestReceipt } from "./engine/ingest.js";
 export type { CandidateInput, ProposeOutcome } from "./engine/propose.js";
-export type { CandidateView, EpisodeQuery, EpisodeView } from "./engine/query.js";
+export type { CandidateView, EpisodeQuery, EpisodeView, EvidenceHealthQuery } from "./engine/query.js";
 export type { MeasurementQuery, ObservationQuery, QueryPage } from "./engine/query.js";
+export type { SourcePageReceiptQuery } from "./engine/query.js";
 export type { CandidateReviewer, CandidateReviewInput } from "./engine/review.js";
 export type { LearningReport, LearningReportQuery } from "./engine/report.js";
 export type { LearningLoop, LearningLoopConfig } from "./engine/loop.js";

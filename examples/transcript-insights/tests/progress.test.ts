@@ -23,7 +23,9 @@ test("a multi-page fold reports aggregate page progress before completion", asyn
     probe: () => Promise.resolve({ supported: true, sourceRevision: "progress-revision", diagnostics: [] }),
     read: async function* () {
       yield {
-        sourceRevision: "progress-revision",
+        sourceRef: "progress-input",
+        pageRef: "page-0",
+        state: { status: "available", sourceRevision: "progress-revision", completeness: "complete" as const },
         observations: Array.from({ length: 201 }, (_, index) => ({
           sourceRecordId: `obs-${String(index).padStart(3, "0")}`,
           episodeId: "progress-episode",

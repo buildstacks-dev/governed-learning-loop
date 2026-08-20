@@ -150,16 +150,17 @@ remain separate follow-up work.
 
 #30c2b2-receipts adds a content-bound DetectorPackRunReceipt for configured
 commit runs whose requested population resolves one-to-one in the exact scope.
-It embeds the full policy, normalized retry-stable child/recurrence facts and an
-explicit not_assessed governance snapshot; callback activity and `existing`
+It embeds the full policy, normalized retry-stable child/recurrence facts and a
+content-bound governance snapshot (explicitly not assessed when ineligible,
+otherwise observationally assessed); callback activity and `existing`
 persistence state remain transient. Child graphs commit first, a scope-private
 result lock follows, and the receipt is last, so retries forward-complete while
 honestly preserving non-atomic child commits. Public query/get methods require
 exact scope and views independently report registry, policy, receipt/child
 commit, governance and current evidence health. Missing/wrong-scope inputs,
 policy omission and dry runs create no receipt. The assessed Candidate/review
-branch is parseable for future audit but is historical and non-enforcing in
-this runtime.
+branch is content-bound and independently revalidated; its classifications
+remain non-enforcing.
 
 #30c2b2-claims adds private observational links from an exact committed
 derivation execution to one recurrence group and from every new Candidate to a
@@ -171,8 +172,20 @@ Candidate and claim bytes before the optional group member and Candidate
 record, so exact same-proposer retry forward-completes without rewriting
 historical Candidates. CandidateView
 exposes `recurrenceLineage`, but claims do not deduplicate, suppress, refuse,
-review, authorize or validate a proposal. Pack governance remains explicitly
-not assessed until the next decision.
+review, authorize or validate a proposal.
+
+#30c2b2-assessment adds a private review-history marker/index and mints
+observational assessed governance for uncapped insight groups with one complete
+active frontier. The pure parser/runtime classifier distinguishes available,
+deduplicated, suppressed, and ambiguous revision state under exact review
+append order and checked evidence-multiplier thresholds. Capped insight and
+evidence-health groups remain not assessed and do no Candidate/review work.
+Exact views distinguish current, historical, invalid, and not-assessed
+governance with a shared 50,000-work-unit ceiling. None of these descriptions
+changes `propose`, review eligibility, publication, authority, utility, or
+efficacy. Candidate evidence revalidation still inherits global evidence
+revision/receipt scanning, so complete scope-local analysis work remains an
+explicit follow-up rather than a shipped claim.
 
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.

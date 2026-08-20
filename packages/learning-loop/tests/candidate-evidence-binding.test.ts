@@ -21,6 +21,7 @@ import {
   parseCandidate,
   parseObservation,
   parseSourcePageReceipt,
+  scopeDigest,
   sha256HexOfCanonicalJson,
   toJsonValue,
 } from "../src/index.js";
@@ -967,6 +968,28 @@ describe("adversarial proposal, review, lineage, and report boundaries", () => {
         reviewedAt: "2026-08-19T00:00:00.000Z",
       };
       const value = toJsonValue(review);
+      const marker = await store.get({
+        namespace: "learning",
+        kind: "candidate-review",
+        id: outcome.candidate.id,
+      });
+      if (marker === undefined) throw new Error("forged review fixture requires a Candidate review marker");
+      const reference = toJsonValue({
+        kind: "review",
+        reviewId: review.id,
+        recordDigest: recordDigest(value),
+        candidateId: outcome.candidate.id,
+        candidateDigest: outcome.candidate.contentDigest,
+        scopeDigest: scopeDigest(outcome.candidate.scope),
+      });
+      await expect(
+        store.append(
+          marker.key,
+          marker.revision,
+          [{ id: `review:${review.id}`, digest: recordDigest(reference), value: reference }],
+          `index-forged-${variant}-review`,
+        ),
+      ).resolves.toMatchObject({ status: "updated" });
       await expect(
         store.create(
           { namespace: "learning", kind: "review", id: review.id },

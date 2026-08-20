@@ -1254,7 +1254,7 @@ describe("Candidate recurrence decisions and views", () => {
     });
   });
 
-  it("propagates self-consistent proposal-baseline or derivation-claim tamper as observational invalidity", async () => {
+  it("treats proposal-baseline or derivation-claim replacement as exact marker corruption", async () => {
     const { harness, facts, proposer } = await groupedFixture();
     const outcome = await harness.learning.propose(
       derivedInput(proposer, facts.derivation, { id: "tampered-baseline-candidate" }),
@@ -1341,13 +1341,11 @@ describe("Candidate recurrence decisions and views", () => {
         tombstone: (input) => harness.store.tombstone(input),
         list: (query) => harness.store.list(query),
       };
-      const view = await runGetCandidateView(replaceContextStore(harness.context, changedStore), {
-        candidateId: outcome.candidate.id,
-      });
-      expect(view).toMatchObject({
-        recurrenceLineage: { status: "invalid" },
-        governance: { review: "required", publication: "blocked" },
-      });
+      await expect(
+        runGetCandidateView(replaceContextStore(harness.context, changedStore), {
+          candidateId: outcome.candidate.id,
+        }),
+      ).rejects.toMatchObject({ code: "store.corrupt" });
     }
   });
 

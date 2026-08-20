@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { canonicalJsonText, sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
+import { LearningLoopError } from "../diagnostics.js";
 import type { Diagnostic } from "../diagnostics.js";
 import { invalid, parseFiniteNumber, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
@@ -39,6 +40,12 @@ import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import type { QueryPage } from "./query.js";
 import { loadDetectorExecutionRecord, loadRegistrySnapshot } from "./semantic-graph.js";
 import { loadDetectorExecutionView } from "./semantic-views.js";
+import {
+  assessRecurrenceGroupGovernance,
+  createRecurrenceGovernanceReadCache,
+  embeddedAssessedGovernanceIsExact,
+} from "./recurrence-governance.js";
+import type { RecurrenceGovernanceReadCache } from "./recurrence-governance.js";
 
 const MAX_QUERY_LIMIT = 500;
 const MAX_FILTER_VALUES = 1_000;
@@ -87,6 +94,26 @@ const PREFLIGHT_REASON_CODES = new Set([
 
 type RegistryStatus = (typeof REGISTRY_STATUSES)[number];
 type CommitStatus = (typeof COMMIT_STATUSES)[number];
+type GroupedReceiptRecurrence = Extract<
+  DetectorPackRunReceipt["items"][number]["recurrence"],
+  { readonly status: "grouped" }
+>;
+type GroupGovernance = GroupedReceiptRecurrence["governance"];
+type RecurrenceLineage = Awaited<ReturnType<typeof recurrenceReceiptLineage>>;
+
+interface GovernanceReadState {
+  readonly workBudget: { claimRefs: number };
+  readonly cache: RecurrenceGovernanceReadCache;
+  readonly assessments: Map<string, Promise<GroupGovernance>>;
+}
+
+function createGovernanceReadState(): GovernanceReadState {
+  return {
+    workBudget: { claimRefs: 0 },
+    cache: createRecurrenceGovernanceReadCache(),
+    assessments: new Map(),
+  };
+}
 
 export interface DetectorPackRunQuery {
   readonly scope: Scope;
@@ -359,13 +386,137 @@ function mergeHealth(left: EvidenceHealthView, right: EvidenceHealthView): Evide
   };
 }
 
+function chargeEmbeddedGovernanceWork(receipt: DetectorPackRunReceipt, state: GovernanceReadState): void {
+  for (const item of receipt.items) {
+    if (item.recurrence.status !== "grouped" || item.recurrence.governance.status !== "assessed") continue;
+    state.workBudget.claimRefs += item.recurrence.governance.candidateBindings.length;
+    if (state.workBudget.claimRefs > 50_000) {
+      throw invalid("query.incomplete", "pack-run governance view exceeds its exact work ceiling", []);
+    }
+  }
+}
+
+async function currentGovernanceBinding(
+  context: EngineContext,
+  receipt: DetectorPackRunReceipt,
+  groupCache: Map<string, RecurrenceLineage>,
+  state: GovernanceReadState,
+  registryConfigured: boolean,
+  policyConfigured: boolean,
+): Promise<DetectorPackRunView["governanceBinding"]> {
+  chargeEmbeddedGovernanceWork(receipt, state);
+  let assessableGroups = 0;
+  let hasUnassessedGroup = false;
+  let hasHistoricalGroup = false;
+  const invalidDiagnostics: Diagnostic[] = [];
+  for (const item of receipt.items) {
+    if (item.outputKind !== "insight_derivation" || item.recurrence.status !== "grouped") continue;
+    const embedded = item.recurrence.governance;
+    const legacyAssessedCap = embedded.status === "assessed" && embedded.groupDisposition === "capped";
+    if (embedded.groupDisposition === "capped" && !legacyAssessedCap) continue;
+    if (legacyAssessedCap) {
+      hasHistoricalGroup = true;
+      continue;
+    }
+    if (!legacyAssessedCap) assessableGroups += 1;
+    if (embedded.status !== "assessed") {
+      hasUnassessedGroup = true;
+      continue;
+    }
+    const lineage = groupCache.get(item.recurrence.groupKeyDigest);
+    if (lineage === undefined) {
+      invalidDiagnostics.push(
+        diagnostic("detector.pack_governance_invalid", "error", "assessed governance has no exact recurrence lineage"),
+      );
+      continue;
+    }
+    let embeddedExact: boolean;
+    try {
+      embeddedExact = await embeddedAssessedGovernanceIsExact(context, {
+        groupKeyDigest: item.recurrence.groupKeyDigest,
+        governance: embedded,
+        workBudget: state.workBudget,
+        groupLineage: lineage,
+        cache: state.cache,
+      });
+    } catch (error) {
+      if (error instanceof LearningLoopError && error.code === "detector.limit_exceeded") {
+        throw invalid("query.incomplete", "pack-run governance view exceeds its exact work ceiling", []);
+      }
+      throw error;
+    }
+    if (!embeddedExact) {
+      invalidDiagnostics.push(
+        diagnostic(
+          "detector.pack_governance_invalid",
+          "error",
+          "assessed governance contains a missing or mismatched exact binding",
+        ),
+      );
+      continue;
+    }
+    if (
+      lineage.executionCount !== item.recurrence.executionCount ||
+      recordDigest(toJsonValue(lineage.episodeIdentityDigests)) !==
+        recordDigest(toJsonValue(item.recurrence.episodeIdentityDigests))
+    ) {
+      hasHistoricalGroup = true;
+      continue;
+    }
+    if (!registryConfigured || !policyConfigured) {
+      hasHistoricalGroup = true;
+      continue;
+    }
+    const cacheKey = `${item.recurrence.groupKeyDigest}\u0000${receipt.policy.policyDigest}`;
+    let pending = state.assessments.get(cacheKey);
+    if (pending === undefined) {
+      pending = assessRecurrenceGroupGovernance(context, {
+        groupKeyDigest: item.recurrence.groupKeyDigest,
+        currentDistinctEpisodeCount: lineage.episodeIdentityDigests.length,
+        capped: false,
+        policy: receipt.policy,
+        workBudget: state.workBudget,
+        groupLineage: lineage,
+        cache: state.cache,
+      });
+      state.assessments.set(cacheKey, pending);
+    }
+    let current: GroupGovernance;
+    try {
+      current = await pending;
+    } catch (error) {
+      if (error instanceof LearningLoopError && error.code === "detector.limit_exceeded") {
+        throw invalid("query.incomplete", "pack-run governance view exceeds its exact work ceiling", []);
+      }
+      throw error;
+    }
+    if (recordDigest(toJsonValue(current)) !== recordDigest(toJsonValue(embedded))) {
+      hasHistoricalGroup = true;
+    }
+  }
+  if (invalidDiagnostics.length > 0) return { status: "invalid", diagnostics: invalidDiagnostics };
+  if (hasUnassessedGroup) return { status: "not_assessed" };
+  if (hasHistoricalGroup) {
+    return {
+      status: "historical",
+      diagnostics: [
+        diagnostic(
+          "detector.pack_governance_historical",
+          "warning",
+          "assessed governance differs from the exact current frontier",
+        ),
+      ],
+    };
+  }
+  if (assessableGroups === 0) return { status: "not_assessed" };
+  return { status: "current" };
+}
+
 export async function loadDetectorPackRunView(
   context: EngineContext,
   receipt: DetectorPackRunReceipt,
-  groupCache: Map<
-    string,
-    { readonly executionIds: readonly string[]; readonly episodeIdentityDigests: readonly string[] }
-  > = new Map(),
+  groupCache: Map<string, RecurrenceLineage> = new Map(),
+  governanceState: GovernanceReadState = createGovernanceReadState(),
 ): Promise<DetectorPackRunView> {
   const invalidDiagnostics: Diagnostic[] = [];
   for (const bound of receipt.population.resolvedEpisodes) {
@@ -640,11 +791,7 @@ export async function loadDetectorPackRunView(
         try {
           let group = groupCache.get(item.recurrence.groupKeyDigest);
           if (group === undefined) {
-            const lineage = await recurrenceReceiptLineage(context, execution);
-            group = {
-              executionIds: lineage.executionIds,
-              episodeIdentityDigests: lineage.episodeIdentityDigests,
-            };
+            group = await recurrenceReceiptLineage(context, execution);
             groupCache.set(item.recurrence.groupKeyDigest, group);
           }
           if (
@@ -660,7 +807,8 @@ export async function loadDetectorPackRunView(
               diagnostic("detector.pack_recurrence_invalid", "error", "pack receipt recurrence lineage is mismatched"),
             );
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof LearningLoopError && error.code === "store.corrupt") throw error;
           childDiagnostics.push(
             diagnostic("detector.pack_recurrence_invalid", "error", "pack receipt recurrence lineage is unreadable"),
           );
@@ -682,7 +830,8 @@ export async function loadDetectorPackRunView(
               diagnostic("detector.pack_recurrence_invalid", "error", "pack receipt recurrence decision is mismatched"),
             );
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof LearningLoopError && error.code === "store.corrupt") throw error;
           childDiagnostics.push(
             diagnostic("detector.pack_recurrence_invalid", "error", "pack receipt recurrence decision is unreadable"),
           );
@@ -696,9 +845,22 @@ export async function loadDetectorPackRunView(
       diagnostics: childDiagnostics,
     });
   }
-  const assessed = receipt.items.some(
-    (item) => item.recurrence.status === "grouped" && item.recurrence.governance.status === "assessed",
+  let governanceBinding = await currentGovernanceBinding(
+    context,
+    receipt,
+    groupCache,
+    governanceState,
+    registryBinding.status === "configured",
+    policyBinding.status === "configured",
   );
+  if (invalidDiagnostics.length > 0 && governanceBinding.status !== "invalid") {
+    governanceBinding = {
+      status: "invalid",
+      diagnostics: [
+        diagnostic("detector.pack_governance_invalid", "error", "governance depends on an invalid pack receipt graph"),
+      ],
+    };
+  }
   return {
     receipt,
     registryBinding,
@@ -708,18 +870,7 @@ export async function loadDetectorPackRunView(
         ? { status: "committed" }
         : { status: "invalid", diagnostics: invalidDiagnostics },
     childBindings,
-    governanceBinding: assessed
-      ? {
-          status: "historical",
-          diagnostics: [
-            diagnostic(
-              "detector.pack_governance_historical",
-              "warning",
-              "assessed governance is not current in this runtime",
-            ),
-          ],
-        }
-      : { status: "not_assessed" },
+    governanceBinding,
     evidenceHealth:
       invalidDiagnostics.length === 0
         ? evidenceHealth
@@ -761,10 +912,8 @@ async function loadStablePage(
       limit: query.limit,
     });
     const firstViews: DetectorPackRunView[] = [];
-    const firstGroupCache = new Map<
-      string,
-      { readonly executionIds: readonly string[]; readonly episodeIdentityDigests: readonly string[] }
-    >();
+    const firstGroupCache = new Map<string, RecurrenceLineage>();
+    const firstGovernanceState = createGovernanceReadState();
     let receiptBytes = 0;
     let receiptItems = 0;
     let childReferences = 0;
@@ -792,16 +941,14 @@ async function loadStablePage(
       if (receipt.receiptDigest !== entry.receiptDigest || receipt.scopeDigest !== exactScopeDigest) {
         throw invalid("store.corrupt", "indexed detector pack-run receipt is mismatched", []);
       }
-      const view = await loadDetectorPackRunView(context, receipt, firstGroupCache);
+      const view = await loadDetectorPackRunView(context, receipt, firstGroupCache, firstGovernanceState);
       firstViews.push(view);
     }
     const after = await snapshotRevision(context, exactScopeDigest);
     if (before === after) {
       const items: DetectorPackRunView[] = [];
-      const secondGroupCache = new Map<
-        string,
-        { readonly executionIds: readonly string[]; readonly episodeIdentityDigests: readonly string[] }
-      >();
+      const secondGroupCache = new Map<string, RecurrenceLineage>();
+      const secondGovernanceState = createGovernanceReadState();
       let unstable = false;
       for (const firstView of firstViews) {
         const currentReceipt = await loadDetectorPackRunReceipt(context, firstView.receipt.id);
@@ -809,7 +956,12 @@ async function loadStablePage(
           unstable = true;
           break;
         }
-        const currentView = await loadDetectorPackRunView(context, currentReceipt, secondGroupCache);
+        const currentView = await loadDetectorPackRunView(
+          context,
+          currentReceipt,
+          secondGroupCache,
+          secondGovernanceState,
+        );
         if (recordDigest(toJsonValue(currentView)) !== recordDigest(toJsonValue(firstView))) {
           unstable = true;
           break;

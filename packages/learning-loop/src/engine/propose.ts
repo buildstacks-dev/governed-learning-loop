@@ -24,6 +24,7 @@ import {
   recordKey,
 } from "./context.js";
 import { assertVerifiedPrincipal } from "./identity.js";
+import { ensureCandidateReviewMarker } from "./candidate-review-index.js";
 import type { CandidateView } from "./query.js";
 import { candidateGovernanceStateOf } from "./views.js";
 import { resolveCandidateEvidence } from "./evidence-binding.js";
@@ -603,6 +604,7 @@ async function createClaimedCandidate(
     ]);
   }
   await assertCandidateContentLock(context, candidate, recurrenceClaim);
+  await ensureCandidateReviewMarker(context, candidate);
   await persistCandidateRecurrenceClaim(context, recurrenceClaim);
   await assertCandidateContentLock(context, candidate, recurrenceClaim);
   const status = await createOnly(context, "candidate", candidate.id, candidate, operationId);

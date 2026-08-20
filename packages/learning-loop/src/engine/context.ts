@@ -51,6 +51,7 @@ export type RecordKind =
   | "derivation-recurrence"
   | "candidate-recurrence-claim"
   | "detector-recurrence-group-candidate"
+  | "candidate-review"
   | "detector-pack-run-receipt";
 
 export interface EngineContext {
@@ -175,6 +176,9 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
   ) {
     throw invalid("store.corrupt", "recurrence claim stream exceeds its ceiling", ["value"]);
   }
+  if (kind === "candidate-review" && Array.isArray(value) && value.length > 5_001) {
+    throw invalid("store.corrupt", "Candidate review index exceeds its ceiling", ["value"]);
+  }
   if (kind === "detector-recurrence-group") {
     if (!Array.isArray(value)) {
       throw invalid("store.corrupt", "detector recurrence group must be a stream-entry array", ["value"]);
@@ -196,6 +200,7 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
     kind === "derivation-execution" ||
     kind === "derivation-recurrence" ||
     kind === "detector-recurrence-group-candidate" ||
+    kind === "candidate-review" ||
     kind === "detector-recurrence-group"
   ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);

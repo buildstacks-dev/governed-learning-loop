@@ -5,6 +5,7 @@ import { parseArrayOf, parseNonEmptyText, parseOneOf, parseText, readFields } fr
 import type { Parse } from "../parse/toolkit.js";
 import type { PrincipalRef } from "./principal.js";
 import { parsePrincipalRefAt } from "./principal.js";
+import { parseDurableId } from "./semantic-shared.js";
 
 export type ReviewDisposition = "accept" | "revise" | "reject" | "escalate";
 
@@ -58,8 +59,8 @@ export function parseCandidateReview(input: unknown): CandidateReview {
   const schemaVersion = fields.schemaVersion1();
   return {
     schemaVersion,
-    id: fields.req("id", parseNonEmptyText),
-    candidateId: fields.req("candidateId", parseNonEmptyText),
+    id: fields.req("id", parseDurableId),
+    candidateId: fields.req("candidateId", parseDurableId),
     candidateDigest: fields.req("candidateDigest", parseNonEmptyText),
     reviewer: fields.req("reviewer", parsePrincipalRefAt),
     reviewerAttestationDigest: fields.req("reviewerAttestationDigest", parseNonEmptyText),

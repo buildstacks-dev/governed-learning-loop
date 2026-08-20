@@ -202,7 +202,13 @@ type CandidateRecurrenceClaim =
   Candidate view cannot combine claim bytes from different snapshots.
 - Orphan claim records and append entries remain for crash audit and exact
   retry. Only exact terminal execution or Candidate receipts make them count.
-- The immediate follow-up owns Candidate/review frontier assessment, assessed
-  pack receipts, group deduplication, rejection suppression and serialized
-  proposal admission. #30d owns detector contents, #13 provider workflows, and
-  #26 candidate-utility calibration.
+- Decision 0017 implements observational Candidate/review frontier assessment
+  and assessed pack receipt views. Enforced group deduplication, rejection
+  suppression and serialized proposal admission remain later work. #30d owns
+  detector contents, #13 provider workflows, and #26 candidate-utility
+  calibration.
+
+The original rulings above remain the exact claim-only boundary at the time
+0016 landed. Decision 0017 is additive: it reads those claims into immutable
+receipt descriptions but does not turn them into proposal enforcement or
+authority.

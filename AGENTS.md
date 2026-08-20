@@ -146,8 +146,8 @@ between code and contract, open an issue — never silently drift either one.
   dispositions: no-result items omit the unknown classification, and caps do
   not truncate or block exact child persistence.
   rejectionSuppression bytes are registered and digested but remain
-  non-enforcing after durable receipts and observational Candidate/group claims;
-  review assessment and proposal admission require a later decision.
+  non-enforcing after durable receipts, observational Candidate/group claims,
+  and assessed receipt views; proposal admission requires a later decision.
 - **Pack receipts are retry-stable, scoped audit facts.** Only a configured
   commit with a one-to-one exact-scope population may create a
   DetectorPackRunReceipt; dry, policy-omitted, missing or wrong-scope inputs
@@ -156,9 +156,9 @@ between code and contract, open an issue — never silently drift either one.
   contain only stable reason codes. Child graphs and the exact registry
   snapshot precede a scope-private result lock; the receipt is last and is not
   a transaction across children. Reads require exact scope and revalidate every
-  child and recurrence reference. Governance remains explicitly not_assessed;
-  reserved assessed bytes grant no Candidate, suppression, authority, utility
-  or efficacy.
+  child and recurrence reference. Observational assessed bytes bind an exact
+  active Candidate/review frontier but grant no proposal refusal, suppression,
+  authority, utility or efficacy.
 - **Recurrence claims are private and observational.** Exact grouped
   derivations append content-addressed same-group execution claims before the
   execution receipt. Every new Candidate first freezes an exact Candidate-v2
@@ -171,6 +171,19 @@ between code and contract, open an issue — never silently drift either one.
   but this slice does not deduplicate, suppress, refuse, review, authorize,
   validate, or claim utility. Raw malformed claim graphs remain
   `schema.corrupt` or `store.corrupt`.
+- **Assessed recurrence governance is descriptive.** Every new Candidate has a
+  private review-history marker before its receipt; exact review refs append
+  before Review receipts and latest means committed append order. Uncapped
+  insight groups classify only the exact active frontier under one shared pure
+  parser/runtime matrix. Capped insight and evidence-health groups do no
+  Candidate assessment work. Pre-marker or typed-incomplete active frontiers
+  remain explicitly not assessed. Pack build/direct/page folds share bounded
+  caches and fail above 50,000 governance work units. Current, historical,
+  invalid, commit, registry, policy, and evidence-health dimensions stay
+  separate, and no classification changes `propose` or publication.
+  Candidate evidence/derivation revalidation still inherits global evidence
+  revision/scanning work; do not claim fully scope-local assessment work until
+  exact-reference source-receipt/health indexes replace that debt.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

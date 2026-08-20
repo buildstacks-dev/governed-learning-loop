@@ -126,8 +126,12 @@ snapshots. No public receipt writer is exposed.
 claims, exact frozen proposal baselines and observational CandidateView
 lineage.
 
-**Still deferred:** assessed availability, deduplication,
-decisive-rejection suppression and override evidence, and proposal admission.
+**Implemented next by decision 0017:** observational assessed availability,
+deduplication/suppression descriptions, exact review frontiers, and
+current/historical assessed receipt views.
+
+**Still deferred:** enforced deduplication, decisive-rejection suppression,
+override admission, and proposal refusal.
 
 Reference detector contents and synthetic controls remain #30d. Optional
 semantic/model workflows remain #13. Candidate-utility calibration and every

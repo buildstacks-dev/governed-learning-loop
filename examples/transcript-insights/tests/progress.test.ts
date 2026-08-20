@@ -1,12 +1,29 @@
-import type { DetectorRegistration, EvidenceSource } from "@cormidia/learning-loop";
+import type {
+  DetectorExecutionRecord,
+  DetectorPackManifest,
+  DetectorRegistration,
+  EvidenceSource,
+  SemanticRegistryConfig,
+  SourceSemanticProfile,
+} from "@cormidia/learning-loop";
 import {
   conservativePolicy,
   createExactScopePolicy,
   createLearningLoop,
+  detectorExecutionDigest,
+  detectorExecutionKeyDigest,
+  detectorPackManifestDigest,
   detectorRegistrationDigest,
   defineSourceRegistration,
+  parseDetectorExecutionRecord,
+  parseDetectorPackManifest,
   parseDetectorRegistration,
+  parseSemanticRegistryConfig,
+  parseSourceSemanticProfile,
+  scopeDigest,
+  semanticRegistryDigest,
   sha256HexOfCanonicalJson,
+  sourceSemanticProfileDigest,
   toJsonValue,
 } from "@cormidia/learning-loop";
 import {
@@ -148,5 +165,108 @@ test("strict consumer can construct and parse a host-neutral detector registrati
     id: "host:transcript-evidence-coverage",
     outputKind: "evidence_health",
     lensConstraint: { mode: "independent" },
+  });
+
+  const profileBase: Omit<SourceSemanticProfile, "schemaVersion" | "profileDigest"> = {
+    sourceId: "strict-consumer-source",
+    sourceRegistrationRevision: "8".repeat(64),
+    observationVocabularyDigest: registration.observationVocabularyDigest,
+    capabilities: ["source.health"],
+    observationKinds: ["source.health"],
+  };
+  const profile = parseSourceSemanticProfile({
+    schemaVersion: 1,
+    ...profileBase,
+    profileDigest: sourceSemanticProfileDigest(profileBase),
+  });
+  const detectorRef = {
+    id: registration.id,
+    version: registration.version,
+    registrationDigest: registration.registrationDigest,
+  };
+  const packBase: Omit<DetectorPackManifest, "schemaVersion" | "manifestDigest"> = {
+    id: "strict-consumer-pack",
+    version: "1.0.0",
+    kind: "host",
+    detectors: [detectorRef],
+    lenses: [],
+    changelogDigest: "9".repeat(64),
+    supersedes: null,
+  };
+  const pack = parseDetectorPackManifest({
+    schemaVersion: 1,
+    ...packBase,
+    manifestDigest: detectorPackManifestDigest(packBase),
+  });
+  const packRef = { id: pack.id, version: pack.version, manifestDigest: pack.manifestDigest };
+  const registryBase: Omit<SemanticRegistryConfig, "schemaVersion" | "registryDigest"> = {
+    scopePolicyDigest: registration.scopePolicyDigest,
+    detectors: [registration],
+    packs: [pack],
+    lenses: [],
+    sourceProfiles: [profile],
+    selectedDetectorRefs: [detectorRef],
+    selectedPackRefs: [packRef],
+    selectedLensRefs: [],
+  };
+  const registry = parseSemanticRegistryConfig({
+    schemaVersion: 1,
+    ...registryBase,
+    registryDigest: semanticRegistryDigest(registryBase),
+  });
+  expect(registry.selectedDetectorRefs).toEqual([detectorRef]);
+
+  const executionScope = [{ type: "project", id: "strict-consumer" }];
+  const episodes: DetectorExecutionRecord["window"]["population"]["episodes"] = [];
+  const normalizationPolicyDigest = registration.normalizationPolicyDigest;
+  const comparabilityPolicyDigest = registration.comparabilityPolicyDigest;
+  const population = {
+    episodes,
+    normalizationPolicyDigest,
+    comparabilityPolicyDigest,
+    populationDigest: digest({ episodes, normalizationPolicyDigest, comparabilityPolicyDigest }),
+  };
+  const windowBase = {
+    sourceProfiles: [profile],
+    population,
+    evidenceRefs: [],
+    evidenceHealthFindings: [],
+    availableCapabilities: ["source.health"],
+  };
+  const window = { ...windowBase, windowDigest: digest(windowBase) };
+  const executionBase = {
+    loopRegistryRevision: "a".repeat(64),
+    detector: {
+      ...detectorRef,
+      configurationDigest: registration.configurationDigest,
+      implementationDigest: registration.implementationDigest,
+    },
+    pack: packRef,
+    lens: null,
+    scope: executionScope,
+    scopeDigest: scopeDigest(executionScope),
+    scopePolicyDigest: registration.scopePolicyDigest,
+    outputKind: registration.outputKind,
+    window,
+  };
+  const result: DetectorExecutionRecord["result"] = {
+    status: "applied",
+    conditionDetected: false,
+    derivationRefs: [],
+    evidenceHealthFindings: [],
+  };
+  const executionKeyDigest = detectorExecutionKeyDigest(executionBase);
+  const executionDigest = detectorExecutionDigest({ ...executionBase, result, executionKeyDigest });
+  const execution = parseDetectorExecutionRecord({
+    schemaVersion: 1,
+    id: `detector-execution-${executionKeyDigest}`,
+    ...executionBase,
+    result,
+    executionKeyDigest,
+    executionDigest,
+  });
+  expect(execution).toMatchObject({
+    outputKind: "evidence_health",
+    result: { status: "applied", conditionDetected: false },
   });
 });

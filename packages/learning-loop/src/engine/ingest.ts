@@ -697,6 +697,7 @@ export async function runIngest(
   }
   const adapter = adapterFor(registration);
   const contentPolicy = context.contentPoliciesById.get(registration.contentPolicyId);
+  const sourceSemanticProfile = context.sourceSemanticProfilesBySourceId?.get(registration.id);
   if (adapter === undefined || contentPolicy === undefined) {
     // Both are verified at construction; reaching this means the context was
     // assembled outside createLearningLoop.
@@ -846,6 +847,14 @@ export async function runIngest(
       for (const [index, raw] of page.observations.entries()) {
         try {
           const projected = parseProjectedObservationAt(raw, [...pagePath, "observations", index]);
+          if (sourceSemanticProfile !== undefined && !sourceSemanticProfile.observationKinds.includes(projected.kind)) {
+            throw invalid("schema.invalid", "projected observation kind is absent from its source semantic profile", [
+              ...pagePath,
+              "observations",
+              index,
+              "kind",
+            ]);
+          }
           const id = derivedRecordId(registration.id, projected.sourceRecordId);
           if (!reserveDerivative(pageTally, "observation", id, [...pagePath, "observations", index])) continue;
           const operationId = `${attemptId}/pages/${pageIndex}/observations/${projected.sourceRecordId}`;

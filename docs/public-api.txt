@@ -40,6 +40,17 @@ root:parseLearningLensRegistration
 root:InsightDerivation
 root:insightDerivationDigest
 root:parseInsightDerivation
+root:SourceSemanticProfile
+root:sourceSemanticProfileDigest
+root:parseSourceSemanticProfile
+root:SemanticRegistryConfig
+root:semanticRegistryDigest
+root:parseSemanticRegistryConfig
+root:DetectorExecutionRecord
+root:DetectorExecutionStatus
+root:detectorExecutionKeyDigest
+root:detectorExecutionDigest
+root:parseDetectorExecutionRecord
 root:EvidenceRef
 root:EvidenceRefV1
 root:ObservationEvidenceRef

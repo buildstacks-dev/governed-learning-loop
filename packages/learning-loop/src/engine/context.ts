@@ -11,9 +11,14 @@ import { invalid, parseArrayOf, parseNonEmptyText, parseOneOf, readFields } from
 import type { Parse } from "../parse/toolkit.js";
 import type { Candidate, RiskTier } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
+import type { DetectorPackManifest } from "../records/detector-pack.js";
+import type { DetectorRegistration } from "../records/detector-registration.js";
+import type { LearningLensRegistration } from "../records/learning-lens.js";
 import type { IdentityPort } from "../records/principal.js";
 import type { ContentPolicy } from "../records/provenance.js";
 import type { ScopePolicy } from "../records/scope.js";
+import type { SemanticRegistryConfig } from "../records/semantic-registry.js";
+import type { SourceSemanticProfile } from "../records/source-semantic-profile.js";
 import type { LearningPolicy, PolicyRules } from "./policy.js";
 
 /** Every engine-owned record lives in this namespace. */
@@ -42,6 +47,11 @@ export interface EngineContext {
   readonly contentPoliciesById: ReadonlyMap<string, ContentPolicy>;
   readonly sources: ReadonlySet<RegisteredSource<unknown>>;
   readonly identity: IdentityPort;
+  readonly semanticRegistry?: SemanticRegistryConfig;
+  readonly semanticDetectorsByRef?: ReadonlyMap<string, DetectorRegistration>;
+  readonly semanticPacksByRef?: ReadonlyMap<string, DetectorPackManifest>;
+  readonly semanticLensesByRef?: ReadonlyMap<string, LearningLensRegistration>;
+  readonly sourceSemanticProfilesBySourceId?: ReadonlyMap<string, SourceSemanticProfile>;
   readonly registryRevision: string;
   readonly queryCursorScopeDigest: string;
   readonly clock: Clock;

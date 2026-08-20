@@ -20,6 +20,10 @@ import type { MeasurementRecord } from "../records/episode.js";
 import type { Observation } from "../records/observation.js";
 import type { CandidateReview } from "../records/review.js";
 import type { ScopePolicy } from "../records/scope.js";
+import type { SemanticRegistryConfig } from "../records/semantic-registry.js";
+import { parseSemanticRegistryConfig } from "../records/semantic-registry.js";
+import { detectorRefKey, lensRefKey, packRefKey } from "../records/semantic-shared.js";
+import type { SourceSemanticProfile } from "../records/source-semantic-profile.js";
 import type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
 import type { IngestOptions, IngestReceipt } from "./ingest.js";
@@ -61,6 +65,7 @@ export interface LearningLoopConfig {
   readonly scopePolicy: ScopePolicy;
   readonly contentPolicies: readonly ContentPolicy[];
   readonly sources: readonly RegisteredSource<unknown>[];
+  readonly semanticRegistry?: SemanticRegistryConfig;
   /** Stable host/store scope for resumable query cursors; omitted means process-local cursors. */
   readonly queryCursorScope?: string;
   readonly clock?: Clock;
@@ -139,7 +144,16 @@ function snapshotScopePolicy(policy: ScopePolicy): ScopePolicy {
   return snapshot;
 }
 
+function freezeSemanticValue<T>(value: T): T {
+  if (typeof value === "object" && value !== null) {
+    for (const nested of Object.values(value)) freezeSemanticValue(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
+  const configuredSemanticRegistry = config.semanticRegistry;
   const contentPoliciesById = new Map<string, ContentPolicy>();
   for (const configuredPolicy of config.contentPolicies) {
     const policy = snapshotContentPolicy(configuredPolicy);
@@ -179,6 +193,62 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   const scopePolicy = snapshotScopePolicy(config.scopePolicy);
   const identityPort = config.identity;
   const identity = identityRegistryProjection(identityPort);
+  const semanticRegistry =
+    configuredSemanticRegistry === undefined
+      ? undefined
+      : freezeSemanticValue(parseSemanticRegistryConfig(configuredSemanticRegistry));
+  if (semanticRegistry !== undefined && semanticRegistry.scopePolicyDigest !== scopePolicy.digest) {
+    throw invalid("config.invalid", "semantic registry scope policy does not match the configured loop scope policy", [
+      "semanticRegistry",
+      "scopePolicyDigest",
+    ]);
+  }
+  const sourcesById = new Map([...sources].map((source) => [source.id, source]));
+  const sourceSemanticProfilesBySourceId = new Map<string, SourceSemanticProfile>();
+  if (semanticRegistry !== undefined) {
+    for (const [index, profile] of semanticRegistry.sourceProfiles.entries()) {
+      const source = sourcesById.get(profile.sourceId);
+      if (source === undefined) {
+        throw invalid("config.invalid", "source semantic profile names an unconfigured source", [
+          "semanticRegistry",
+          "sourceProfiles",
+          index,
+          "sourceId",
+        ]);
+      }
+      if (source.registryRevision !== profile.sourceRegistrationRevision) {
+        throw invalid("config.invalid", "source semantic profile does not match the configured source revision", [
+          "semanticRegistry",
+          "sourceProfiles",
+          index,
+          "sourceRegistrationRevision",
+        ]);
+      }
+      sourceSemanticProfilesBySourceId.set(profile.sourceId, profile);
+    }
+  }
+  const semanticDetectorsByRef = new Map(
+    semanticRegistry?.detectors.map((detector) => [
+      detectorRefKey({
+        id: detector.id,
+        version: detector.version,
+        registrationDigest: detector.registrationDigest,
+      }),
+      detector,
+    ]) ?? [],
+  );
+  const semanticPacksByRef = new Map(
+    semanticRegistry?.packs.map((pack) => [
+      packRefKey({ id: pack.id, version: pack.version, manifestDigest: pack.manifestDigest }),
+      pack,
+    ]) ?? [],
+  );
+  const semanticLensesByRef = new Map(
+    semanticRegistry?.lenses.map((lens) => [
+      lensRefKey({ id: lens.id, version: lens.version, registrationDigest: lens.registrationDigest }),
+      lens,
+    ]) ?? [],
+  );
   const queryCursorScope =
     config.queryCursorScope === undefined
       ? `process:${randomUUID()}`
@@ -207,6 +277,9 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
         contentPolicyId: source.contentPolicyId,
       }))
       .sort((left, right) => (left.id < right.id ? -1 : 1)),
+    ...(semanticRegistry !== undefined
+      ? { semanticRegistry: { registryDigest: semanticRegistry.registryDigest } }
+      : {}),
   });
 
   const context: EngineContext = {
@@ -217,6 +290,11 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     contentPoliciesById,
     sources,
     identity: identityPort,
+    ...(semanticRegistry !== undefined ? { semanticRegistry } : {}),
+    semanticDetectorsByRef,
+    semanticPacksByRef,
+    semanticLensesByRef,
+    sourceSemanticProfilesBySourceId,
     registryRevision,
     queryCursorScopeDigest,
     clock: config.clock ?? systemClock,

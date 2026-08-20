@@ -764,6 +764,126 @@ export declare function insightDerivationDigest(
 export declare function parseInsightDerivation(
   input: unknown,
 ): InsightDerivation;
+
+export interface SourceSemanticProfile {
+  readonly schemaVersion: 1;
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly observationVocabularyDigest: string;
+  readonly capabilities: readonly string[];
+  readonly observationKinds: readonly string[];
+  readonly profileDigest: string;
+}
+
+export declare function sourceSemanticProfileDigest(
+  input: Omit<SourceSemanticProfile, "schemaVersion" | "profileDigest">,
+): string;
+
+export declare function parseSourceSemanticProfile(
+  input: unknown,
+): SourceSemanticProfile;
+
+export interface SemanticRegistryConfig {
+  readonly schemaVersion: 1;
+  readonly scopePolicyDigest: string;
+  readonly detectors: readonly DetectorRegistration[];
+  readonly packs: readonly DetectorPackManifest[];
+  readonly lenses: readonly LearningLensRegistration[];
+  readonly sourceProfiles: readonly SourceSemanticProfile[];
+  readonly selectedDetectorRefs: readonly DetectorRef[];
+  readonly selectedPackRefs: readonly PackRef[];
+  readonly selectedLensRefs: readonly LensRef[];
+  readonly registryDigest: string;
+}
+
+export declare function semanticRegistryDigest(
+  input: Omit<SemanticRegistryConfig, "schemaVersion" | "registryDigest">,
+): string;
+
+export declare function parseSemanticRegistryConfig(
+  input: unknown,
+): SemanticRegistryConfig;
+
+export type DetectorExecutionStatus =
+  | "applied"
+  | "not_applicable"
+  | "incomplete";
+
+export interface DetectorExecutionRecord {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly loopRegistryRevision: string;
+  readonly detector: DetectorRef & {
+    readonly configurationDigest: string;
+    readonly implementationDigest: string;
+  };
+  readonly pack: PackRef;
+  readonly lens: LensRef | null;
+  readonly scope: Scope;
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly outputKind: DetectorOutputKind;
+  readonly window: {
+    readonly sourceProfiles: readonly SourceSemanticProfile[];
+    readonly population: {
+      readonly episodes: readonly {
+        readonly episodeRecordId: string;
+        readonly episodeRecordDigest: string;
+        readonly episodeIdentityDigest: string;
+        readonly outcomeClaimDigest: string | null;
+        readonly episodeViewDigest: string;
+        readonly scopeDigest: string;
+      }[];
+      readonly normalizationPolicyDigest: string;
+      readonly comparabilityPolicyDigest: string | null;
+      readonly populationDigest: string;
+    };
+    readonly evidenceRefs: readonly EvidenceRef[];
+    readonly evidenceHealthFindings: readonly EvidenceHealthFinding[];
+    readonly availableCapabilities: readonly string[];
+    readonly windowDigest: string;
+  };
+  readonly result:
+    | {
+        readonly status: "applied";
+        readonly conditionDetected: boolean;
+        readonly derivationRefs: readonly {
+          readonly id: string;
+          readonly derivationDigest: string;
+          readonly scopeDigest: string;
+        }[];
+        readonly evidenceHealthFindings: readonly EvidenceHealthFinding[];
+      }
+    | {
+        readonly status: "not_applicable" | "incomplete";
+        readonly reasonCodes: readonly string[];
+        readonly missingCapabilities: readonly string[];
+      };
+  readonly executionKeyDigest: string;
+  readonly executionDigest: string;
+}
+
+export declare function detectorExecutionKeyDigest(
+  input: Omit<
+    DetectorExecutionRecord,
+    | "schemaVersion"
+    | "id"
+    | "result"
+    | "executionKeyDigest"
+    | "executionDigest"
+  >,
+): string;
+
+export declare function detectorExecutionDigest(
+  input: Omit<
+    DetectorExecutionRecord,
+    "schemaVersion" | "id" | "executionDigest"
+  >,
+): string;
+
+export declare function parseDetectorExecutionRecord(
+  input: unknown,
+): DetectorExecutionRecord;
 ```
 
 All ids, versions, capability names, observation kinds, episode classes,
@@ -794,6 +914,40 @@ selectors are nonempty. A required lens allowlist is nonempty, while
 calibration-population content/digest are paired. Every pack contains at least
 one detector; detector and lens refs are sorted and unique by id/version/digest.
 
+A `SourceSemanticProfile` is an immutable host grant for one exact source
+registration revision, not an adapter assertion. Its capabilities and
+observation kinds are sorted, unique normalized ids, and `profileDigest`
+recomputes over exact source id, source-registration revision,
+observation-vocabulary digest, capabilities, and observation kinds. A source
+without a profile contributes zero semantic capabilities to a detector window.
+For backward-compatible generic Observe ingest, profile omission does not
+reject otherwise valid observations; once a profile is present, ingest rejects
+every normalized observation kind that is absent from the declared
+`observationKinds` set.
+
+`SemanticRegistryConfig` separates full installation from exact selection.
+Installed detector, pack, lens, and source-profile records and selected
+detector, pack, and lens refs are bounded, sorted, and unique. One logical
+detector, pack, or lens id/version has one digest, and one source registration
+revision has one semantic profile. Detector and lens scope-policy digests equal
+the registry scope policy. Pack members and detector lens allowlists resolve to
+exact installed records; packs cannot contain deprecated detectors. Selected
+refs resolve exactly, selected detectors are not deprecated, and every selected
+detector and lens belongs to a selected pack. Every selected insight detector
+and one compatible selected lens under its exact constraint co-occur in at
+least one exact selected pack; membership in separate packs is insufficient.
+Installation and selection grant availability only—never trust, authority,
+execution, publication, active context, review, validation, or efficacy.
+
+`LearningLoopConfig.semanticRegistry` is optional. Construction parses and
+recursively snapshots the registry, requires its scope policy to equal the
+loop's configured scope policy, and requires every SourceSemanticProfile to
+name an exact configured source id and registration revision. When configured,
+the semantic registry contributes its `registryDigest` to the immutable loop
+registry revision. Omitting the field preserves the exact pre-#30b loop
+registry bytes; configuring even an empty semantic registry is an explicit new
+registry identity.
+
 Every set-like array is sorted and unique. Arrays whose order affects meaning
 — derivation evidence, populations, supports, guardrails, and validation —
 retain declared order and are duplicate-free. Exact-scope entries recompute
@@ -820,7 +974,7 @@ revision lineage cannot cross a project or isolation boundary.
 `evidenceHealthFindings` embeds complete, unknown-first-parsed
 `EvidenceHealthFinding` records, so id, digest, effect, source, page,
 completeness, and affected-record facts stay cryptographically coherent. The
-#30b resolver still must prove each finding's source/page relationship to the
+#30b2 resolver still must prove each finding's source/page relationship to the
 derivation's exact evidence and scope before permitting downstream use.
 
 Human and semantic-judgment producers require both `principal` and
@@ -840,6 +994,10 @@ Digest inclusion is exact:
 | `DetectorPackManifest` | `id`, version, kind, exact detector/lens refs, changelog and supersession | `schemaVersion`, `manifestDigest` |
 | `LearningLensRegistration` | Every field from `id` through `supersedes`, including full objective/rubric/requirement/policy/strategy content and adjacent digests | `schemaVersion`, `registrationDigest` |
 | `InsightDerivation` | Every field from scope through producer, intervention/validation and same-scope supersession, including full evidence and complete evidence-health findings | `schemaVersion`, `id`, `derivationDigest` |
+| `SourceSemanticProfile` | Source id, exact source-registration revision, observation-vocabulary digest, capabilities, and observation kinds | `schemaVersion`, `profileDigest` |
+| `SemanticRegistryConfig` | Scope-policy digest; full installed detector, pack, lens, and source-profile records; exact selected detector, pack, and lens refs | `schemaVersion`, `registryDigest` |
+| `DetectorExecutionRecord.executionKeyDigest` | Loop-registry revision, detector plus configuration/implementation digests, required pack, output-dependent lens, scope and policy, output kind, and the complete immutable window | `schemaVersion`, `id`, `result`, `executionKeyDigest`, `executionDigest` |
+| `DetectorExecutionRecord.executionDigest` | The complete invocation/window, closed result, and `executionKeyDigest` | `schemaVersion`, `id`, `executionDigest` |
 
 Changing implementation, configuration, thresholds, capabilities,
 applicability, normalization, comparability, fixtures, false-positive policy,
@@ -851,22 +1009,70 @@ population and evidence digests. `deprecated` registrations are not executable
 and must supersede the prior executable version. A pack cannot select a
 deprecated registration.
 
-Detector and lens content may be registered directly or made available through
-a pack. Installation grants no trust, execution, publication, active-context,
-review, authorization, or validation authority. A derivation is advisory and
-inert. Its deterministic observation can be certain while interpretation and
-impact remain uncertain. Evidence-health references constrain claims but never
-become behavioral evidence. An intervention and validation plan are either
-both present or both absent; a derivation cannot authorize or publish either.
+Detector, pack, and lens content is installed as full immutable records, while
+executable selection is exact and selected detector/lens refs must be members
+of selected packs. Installation and selection grant no trust, execution,
+publication, active-context, review, authorization, or validation authority. A
+derivation is advisory and inert. Its deterministic observation can be certain
+while interpretation and impact remain uncertain. Evidence-health references
+constrain claims but never become behavioral evidence. An intervention and
+validation plan are either both present or both absent; a derivation cannot
+authorize or publish either.
 
-`DetectorExecutionRecord` and the `applied | not_applicable | incomplete`
-execution result are deliberately deferred to #30b. Detector eligibility,
-capability checks, exact populations, pack selection, recurrence, deduplication,
-suppression, caps, dry-run output, and no-provider-on-empty behavior are #30c.
-Core/reference/host pack contents and reference consumers are #30d. Optional
-semantic-provider generation, disclosure receipts, and independently
-calibrated qualitative review are #13. Default-quality and candidate-utility
-claims remain #26 work.
+`DetectorExecutionRecord` is the immutable fact for one exact detector
+invocation and evidence window. Its detector binds exact registration,
+configuration, and implementation digests; `pack` is always a non-null exact
+PackRef. An `insight_derivation` execution requires an exact lens, while an
+`evidence_health` execution requires `lens: null`. The top-level scope digest
+is recomputed and every population episode, EvidenceRef, and output derivation
+ref has that same scope. EvidenceRefs also carry the execution loop-registry
+revision and resolve to exact source profiles in the window. Full input and
+output EvidenceHealthFinding values name exact profiled source-registration
+revisions; they are never collapsed into asserted ids or effects.
+
+Every population episode's `episodeViewDigest` is the digest of exact
+`{ episodeRecordId, episodeRecordDigest, episodeIdentityDigest,
+outcomeClaimDigest, scopeDigest }`. `populationDigest` binds exact
+`{ episodes, normalizationPolicyDigest, comparabilityPolicyDigest }`.
+Each durable `episodeRecordId` starts with the `<sourceId>/` prefix of one exact
+window SourceSemanticProfile. #30b2 still revalidates the complete source
+registration and episode-identity lineage before persistence or proposal use.
+`windowDigest` binds exact
+`{ sourceProfiles, population, evidenceRefs, evidenceHealthFindings,
+availableCapabilities }`. `availableCapabilities` is exactly the sorted set
+union of every bound source profile's capabilities; a record cannot add a
+capability that its profiles did not grant.
+
+Execution status is closed to `applied`, `not_applicable`, or `incomplete`.
+There is no `pass`. `applied` always says whether the registered condition was
+detected. A negative condition has no outputs. A detected insight condition has
+one or more unique exact derivation refs and no health output; a detected
+evidence-health condition has one or more full EvidenceHealthFinding outputs
+and no derivation refs. Non-applied results have nonempty sorted reason codes
+and sorted missing capabilities, and no missing capability may also appear in
+the exact available-capability union. Missing or incomplete evidence is never
+zero and never pass.
+
+`executionKeyDigest` binds every invocation and window field while excluding
+the result, schema, id, key digest, and execution digest. The id is exactly
+`detector-execution-${executionKeyDigest}`. `executionDigest` binds the same
+content plus the result and `executionKeyDigest`, excluding only schema, id,
+and itself. Therefore the same invocation/window with a different result has
+the same id and a different execution digest. Future create-only persistence
+must reject that collision rather than retain two answers for one invocation.
+
+#30b1 deliberately exposes only the immutable records, parsers, digests,
+registry construction, and profiled-ingest guard. It does not expose a façade
+method that accepts or persists caller-supplied executions. Exact callable
+implementation pairing, kernel-controlled persistence, bounded derivation and
+execution views/queries, and Candidate derivation resolution remain
+#30b2/#30c; arbitrary public execution minting is forbidden. Detector
+eligibility, capability checks, exact population folds, pack selection,
+recurrence, deduplication, suppression, caps, dry-run output, and
+no-provider-on-empty behavior remain #30c. Core/reference/host pack contents
+and reference consumers are #30d. Optional semantic-provider generation,
+disclosure receipts, and independently calibrated qualitative review are #13.
+Default-quality and candidate-utility claims remain #26 work.
 
 ### Candidate
 
@@ -1844,7 +2050,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, and scope-policy metadata/behavior; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while the exact-instance runtime token remains private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects a structurally similar identity object that was not created by `createIdentityPort` (or the `/testing` wrapper around it), retains the configured port in engine context, and checks its exact runtime binding before every propose or review transition.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, and configured semantic records; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while the exact-instance runtime token remains private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects a structurally similar identity object that was not created by `createIdentityPort` (or the `/testing` wrapper around it), retains the configured port in engine context, and checks its exact runtime binding before every propose or review transition. If `semanticRegistry` is present, only its exact `registryDigest` contributes to loop identity after full parsing and source/scope reconciliation; omission preserves the prior registry bytes.
 
 ```ts
 export interface LearningPolicy {
@@ -1859,6 +2065,7 @@ export interface LearningLoopConfig {
   readonly scopePolicy: ScopePolicy;
   readonly contentPolicies: readonly ContentPolicy[];
   readonly sources: readonly RegisteredSource<unknown>[];
+  readonly semanticRegistry?: SemanticRegistryConfig;
   readonly queryCursorScope?: string;
   readonly outcomeSources?: readonly RegisteredOutcomeSource<unknown>[];
   readonly destinations?: readonly DestinationRegistration[];
@@ -2682,6 +2889,20 @@ The core suite should prove at least:
 - imported prompt injection cannot execute, publish, or resolve;
 - redacted content never appears in records, logs, diagnostics, hashes vulnerable to dictionary recovery, or outbound calls;
 - deleting a source can locate and tombstone its derivatives;
+- source semantic profiles are host-granted, bind one exact configured source
+  registration revision, reject undeclared normalized kinds when present, and
+  contribute zero detector capabilities when absent;
+- semantic registries resolve every installed and selected record exactly,
+  require selected detector/lens membership in selected packs, reject
+  deprecated selection, snapshot caller mutation, and preserve prior loop
+  registry bytes when omitted;
+- detector execution keys bind every invocation/window field but not the
+  result, execution digests bind the result, episode-view and capability-union
+  formulae and population source-profile prefixes are recomputed, and the same
+  key with a different result is a create-only conflict;
+- detector execution results accept only `applied`, `not_applicable`, and
+  `incomplete`; enforce output-kind/lens/output-family separation; and never
+  turn missing capability or a negative condition into `pass`;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

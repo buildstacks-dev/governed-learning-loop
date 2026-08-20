@@ -60,7 +60,10 @@ export type RecordKind =
   | "semantic-workflow-reservation"
   | "semantic-workflow-authorization"
   | "semantic-workflow-dispatch"
-  | "semantic-workflow-result";
+  | "semantic-workflow-result"
+  | "semantic-workflow-execution-plan"
+  | "semantic-workflow-completion"
+  | "semantic-workflow-execution";
 
 export interface EngineContext {
   readonly store: LearningStore;

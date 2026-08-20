@@ -1,5 +1,7 @@
 // Unknown-first narrow detector output and kernel-owned semantic record minting.
+import { canonicalJsonText } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
+import { toJsonValue } from "../canonical/to-json-value.js";
 import { invalid, parseBool, parseJson, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
 import type { DetectorExecutionRecord } from "../records/detector-execution.js";
@@ -30,6 +32,9 @@ import {
 import type { EvidenceHealthFinding } from "../records/source-health.js";
 import { evidenceHealthFindingDigest, parseEvidenceHealthFinding } from "../records/source-health.js";
 import type { DetectorWindow } from "./detector-window.js";
+import type { SemanticTurnReservation } from "../workflows/semantic-turn-intent.js";
+import type { SemanticResultBinding } from "../workflows/semantic-turn-outcome.js";
+import type { SemanticWorkflowDefinition } from "../workflows/workflow-definition.js";
 
 const CONFIDENCES = ["high", "medium", "low", "unknown"] as const;
 const HEALTH_CODES = [
@@ -237,8 +242,8 @@ export function parseDetectorResultDraft(input: unknown): DetectorResultDraft {
   };
 }
 
-function refsForDigests(window: DetectorWindow, digests: readonly string[]): readonly EvidenceRef[] {
-  const byDigest = new Map(window.evidence.map((entry) => [entry.reference.referenceDigest, entry.reference]));
+function refsForDigests(evidenceRefs: readonly EvidenceRef[], digests: readonly string[]): readonly EvidenceRef[] {
+  const byDigest = new Map(evidenceRefs.map((reference) => [reference.referenceDigest, reference]));
   const seen = new Set<string>();
   return digests.map((digest) => {
     const reference = byDigest.get(digest);
@@ -250,11 +255,13 @@ function refsForDigests(window: DetectorWindow, digests: readonly string[]): rea
   });
 }
 
-function completenessOf(window: DetectorWindow, refs: readonly EvidenceRef[]): "complete" | "partial" | "unknown" {
+function completenessOf(
+  episodeCompleteness: readonly ("complete" | "partial" | "unknown")[],
+  refs: readonly EvidenceRef[],
+): "complete" | "partial" | "unknown" {
   let worst: "complete" | "partial" | "unknown" = "complete";
   if (refs.length === 0) {
-    for (const episode of window.population.episodes) {
-      const completeness = episode.view.identity.status === "resolved" ? episode.view.identity.completeness : "unknown";
+    for (const completeness of episodeCompleteness) {
       if (completeness === "unknown") return "unknown";
       if (completeness === "partial") worst = "partial";
     }
@@ -265,6 +272,36 @@ function completenessOf(window: DetectorWindow, refs: readonly EvidenceRef[]): "
     if (reference.completeness === "partial") worst = "partial";
   }
   return worst;
+}
+
+interface DetectorAssemblyWindow {
+  readonly loopRegistryRevision: string;
+  readonly detector: DetectorExecutionRecord["detector"];
+  readonly pack: DetectorExecutionRecord["pack"];
+  readonly lens: DetectorExecutionRecord["lens"];
+  readonly scope: DetectorExecutionRecord["scope"];
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly outputKind: DetectorExecutionRecord["outputKind"];
+  readonly compact: DetectorExecutionRecord["window"];
+  readonly episodeCompleteness: readonly ("complete" | "partial" | "unknown")[];
+}
+
+function assemblyWindowFromDetectorWindow(window: DetectorWindow): DetectorAssemblyWindow {
+  return {
+    loopRegistryRevision: window.loopRegistryRevision,
+    detector: window.detector,
+    pack: window.pack,
+    lens: window.lens,
+    scope: window.scope,
+    scopeDigest: window.scopeDigest,
+    scopePolicyDigest: window.scopePolicyDigest,
+    outputKind: window.outputKind,
+    compact: compactWindow(window),
+    episodeCompleteness: window.population.episodes.map((episode) =>
+      episode.view.identity.status === "resolved" ? episode.view.identity.completeness : "unknown",
+    ),
+  };
 }
 
 function compactWindow(window: DetectorWindow): DetectorExecutionRecord["window"] {
@@ -302,9 +339,10 @@ function buildFinding(
   });
 }
 
-export function assembleAppliedDetectorResult(
-  window: DetectorWindow,
+function assembleDetectorResultWithProducer(
+  window: DetectorAssemblyWindow,
   draft: DetectorResultDraft,
+  producer: InsightDerivation["producer"],
 ): {
   readonly execution: DetectorExecutionRecord;
   readonly derivations: readonly InsightDerivation[];
@@ -325,12 +363,20 @@ export function assembleAppliedDetectorResult(
     throw invalid("detector.result_invalid", "detector output family does not match its registration", []);
   }
   const findings = draft.findings.map(buildFinding).sort((left, right) => (left.id < right.id ? -1 : 1));
-  const healthById = new Map([...window.evidenceHealthFindings, ...findings].map((finding) => [finding.id, finding]));
+  const healthById = new Map(
+    [...window.compact.evidenceHealthFindings, ...findings].map((finding) => [finding.id, finding]),
+  );
   const derivations = draft.insights
     .map((insight) => {
       if (window.lens === null) throw invalid("detector.result_invalid", "insight output requires a learning lens", []);
-      const directRefs = refsForDigests(window, insight.directObservation.evidenceReferenceDigests);
-      const contradictoryRefs = refsForDigests(window, insight.contradictoryEvidenceReferenceDigests);
+      const directRefs = refsForDigests(
+        window.compact.evidenceRefs,
+        insight.directObservation.evidenceReferenceDigests,
+      );
+      const contradictoryRefs = refsForDigests(
+        window.compact.evidenceRefs,
+        insight.contradictoryEvidenceReferenceDigests,
+      );
       const directDigests = new Set(directRefs.map((reference) => reference.referenceDigest));
       if (contradictoryRefs.some((reference) => directDigests.has(reference.referenceDigest))) {
         throw invalid("detector.result_invalid", "direct and contradictory evidence must be disjoint", []);
@@ -340,15 +386,15 @@ export function assembleAppliedDetectorResult(
         if (finding === undefined) throw invalid("detector.result_invalid", "draft cites unknown health finding", []);
         return finding;
       });
-      const populationEpisodes = window.population.episodes.map((episode) => ({
-        episodeRecordId: episode.view.episode.id,
+      const populationEpisodes = window.compact.population.episodes.map((episode) => ({
+        episodeRecordId: episode.episodeRecordId,
         episodeViewDigest: episode.episodeViewDigest,
         scopeDigest: episode.scopeDigest,
       }));
       const populationDigest = digestOf({
         episodes: populationEpisodes,
-        normalizationPolicyDigest: window.population.normalizationPolicyDigest,
-        comparabilityPolicyDigest: window.population.comparabilityPolicyDigest,
+        normalizationPolicyDigest: window.compact.population.normalizationPolicyDigest,
+        comparabilityPolicyDigest: window.compact.population.comparabilityPolicyDigest,
       });
       const base: Omit<InsightDerivation, "schemaVersion" | "id" | "derivationDigest"> = {
         scope: window.scope,
@@ -366,14 +412,14 @@ export function assembleAppliedDetectorResult(
         population: {
           episodes: populationEpisodes,
           populationDigest,
-          normalizationPolicyDigest: window.population.normalizationPolicyDigest,
-          comparabilityPolicyDigest: window.population.comparabilityPolicyDigest,
+          normalizationPolicyDigest: window.compact.population.normalizationPolicyDigest,
+          comparabilityPolicyDigest: window.compact.population.comparabilityPolicyDigest,
         },
         directObservation: {
           statement: insight.directObservation.statement,
           data: insight.directObservation.data,
           evidenceRefs: directRefs,
-          completeness: completenessOf(window, directRefs),
+          completeness: completenessOf(window.episodeCompleteness, directRefs),
         },
         evidenceHealthFindings,
         interpretation: insight.interpretation,
@@ -381,19 +427,7 @@ export function assembleAppliedDetectorResult(
         contradictoryEvidenceRefs: contradictoryRefs,
         missingEvidence: insight.missingEvidence,
         applicability: insight.applicability,
-        producer: {
-          kind: "deterministic",
-          implementationId: window.detector.id,
-          implementationVersion: window.detector.version,
-          implementationDigest: window.detector.implementationDigest,
-          principal: null,
-          attestation: null,
-          modelFingerprintDigest: null,
-          promptDigest: null,
-          toolPolicyDigest: null,
-          budgetPolicyDigest: null,
-          disclosure: null,
-        },
+        producer,
         candidateIntervention: insight.candidateIntervention,
         validation: insight.validation,
         supersedes:
@@ -423,7 +457,7 @@ export function assembleAppliedDetectorResult(
     scopeDigest: window.scopeDigest,
     scopePolicyDigest: window.scopePolicyDigest,
     outputKind: window.outputKind,
-    window: compactWindow(window),
+    window: window.compact,
   };
   const result = {
     status: "applied" as const,
@@ -446,6 +480,168 @@ export function assembleAppliedDetectorResult(
     executionDigest,
   });
   return { execution, derivations, recurrenceLocator };
+}
+
+export function assembleAppliedDetectorResult(
+  window: DetectorWindow,
+  draft: DetectorResultDraft,
+): {
+  readonly execution: DetectorExecutionRecord;
+  readonly derivations: readonly InsightDerivation[];
+  readonly recurrenceLocator: DetectorRecurrenceLocator | null;
+} {
+  return assembleDetectorResultWithProducer(assemblyWindowFromDetectorWindow(window), draft, {
+    kind: "deterministic",
+    implementationId: window.detector.id,
+    implementationVersion: window.detector.version,
+    implementationDigest: window.detector.implementationDigest,
+    principal: null,
+    attestation: null,
+    modelFingerprintDigest: null,
+    promptDigest: null,
+    toolPolicyDigest: null,
+    budgetPolicyDigest: null,
+    disclosure: null,
+  });
+}
+
+function assembleSemanticWorkflowFromAssemblyWindow(input: {
+  readonly window: DetectorAssemblyWindow;
+  readonly draft: DetectorResultDraft;
+  readonly definition: SemanticWorkflowDefinition;
+  readonly reservation: SemanticTurnReservation;
+  readonly result: SemanticResultBinding;
+}): {
+  readonly execution: DetectorExecutionRecord;
+  readonly derivations: readonly InsightDerivation[];
+} {
+  const { window, draft, definition, reservation, result } = input;
+  const target = reservation.target;
+  const disclosedEvidence = new Set(target.kind === "generation" ? target.disclosedEvidenceReferenceDigests : []);
+  const citedEvidence = draft.insights.flatMap((insight) => [
+    ...insight.directObservation.evidenceReferenceDigests,
+    ...insight.contradictoryEvidenceReferenceDigests,
+  ]);
+  const disclosedHealth = new Map(
+    (target.kind === "generation" ? (target.disclosedEvidenceHealthFindings ?? []) : []).map((finding) => [
+      finding.id,
+      finding.findingDigest,
+    ]),
+  );
+  const citedHealth = draft.insights.flatMap((insight) => insight.evidenceHealthFindingIds);
+  if (
+    definition.lane !== "generation" ||
+    target.kind !== "generation" ||
+    reservation.definition.definitionDigest !== definition.definitionDigest ||
+    definition.implementation.implementationDigest !== window.detector.implementationDigest ||
+    target.windowDigest !== window.compact.windowDigest ||
+    result.status !== "completed" ||
+    result.turnKeyDigest !== reservation.turnKeyDigest ||
+    result.reservationDigest !== reservation.reservationDigest ||
+    result.normalizedResult === null ||
+    canonicalJsonText(result.normalizedResult) !== canonicalJsonText(toJsonValue(draft)) ||
+    draft.recurrenceLocator !== null ||
+    draft.findings.length !== 0 ||
+    citedEvidence.some((digest) => !disclosedEvidence.has(digest)) ||
+    citedHealth.some((id) => !disclosedHealth.has(id)) ||
+    [...disclosedHealth].some(
+      ([id, digest]) =>
+        !window.compact.evidenceHealthFindings.some((finding) => finding.id === id && finding.findingDigest === digest),
+    )
+  ) {
+    throw invalid("semantic.workflow_output_invalid", "semantic workflow result is not bound to its exact window", []);
+  }
+  const response = result.response;
+  if (response === null || response.requestAttestationDigest !== reservation.request.minimizedBytesDigest) {
+    throw invalid(
+      "semantic.workflow_output_invalid",
+      "semantic workflow response has no exact request attestation",
+      [],
+    );
+  }
+  const assembled = assembleDetectorResultWithProducer(window, draft, {
+    kind: "semantic_judgment",
+    implementationId: definition.implementation.id,
+    implementationVersion: definition.implementation.version,
+    implementationDigest: definition.implementation.implementationDigest,
+    principal: definition.principal,
+    attestation: definition.attestation,
+    modelFingerprintDigest: definition.providerModel.model.modelFingerprintDigest,
+    promptDigest: definition.prompt.promptDigest,
+    toolPolicyDigest: definition.toolPolicy.policyDigest,
+    budgetPolicyDigest: definition.budgetPolicy.policyDigest,
+    disclosure:
+      definition.transport === "outbound"
+        ? {
+            receiptId: result.id,
+            receiptDigest: result.bindingDigest,
+            minimizedBytesDigest: reservation.request.minimizedBytesDigest,
+          }
+        : null,
+  });
+  if (assembled.execution.executionKeyDigest !== target.executionKeyDigest) {
+    throw invalid("semantic.workflow_output_invalid", "workflow output changed the exact detector execution key", []);
+  }
+  return { execution: assembled.execution, derivations: assembled.derivations };
+}
+
+/** Workflow-only semantic producer assembly with exact turn/result lineage. */
+export function assembleSemanticWorkflowDetectorResult(input: {
+  readonly window: DetectorWindow;
+  readonly draft: DetectorResultDraft;
+  readonly definition: SemanticWorkflowDefinition;
+  readonly reservation: SemanticTurnReservation;
+  readonly result: SemanticResultBinding;
+}): {
+  readonly execution: DetectorExecutionRecord;
+  readonly derivations: readonly InsightDerivation[];
+} {
+  return assembleSemanticWorkflowFromAssemblyWindow({
+    ...input,
+    window: assemblyWindowFromDetectorWindow(input.window),
+  });
+}
+
+/** Exact recovery assembly from completion-intent compact bytes. */
+export function assembleSemanticWorkflowDetectorResultFromCompact(input: {
+  readonly executionTemplate: DetectorExecutionRecord;
+  readonly episodeCompleteness: readonly ("complete" | "partial" | "unknown")[];
+  readonly draft: DetectorResultDraft;
+  readonly definition: SemanticWorkflowDefinition;
+  readonly reservation: SemanticTurnReservation;
+  readonly result: SemanticResultBinding;
+}): {
+  readonly execution: DetectorExecutionRecord;
+  readonly derivations: readonly InsightDerivation[];
+} {
+  const template = input.executionTemplate;
+  if (
+    template.result.status !== "applied" ||
+    template.result.conditionDetected ||
+    template.result.derivationRefs.length !== 0 ||
+    template.result.evidenceHealthFindings.length !== 0 ||
+    input.episodeCompleteness.length !== template.window.population.episodes.length
+  ) {
+    throw invalid("semantic.workflow_output_invalid", "workflow recovery template is invalid", []);
+  }
+  return assembleSemanticWorkflowFromAssemblyWindow({
+    window: {
+      loopRegistryRevision: template.loopRegistryRevision,
+      detector: template.detector,
+      pack: template.pack,
+      lens: template.lens,
+      scope: template.scope,
+      scopeDigest: template.scopeDigest,
+      scopePolicyDigest: template.scopePolicyDigest,
+      outputKind: template.outputKind,
+      compact: template.window,
+      episodeCompleteness: input.episodeCompleteness,
+    },
+    draft: input.draft,
+    definition: input.definition,
+    reservation: input.reservation,
+    result: input.result,
+  });
 }
 
 export function assembleNonAppliedDetectorResult(

@@ -8,6 +8,7 @@ const entrypoints = [
   ["root", "packages/learning-loop/src/index.ts"],
   ["node", "packages/learning-loop/src/node/index.ts"],
   ["reference", "packages/learning-loop/src/reference-detectors/index.ts"],
+  ["workflows", "packages/learning-loop/src/workflows/index.ts"],
   ["testing", "packages/learning-loop/src/testing/index.ts"],
 ];
 

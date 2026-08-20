@@ -76,7 +76,7 @@ function snapshotDigest(input: Omit<SemanticRegistrySnapshot, "schemaVersion" | 
   return sha256HexOfCanonicalJson(toJsonValue(input));
 }
 
-function parseRegistrySnapshot(input: unknown): SemanticRegistrySnapshot {
+export function parseSemanticRegistrySnapshot(input: unknown): SemanticRegistrySnapshot {
   const fields = readFields(input, []);
   const schemaVersion = fields.schemaVersion1();
   const loopRegistryRevision = fields.req("loopRegistryRevision", parseDigestAt);
@@ -160,7 +160,7 @@ export function buildRegistrySnapshot(context: EngineContext): SemanticRegistryS
     throw invalid("semantic.registry_required", "semantic persistence requires a configured semantic registry", []);
   }
   const base = { loopRegistryRevision: context.registryRevision, semanticRegistry: context.semanticRegistry };
-  return parseRegistrySnapshot({ schemaVersion: 1, ...base, snapshotDigest: snapshotDigest(base) });
+  return parseSemanticRegistrySnapshot({ schemaVersion: 1, ...base, snapshotDigest: snapshotDigest(base) });
 }
 
 export function buildDerivationLink(
@@ -196,7 +196,7 @@ export async function loadRegistrySnapshot(
 ): Promise<SemanticRegistrySnapshot | undefined> {
   const stored = await loadStoredRecord(context, "semantic-registry-snapshot", loopRegistryRevision);
   if (stored === undefined) return undefined;
-  const snapshot = parseRegistrySnapshot(stored.value);
+  const snapshot = parseSemanticRegistrySnapshot(stored.value);
   if (snapshot.loopRegistryRevision !== loopRegistryRevision) {
     throw invalid("store.corrupt", "semantic registry snapshot belongs to another loop revision", [
       "loopRegistryRevision",

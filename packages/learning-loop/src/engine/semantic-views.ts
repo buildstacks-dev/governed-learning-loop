@@ -30,6 +30,7 @@ import {
   validatePopulation,
   validateWindowEvidence,
 } from "./semantic-validation.js";
+import { validateSemanticWorkflowExecutionLineage } from "../workflows/semantic-generation-persistence.js";
 
 type RegistryBinding =
   | { readonly status: "configured" }
@@ -168,6 +169,16 @@ async function resolveExecutionCommit(
   context: EngineContext,
   execution: DetectorExecutionRecord,
 ): Promise<DetectorExecutionView["commitBinding"]> {
+  try {
+    await validateSemanticWorkflowExecutionLineage(context, execution);
+  } catch (error) {
+    if (!(error instanceof LearningLoopError)) throw error;
+    if (error.code.startsWith("schema.") || error.code.startsWith("store.")) throw error;
+    return {
+      status: "invalid",
+      diagnostics: [diagnostic("semantic.commit_invalid", "error", "semantic workflow execution lineage is invalid")],
+    };
+  }
   const snapshot = await loadRegistrySnapshot(context, execution.loopRegistryRevision);
   if (
     snapshot === undefined ||
@@ -263,6 +274,7 @@ async function derivationEvidenceHealth(
   context: EngineContext,
   derivation: InsightDerivation,
   committedExecutions: readonly DetectorExecutionRecord[],
+  knownExecution?: DetectorExecutionView,
 ): Promise<EvidenceHealthView> {
   const evidenceIds = [...derivation.directObservation.evidenceRefs, ...derivation.contradictoryEvidenceRefs].map(
     (reference) => reference.recordId,
@@ -270,7 +282,12 @@ async function derivationEvidenceHealth(
   let base: EvidenceHealthView = { status: "ready", diagnostics: [] };
   if (committedExecutions.length > 0) {
     for (const execution of committedExecutions) {
-      const health = await executionEvidenceHealth(context, execution);
+      const health =
+        knownExecution !== undefined &&
+        knownExecution.execution.id === execution.id &&
+        knownExecution.execution.executionDigest === execution.executionDigest
+          ? knownExecution.evidenceHealth
+          : await executionEvidenceHealth(context, execution);
       if (health.status === "invalid") base = health;
       else if (health.status === "incomplete" && base.status === "ready") base = health;
     }
@@ -320,6 +337,7 @@ async function loadInsightDerivationViewOnce(
   context: EngineContext,
   derivationId: string,
   exactScopeDigest: string,
+  knownExecution?: DetectorExecutionView,
 ): Promise<InsightDerivationView | undefined> {
   const derivation = await loadInsightDerivationRecord(context, derivationId);
   if (derivation === undefined || derivation.scopeDigest !== exactScopeDigest) return undefined;
@@ -335,7 +353,12 @@ async function loadInsightDerivationViewOnce(
       );
       continue;
     }
-    const execution = await loadDetectorExecutionRecord(context, link.executionId);
+    const execution =
+      knownExecution !== undefined &&
+      knownExecution.execution.id === link.executionId &&
+      knownExecution.execution.executionDigest === link.executionDigest
+        ? knownExecution.execution
+        : await loadDetectorExecutionRecord(context, link.executionId);
     if (execution === undefined || execution.executionDigest !== link.executionDigest) {
       orphanDiagnostics.push(
         diagnostic("semantic.commit_orphaned", "warning", "derivation link has no exact execution receipt"),
@@ -348,7 +371,12 @@ async function loadInsightDerivationViewOnce(
       );
       continue;
     }
-    const executionCommit = await resolveExecutionCommit(context, execution);
+    const executionCommit =
+      knownExecution !== undefined &&
+      knownExecution.execution.id === execution.id &&
+      knownExecution.execution.executionDigest === execution.executionDigest
+        ? knownExecution.commitBinding
+        : await resolveExecutionCommit(context, execution);
     if (executionCommit.status !== "committed") {
       invalidDiagnostics.push(
         diagnostic("semantic.commit_invalid", "error", "derivation execution receipt has an invalid output graph"),
@@ -387,6 +415,7 @@ async function loadInsightDerivationViewOnce(
       context,
       derivation,
       committed.map(({ execution }) => execution),
+      knownExecution,
     ),
   };
 }
@@ -409,4 +438,32 @@ export function loadDetectorExecutionView(
   const exactScope = context.scopePolicy.validate(scope);
   const exactScopeDigest = scopeDigest(exactScope);
   return loadDetectorExecutionViewOnce(context, executionId, exactScopeDigest);
+}
+
+export async function loadSemanticWorkflowChildViews(
+  context: EngineContext,
+  executionId: string,
+  scope: Scope,
+): Promise<
+  | {
+      readonly execution: DetectorExecutionView;
+      readonly derivations: readonly InsightDerivationView[];
+    }
+  | undefined
+> {
+  const exactScope = context.scopePolicy.validate(scope);
+  const exactScopeDigest = scopeDigest(exactScope);
+  const execution = await loadDetectorExecutionViewOnce(context, executionId, exactScopeDigest);
+  if (execution === undefined) return undefined;
+  const derivations: InsightDerivationView[] = [];
+  if (execution.execution.result.status === "applied") {
+    for (const reference of execution.execution.result.derivationRefs) {
+      const derivation = await loadInsightDerivationViewOnce(context, reference.id, exactScopeDigest, execution);
+      if (derivation === undefined || derivation.derivation.derivationDigest !== reference.derivationDigest) {
+        throw invalid("store.corrupt", "workflow child derivation view is unavailable", []);
+      }
+      derivations.push(derivation);
+    }
+  }
+  return { execution, derivations };
 }

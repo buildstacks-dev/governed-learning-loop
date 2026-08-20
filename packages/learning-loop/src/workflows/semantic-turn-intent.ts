@@ -47,6 +47,10 @@ export interface SemanticGenerationTarget {
   readonly executionKeyDigest: string;
   readonly episodeRecordIds: readonly string[];
   readonly disclosedEvidenceReferenceDigests: readonly string[];
+  readonly disclosedEvidenceHealthFindings?: readonly {
+    readonly id: string;
+    readonly findingDigest: string;
+  }[];
 }
 
 export interface SemanticAdvisoryReviewTarget {
@@ -67,6 +71,7 @@ export interface SemanticTurnRequestBinding {
   readonly mediaType: "application/json";
   readonly encoding: "utf-8";
   readonly byteLength: number;
+  readonly estimatedInputTokens?: number;
   readonly minimizedBytesDigest: string;
   readonly keyPolicyDigest: string;
 }
@@ -114,6 +119,7 @@ export interface SemanticDisclosureAuthorization {
   readonly scopeDigest: string;
   readonly request: {
     readonly byteLength: number;
+    readonly estimatedInputTokens?: number;
     readonly minimizedBytesDigest: string;
   };
   readonly providerRegistrationDigest: string;
@@ -218,6 +224,31 @@ function parseGenerationTargetAt(
     ...path,
     "disclosedEvidenceReferenceDigests",
   ]);
+  const disclosedEvidenceHealthFindings = fields.opt(
+    "disclosedEvidenceHealthFindings",
+    parseBoundedArray(
+      (value, fieldPath) => {
+        const nested = readFields(value, fieldPath);
+        const id = nested.req("id", parseDurableId);
+        const findingDigest = nested.req("findingDigest", parseDigestAt);
+        if (id !== `evidence-health-${findingDigest}`) {
+          throw invalid("schema.corrupt", "disclosed health finding id does not match its digest", [
+            ...fieldPath,
+            "id",
+          ]);
+        }
+        return { id, findingDigest };
+      },
+      SEMANTIC_WORKFLOW_MAX_EVIDENCE_REFS,
+      "disclosed evidence-health findings",
+    ),
+  );
+  if (disclosedEvidenceHealthFindings !== undefined) {
+    assertSortedUnique(disclosedEvidenceHealthFindings, (value) => value.id, [
+      ...path,
+      "disclosedEvidenceHealthFindings",
+    ]);
+  }
   return {
     kind: fields.req("kind", parseOneOf(["generation"])),
     detector: fields.req("detector", parseDetectorRefAt),
@@ -227,6 +258,7 @@ function parseGenerationTargetAt(
     executionKeyDigest: fields.req("executionKeyDigest", parseDigestAt),
     episodeRecordIds,
     disclosedEvidenceReferenceDigests,
+    ...(disclosedEvidenceHealthFindings === undefined ? {} : { disclosedEvidenceHealthFindings }),
   };
 }
 
@@ -286,10 +318,20 @@ function parseRequestAt(
       "keyPolicyDigest",
     ]);
   }
+  const estimatedInputTokens = fields.opt("estimatedInputTokens", (value, fieldPath) => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+      throw invalid("schema.invalid", "estimated input tokens must be a nonnegative safe integer", fieldPath);
+    }
+    if (value > definition.budgetPolicy.maximumInputTokens) {
+      throw invalid("semantic.workflow_limit", "estimated input tokens exceed the workflow budget", fieldPath);
+    }
+    return value;
+  });
   return {
     mediaType: fields.req("mediaType", parseOneOf(["application/json"])),
     encoding: fields.req("encoding", parseOneOf(["utf-8"])),
     byteLength,
+    ...(estimatedInputTokens === undefined ? {} : { estimatedInputTokens }),
     minimizedBytesDigest: fields.req("minimizedBytesDigest", parseDigestAt),
     keyPolicyDigest,
   };
@@ -500,11 +542,18 @@ function parseAuthorizationRequestAt(
   path: readonly (string | number)[],
 ): SemanticDisclosureAuthorization["request"] {
   const fields = readFields(input, path);
+  const estimatedInputTokens = fields.opt("estimatedInputTokens", (value, fieldPath) => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+      throw invalid("schema.invalid", "authorized input-token estimate must be nonnegative", fieldPath);
+    }
+    return value;
+  });
   return {
     byteLength: fields.req(
       "byteLength",
       parsePositiveSafeInteger(Number.MAX_SAFE_INTEGER, "authorized request byte length"),
     ),
+    ...(estimatedInputTokens === undefined ? {} : { estimatedInputTokens }),
     minimizedBytesDigest: fields.req("minimizedBytesDigest", parseDigestAt),
   };
 }
@@ -530,6 +579,7 @@ function assertExactAuthorizationReservation(
     authorization.reservationDigest !== reservation.reservationDigest ||
     authorization.scopeDigest !== reservation.scopeDigest ||
     authorization.request.byteLength !== reservation.request.byteLength ||
+    authorization.request.estimatedInputTokens !== reservation.request.estimatedInputTokens ||
     authorization.request.minimizedBytesDigest !== reservation.request.minimizedBytesDigest ||
     authorization.providerRegistrationDigest !== reservation.definition.providerModel.provider.registrationDigest ||
     authorization.authorizationPolicyDigest !== reservation.definition.disclosurePolicy.authorizationPolicyDigest
@@ -611,6 +661,9 @@ export function buildSemanticDisclosureAuthorization(
     scopeDigest: reservation.scopeDigest,
     request: {
       byteLength: reservation.request.byteLength,
+      ...(reservation.request.estimatedInputTokens === undefined
+        ? {}
+        : { estimatedInputTokens: reservation.request.estimatedInputTokens }),
       minimizedBytesDigest: reservation.request.minimizedBytesDigest,
     },
     providerRegistrationDigest: reservation.definition.providerModel.provider.registrationDigest,

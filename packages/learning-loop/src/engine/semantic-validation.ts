@@ -23,8 +23,8 @@ import type { EvidenceHealthFinding, SourcePageReceipt } from "../records/source
 import { parseEvidenceHealthFinding, parseSourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
 import { iterateRecordPages, loadStoredRecord, recordDigest } from "./context.js";
-import type { EvidenceHealthView } from "./evidence-binding.js";
-import { resolveCandidateEvidence } from "./evidence-binding.js";
+import type { DetectorEvidenceInput, EvidenceHealthView } from "./evidence-binding.js";
+import { resolveDetectorEvidence } from "./evidence-binding.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
 import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import {
@@ -255,6 +255,7 @@ export async function validatePopulation(
   context: EngineContext,
   execution: DetectorExecutionRecord,
   registry: SemanticRegistryConfig | undefined = context.semanticRegistry,
+  options: { readonly outcomeMode?: "latest" | "historical" } = {},
 ): Promise<void> {
   const executionLens = execution.lens;
   const detector = registry?.detectors.find(
@@ -318,11 +319,14 @@ export async function validatePopulation(
       throw invalid("semantic.population_invalid", "execution population episode has no exact source profile", []);
     }
     const outcome = await loadLatestEpisodeOutcomeClaim(context, episode.id);
-    if (
-      (episodeInput.outcomeClaimDigest === null && outcome.status !== "missing") ||
-      (episodeInput.outcomeClaimDigest !== null &&
-        (outcome.status !== "resolved" || outcome.latest.claimDigest !== episodeInput.outcomeClaimDigest))
-    ) {
+    const outcomeValid =
+      options.outcomeMode === "historical"
+        ? episodeInput.outcomeClaimDigest === null || outcome.historyDigests.includes(episodeInput.outcomeClaimDigest)
+        : (episodeInput.outcomeClaimDigest === null && outcome.status === "missing") ||
+          (episodeInput.outcomeClaimDigest !== null &&
+            outcome.status === "resolved" &&
+            outcome.latest.claimDigest === episodeInput.outcomeClaimDigest);
+    if (!outcomeValid) {
       throw invalid("semantic.population_invalid", "execution population outcome lineage is missing or changed", []);
     }
   }
@@ -334,14 +338,29 @@ export async function validateWindowEvidence(
   registry: SemanticRegistryConfig | undefined = context.semanticRegistry,
 ): Promise<EvidenceHealthView> {
   if (execution.window.evidenceRefs.length === 0) return { status: "ready", diagnostics: [] };
-  const resolved = await resolveCandidateEvidence(
-    context,
-    execution.window.evidenceRefs.map((reference) => reference.recordId),
-    execution.scope,
-  );
+  const exactInputs: DetectorEvidenceInput[] = [];
+  const exactInputIds = new Set<string>();
+  for (const reference of execution.window.evidenceRefs) {
+    if (!exactInputIds.has(reference.recordId)) {
+      exactInputs.push(
+        reference.kind === "observation"
+          ? { kind: "observation", recordId: reference.recordId }
+          : { kind: "measurement", recordId: reference.recordId },
+      );
+      exactInputIds.add(reference.recordId);
+    }
+    if (reference.kind !== "measurement" || reference.schemaVersion !== 2) continue;
+    for (const supporting of reference.supportingEvidenceRefs) {
+      if (exactInputIds.has(supporting.recordId)) continue;
+      exactInputs.push({ kind: "observation", recordId: supporting.recordId });
+      exactInputIds.add(supporting.recordId);
+    }
+  }
+  const resolved = await resolveDetectorEvidence(context, exactInputs, execution.scope);
+  const resolvedById = new Map(resolved.refs.map((reference) => [reference.recordId, reference]));
   if (
-    resolved.refs.length !== execution.window.evidenceRefs.length ||
-    !resolved.refs.every((reference, index) => sameCanonical(reference, execution.window.evidenceRefs[index]))
+    resolved.refs.length !== exactInputs.length ||
+    !execution.window.evidenceRefs.every((reference) => sameCanonical(resolvedById.get(reference.recordId), reference))
   ) {
     throw invalid("semantic.evidence_invalid", "execution evidence no longer matches durable lineage", []);
   }
@@ -546,18 +565,43 @@ export function validateDerivationAgainstExecution(
   if (derivation.evidenceHealthFindings.some((finding) => !availableHealth.has(finding.findingDigest))) {
     throw invalid("semantic.derivation_mismatch", "insight derivation cites health outside its execution window", []);
   }
+  const producer = derivation.producer;
+  const requiredFingerprintPresent = lens.requiredFingerprintKinds.every((kind) => {
+    if (kind === "implementation") return producer.implementationDigest === execution.detector.implementationDigest;
+    if (kind === "model") return producer.modelFingerprintDigest !== null;
+    if (kind === "prompt") return producer.promptDigest !== null;
+    if (kind === "tool") return producer.toolPolicyDigest !== null;
+    if (kind === "budget") return producer.budgetPolicyDigest !== null;
+    return false;
+  });
+  const producerValid =
+    producer.kind === "deterministic"
+      ? producer.implementationDigest === execution.detector.implementationDigest &&
+        producer.principal === null &&
+        producer.attestation === null &&
+        producer.modelFingerprintDigest === null &&
+        producer.promptDigest === null &&
+        producer.toolPolicyDigest === null &&
+        producer.budgetPolicyDigest === null &&
+        producer.disclosure === null
+      : producer.kind === "semantic_judgment"
+        ? producer.implementationDigest === execution.detector.implementationDigest &&
+          producer.principal !== null &&
+          producer.attestation !== null &&
+          ((detector.privacy.transientContent === "memory_only" && producer.disclosure === null) ||
+            (detector.privacy.transientContent === "explicit_disclosure_receipt" && producer.disclosure !== null))
+        : false;
   if (
-    derivation.producer.kind !== "deterministic" ||
-    derivation.producer.implementationDigest !== execution.detector.implementationDigest ||
-    !lens.generatorPolicy.allowedKinds.includes("deterministic") ||
-    lens.requiredFingerprintKinds.some((kind) => kind !== "implementation") ||
+    !lens.generatorPolicy.allowedKinds.includes(producer.kind) ||
+    !requiredFingerprintPresent ||
+    !producerValid ||
     lens.requiredCalibrationIds.length !== 0 ||
     !lens.learningClasses.includes(derivation.learningClass) ||
     !isScopeAllowed(lens.applicableScopes, derivation.scopeDigest)
   ) {
     throw invalid(
       "semantic.derivation_policy_invalid",
-      "deterministic derivation does not satisfy its learning lens",
+      "insight derivation producer does not satisfy its learning lens",
       [],
     );
   }

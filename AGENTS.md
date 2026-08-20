@@ -127,19 +127,33 @@ between code and contract, open an issue — never silently drift either one.
   inefficiency, preference, utility, or efficacy. Missing/unreadable/unsupported
   coverage remains native source health, not a detector. Calibration and every
   default-quality claim remain #26.
-- **Semantic provider-turn facts are private and inert.** Decision 0021 adds
-  unknown-first workflow definitions, exact request reservations, outbound-only
-  authorization, one create-only dispatch claim, closed result metadata, and a
-  scope-private receipt-last terminal graph. It stores keyed application-content
-  byte digests and lengths, never preview/request/raw-response/provider-error
-  bytes. Authorization is not a disclosure receipt, `created` is not an egress
-  capability, and dispatch without a result is permanently `outcome_unknown`
-  with no automatic retry. #13a has no provider callback, SDK, public export,
-  completed output persistence, Candidate, Review, authority, utility, or
-  efficacy claim. #13b must add a nonforgeable prepared-plan/provider/
-  disclosure-authority capability and recheck the exact current window and
-  expiry at handoff; #13c owns advisory review, while decisive calibrated review
-  remains #26.
+- **Semantic generation is factory-bound, exact, and inert.** Decisions 0021
+  and 0022 keep definitions, reservations, authorization, dispatch, results,
+  plan/attempt/completion sidecars and receipt-last persistence private. The
+  `/workflows` subpath exports only `SemanticWorkflowBundle` and
+  `createSemanticWorkflowBundle`; definition/schema setup is carried on the
+  frozen factory. Prepared plans and outbound authorization are loop/bundle-
+  bound capabilities. Preparation writes nothing, includes the complete
+  kernel-materialized window in the exact previewed application payload, and
+  estimates tokens once. A run revalidates current registry/window/source/
+  privacy/expiry twice, persists reservation→plan→authorization iff
+  outbound→scope+definition attempt, and permits one callback only on a newly
+  created dispatch. Existing dispatch never redispatches. Provider output is
+  descriptor-snapshotted once, hard-bounded by exact canonical bytes, measured
+  and tenant-key-digested by the kernel, then admitted only through the fixed
+  typed DetectorResultDraft schema into the ordinary
+  DetectorExecution/InsightDerivation graph. Request/preview/raw-response/
+  native-provider-receipt/error bytes never persist. Authorization is not proof
+  of disclosure, and application callback bytes are not provider wire proof.
+  Process recovery is attempt-index-first, scope-and-definition private, invokes
+  no provider/authority, ignores current expiry only for known post-dispatch
+  facts, and leaves dispatch-only ambiguity `outcome_unknown`. Positive semantic
+  recurrence is explicitly locator-unavailable. Detector/semantic window
+  evidence resolves at most 5,000 exact refs through its batch fold; Candidate
+  proposal keeps its independent 1,000-ref cap. No workflow method creates a
+  Candidate/Review, proposal admission, publication, activation, validation,
+  effect, authority, utility, efficacy, or calibration claim. #13c owns
+  advisory review; decisive calibrated review remains #26.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports
@@ -244,7 +258,7 @@ between code and contract, open an issue — never silently drift either one.
   receive the caller's minimal `{ describe, expect, it }` API explicitly, and
   every store adapter runs the same suite through that injected seam.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`,
-  `/reference-detectors`) with no supported deep imports.
+  `/reference-detectors`, `/workflows`) with no supported deep imports.
 
 ## Non-negotiable kernel invariants
 

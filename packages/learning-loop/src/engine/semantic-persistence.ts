@@ -17,7 +17,9 @@ import {
   loadInsightDerivationRecord,
   persistRegistrySnapshot,
   semanticGraphSnapshotRevision,
+  parseSemanticRegistrySnapshot,
 } from "./semantic-graph.js";
+import type { SemanticRegistrySnapshot } from "./semantic-graph.js";
 import {
   diagnostic,
   expectedDerivationRefs,
@@ -25,9 +27,12 @@ import {
   mergeHealth,
   parseDerivations,
   validateCurrentRegistry,
+  validateDerivationAgainstExecution,
   validateDerivationBundle,
   validateDerivationSupersessions,
   validateInputHealth,
+  validateExecutionAgainstSnapshot,
+  validateHistoricalWindowEvidence,
   validatePopulation,
   validateWindowEvidence,
 } from "./semantic-validation.js";
@@ -43,7 +48,12 @@ import {
   persistPreparedExecutionRecurrence,
   prepareExecutionRecurrence,
   recurrenceForExecution,
+  loadExecutionRecurrenceBinding,
 } from "./detector-recurrence.js";
+import {
+  loadSemanticWorkflowCompletionIntent,
+  validateSemanticWorkflowExecutionPrewriteLineage,
+} from "../workflows/semantic-generation-persistence.js";
 
 const MAX_SNAPSHOT_ATTEMPTS = 3;
 
@@ -94,6 +104,7 @@ async function validatePrewriteBundle(
   validateCurrentRegistry(context, execution);
   validateDerivationBundle(context, execution, derivations);
   await validateDerivationSupersessions(context, derivations);
+  await validateSemanticWorkflowExecutionPrewriteLineage(context, execution, derivations);
   await validatePopulation(context, execution);
   const evidence = await validateWindowEvidence(context, execution);
   const inputFindings = await validateInputHealth(context, execution);
@@ -200,6 +211,109 @@ export async function persistDetectorExecution(
     );
     if (!claims.some((claim) => claim.claimDigest === expected.claimDigest)) {
       throw invalid("store.corrupt", "derivation recurrence claim was not preserved", []);
+    }
+  }
+}
+
+/**
+ * #13b recovery path. It consumes the registry snapshot frozen in the first
+ * post-callback completion intent and never substitutes the latest registry or
+ * rematerializes a different detector window.
+ */
+export async function persistSemanticWorkflowDetectorExecution(
+  context: EngineContext,
+  executionInput: unknown,
+  derivationsInput: unknown,
+  registrySnapshotInput: unknown,
+): Promise<void> {
+  const execution = parseDetectorExecutionRecord(executionInput);
+  const derivations = parseDerivations(derivationsInput);
+  const snapshot: SemanticRegistrySnapshot = parseSemanticRegistrySnapshot(registrySnapshotInput);
+  if (snapshot.loopRegistryRevision !== execution.loopRegistryRevision) {
+    throw invalid("semantic.registry_mismatch", "workflow registry snapshot belongs to another execution", []);
+  }
+  validateExecutionAgainstSnapshot(execution, snapshot.semanticRegistry);
+  const exactReferences = expectedDerivationRefs(execution);
+  if (
+    exactReferences.length !== derivations.length ||
+    !exactReferences.every((reference, index) => {
+      const derivation = derivations[index];
+      return (
+        derivation !== undefined &&
+        derivation.id === reference.id &&
+        derivation.derivationDigest === reference.derivationDigest &&
+        derivation.scopeDigest === reference.scopeDigest
+      );
+    })
+  ) {
+    throw invalid("semantic.derivation_mismatch", "workflow derivations do not match the exact execution", []);
+  }
+  for (const derivation of derivations) {
+    validateDerivationAgainstExecution(execution, derivation, snapshot.semanticRegistry);
+  }
+  await validateDerivationSupersessions(context, derivations);
+  await validatePopulation(context, execution, snapshot.semanticRegistry, { outcomeMode: "historical" });
+  const evidence = await validateHistoricalWindowEvidence(context, execution, snapshot.semanticRegistry, {
+    includeCurrentHealth: false,
+  });
+  const inputFindings = await validateInputHealth(context, execution);
+  const inputHealth = mergeHealth(evidence, inputFindings);
+  if (execution.result.status === "applied" && inputHealth.status === "invalid") {
+    throw invalid("semantic.evidence_invalid", "semantic workflow evidence is invalid", []);
+  }
+  if (execution.result.status === "applied") {
+    for (const finding of execution.result.evidenceHealthFindings) {
+      if (!(await healthFindingBelongsToWindow(context, execution, finding))) {
+        throw invalid("semantic.health_unrelated", "workflow health output is unrelated to its exact window", []);
+      }
+    }
+  }
+  await validateSemanticWorkflowExecutionPrewriteLineage(context, execution, derivations);
+  const completionIntent = await loadSemanticWorkflowCompletionIntent(context, execution.executionKeyDigest);
+  if (completionIntent === undefined || completionIntent.registrySnapshot.snapshotDigest !== snapshot.snapshotDigest) {
+    throw invalid("semantic.workflow_incomplete", "semantic workflow recovery intent is unavailable", []);
+  }
+
+  await persistRegistrySnapshot(context, snapshot);
+  if (execution.result.status === "applied") {
+    for (const finding of execution.result.evidenceHealthFindings) await persistHealthFinding(context, finding);
+  }
+  const links = expectedDerivationRefs(execution).map((reference) =>
+    buildDerivationLink(execution, snapshot.semanticRegistry.registryDigest, reference),
+  );
+  for (const link of links) await appendDerivationLink(context, link);
+  for (const derivation of derivations) await persistDerivationAndIndex(context, derivation);
+  await persistDetectorExecutionScopeIndex(context, execution);
+  if (completionIntent.recurrenceBinding !== null) {
+    await persistPreparedExecutionRecurrence(context, completionIntent.recurrenceBinding);
+  }
+  const derivationRecurrenceClaims = buildDerivationRecurrenceClaims(
+    execution,
+    completionIntent.recurrenceBinding ?? undefined,
+    derivations,
+  );
+  await persistDerivationRecurrenceClaims(context, derivationRecurrenceClaims);
+  await persistExecutionReceipt(context, execution);
+
+  const reloaded = await loadDetectorExecutionRecord(context, execution.id);
+  if (reloaded === undefined || reloaded.executionDigest !== execution.executionDigest) {
+    throw invalid("store.corrupt", "semantic workflow execution receipt was not preserved", []);
+  }
+  if (completionIntent.recurrenceBinding !== null) {
+    const storedRecurrence = await loadExecutionRecurrenceBinding(context, execution.id);
+    if (storedRecurrence?.bindingDigest !== completionIntent.recurrenceBinding.bindingDigest) {
+      throw invalid("store.corrupt", "semantic workflow recurrence binding was not preserved", []);
+    }
+  }
+  for (const derivation of derivations) {
+    const stored = await loadInsightDerivationRecord(context, derivation.id);
+    const storedLinks = await loadDerivationLinks(context, derivation.id);
+    if (
+      stored === undefined ||
+      stored.derivationDigest !== derivation.derivationDigest ||
+      !storedLinks.some((link) => links.some((expected) => expected.linkDigest === link.linkDigest))
+    ) {
+      throw invalid("store.corrupt", "semantic workflow derivation graph was not preserved", []);
     }
   }
 }

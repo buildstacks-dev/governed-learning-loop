@@ -3,15 +3,27 @@
 // engine's governance view. The wording is deliberate: recurrence, never
 // causation, and never the words the kernel reserves for measured outcomes.
 import type { DemoLoop } from "../compose.js";
-import { foldStore } from "../fold.js";
+import { type FoldListProgress, foldStore } from "../fold.js";
 import { governanceViewFor } from "../governance.js";
 import type { CliOutput } from "../output.js";
 import { loadDaySummaries } from "../state.js";
 
 const FOOTER = "All evidence above is advisory and transcript-derived: it demonstrates recurrence, not causation.";
 
+function progressLine(progress: FoldListProgress): string {
+  const waiting = progress.heartbeat ? " waiting-for-page" : "";
+  return (
+    `report: listing ${progress.kind} records=${progress.records} pages=${progress.pages}` +
+    ` elapsed=${progress.elapsedSeconds}s${waiting}`
+  );
+}
+
 export async function runReportCommand(loop: DemoLoop, out: CliOutput): Promise<number> {
-  const fold = await foldStore(loop.store);
+  const fold = await foldStore(loop.store, (progress) => out.write(progressLine(progress)));
+  out.write(
+    `report: fold complete projects=${fold.projects.size} observations=${fold.observationCount}` +
+      ` episodes=${fold.episodeRecordCount}`,
+  );
   const { summaries, corrupt: corruptSummaries } = await loadDaySummaries(loop.store);
 
   out.write("TRANSCRIPT INSIGHTS REPORT");

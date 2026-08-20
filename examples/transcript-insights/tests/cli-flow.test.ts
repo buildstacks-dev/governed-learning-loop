@@ -93,6 +93,8 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
     stateDir,
   ]);
   expect(first.code).toBe(0);
+  expect(first.lines[0]).toBe(`ingest: start state=${stateDir} provider=claude-code day=${claudeDay}`);
+  expect(first.text).toContain(`ingest: day=${claudeDay} provider=claude-code files=2 start`);
   expect(first.text).toContain("files considered: 2");
   // All 16 projected observations survive: sourceRecordIds carry a per-line
   // occurrence suffix, so same-line projections (assistant message+usage;
@@ -140,6 +142,11 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
   // Distill proposes one inert candidate per qualifying cluster.
   const distill = await cli(["distill", "--state", stateDir]);
   expect(distill.code).toBe(0);
+  expect(distill.lines[0]).toBe(`distill: start state=${stateDir} scan=read-only writes=candidate-proposals-only`);
+  const distillProgress = distill.lines.findIndex((line) => line.startsWith("distill: listing observations"));
+  const distillSummary = distill.lines.findIndex((line) => line.includes("qualifying cluster(s)"));
+  expect(distillProgress).toBeGreaterThanOrEqual(0);
+  expect(distillSummary).toBeGreaterThan(distillProgress);
   expect(distill.text).toContain("2 qualifying cluster(s)");
   expect(distill.text).toContain("distill done: 2 new candidate(s), 0 already known");
   const newIds = distill.lines
@@ -187,6 +194,11 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
   // Final report: counts, governance transitions, advisory footer, wording.
   const report = await cli(["report", "--state", stateDir]);
   expect(report.code).toBe(0);
+  expect(report.lines[0]).toBe(`report: start state=${stateDir} operation=read-only`);
+  const reportProgress = report.lines.findIndex((line) => line.startsWith("report: listing observations"));
+  const reportBody = report.lines.indexOf("TRANSCRIPT INSIGHTS REPORT");
+  expect(reportProgress).toBeGreaterThanOrEqual(0);
+  expect(reportBody).toBeGreaterThan(reportProgress);
   expect(report.text).toContain("== Ingestion health ==");
   expect(report.text).toContain("== Friction signals ==");
   expect(report.text).toContain("== Candidates ==");

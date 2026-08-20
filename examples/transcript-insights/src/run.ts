@@ -1,6 +1,7 @@
 // Programmatic CLI entry: `runCli(argv, out)` — tests drive this directly;
 // src/cli.ts binds it to process.argv/stdout. Argv is parsed by hand with
 // node:util parseArgs; no dependency.
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { LearningLoopError } from "@cormidia/learning-loop";
 import { runBackfillCommand, runIngestCommand } from "./commands/ingest.js";
@@ -77,7 +78,9 @@ async function dispatch(command: string, rest: readonly string[], out: CliOutput
       const provider = requireProvider(values);
       const root = requireText(values, "root");
       const day = requireDay(values, "day");
-      const loop = await composeDemoLoop(requireText(values, "state"));
+      const stateDir = resolve(requireText(values, "state"));
+      out.write(`ingest: start state=${stateDir} provider=${provider} day=${day}`);
+      const loop = await composeDemoLoop(stateDir);
       return runIngestCommand(loop, provider, root, day, out);
     }
     case "backfill": {
@@ -86,17 +89,23 @@ async function dispatch(command: string, rest: readonly string[], out: CliOutput
       const root = requireText(values, "root");
       const from = requireDay(values, "from");
       const to = requireDay(values, "to");
-      const loop = await composeDemoLoop(requireText(values, "state"));
+      const stateDir = resolve(requireText(values, "state"));
+      out.write(`backfill: start state=${stateDir} provider=${provider} days=${from}..${to}`);
+      const loop = await composeDemoLoop(stateDir);
       return runBackfillCommand(loop, provider, root, from, to, out);
     }
     case "report": {
       const values = parseOptions(rest, ["state"]);
-      const loop = await composeDemoLoop(requireText(values, "state"));
+      const stateDir = resolve(requireText(values, "state"));
+      out.write(`report: start state=${stateDir} operation=read-only`);
+      const loop = await composeDemoLoop(stateDir, { initializeState: false });
       return runReportCommand(loop, out);
     }
     case "distill": {
       const values = parseOptions(rest, ["state"]);
-      const loop = await composeDemoLoop(requireText(values, "state"));
+      const stateDir = resolve(requireText(values, "state"));
+      out.write(`distill: start state=${stateDir} scan=read-only writes=candidate-proposals-only`);
+      const loop = await composeDemoLoop(stateDir, { initializeState: false });
       return runDistillCommand(loop, out);
     }
     case "review": {
@@ -106,7 +115,9 @@ async function dispatch(command: string, rest: readonly string[], out: CliOutput
       const reject = values.reject === true;
       if (accept === reject) throw new UsageError("pass exactly one of --accept or --reject");
       const note = typeof values.note === "string" ? values.note : undefined;
-      const loop = await composeDemoLoop(requireText(values, "state"));
+      const stateDir = resolve(requireText(values, "state"));
+      out.write(`review: start state=${stateDir} candidate=${candidateId}`);
+      const loop = await composeDemoLoop(stateDir, { initializeState: false });
       return runReviewCommand(loop, candidateId, accept ? "accept" : "reject", note, out);
     }
     default: {

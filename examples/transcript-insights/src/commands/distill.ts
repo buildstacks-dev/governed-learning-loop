@@ -7,7 +7,7 @@
 import type { CandidateDigestInput, CandidateInput, Scope } from "@cormidia/learning-loop";
 import { candidateContentDigest } from "@cormidia/learning-loop";
 import type { DemoLoop } from "../compose.js";
-import type { SignalCluster, StoreFold } from "../fold.js";
+import type { FoldListProgress, SignalCluster, StoreFold } from "../fold.js";
 import { foldStore } from "../fold.js";
 import type { CliOutput } from "../output.js";
 
@@ -79,11 +79,20 @@ function slugOf(text: string): string {
   return (slug.length === 0 ? "x" : slug).slice(0, 40);
 }
 
+function progressLine(progress: FoldListProgress): string {
+  const waiting = progress.heartbeat ? " waiting-for-page" : "";
+  return (
+    `distill: listing ${progress.kind} records=${progress.records} pages=${progress.pages}` +
+    ` elapsed=${progress.elapsedSeconds}s${waiting}`
+  );
+}
+
 export async function runDistillCommand(loop: DemoLoop, out: CliOutput): Promise<number> {
-  const fold = await foldStore(loop.store);
+  const fold = await foldStore(loop.store, (progress) => out.write(progressLine(progress)));
   const clusters = deriveClusters(fold);
   out.write(
-    `distill: ${clusters.length} qualifying cluster(s) (>=${MIN_EVENTS} events over >=${MIN_EPISODES} episodes)`,
+    `distill: fold complete projects=${fold.projects.size}; ${clusters.length} qualifying cluster(s)` +
+      ` (>=${MIN_EVENTS} events over >=${MIN_EPISODES} episodes)`,
   );
   let created = 0;
   let known = 0;

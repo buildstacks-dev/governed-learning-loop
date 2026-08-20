@@ -60,6 +60,15 @@ pnpm --filter transcript-insights start -- review --state ~/ti-state \
 pnpm --filter transcript-insights start -- report --state ~/ti-state
 ```
 
+Long-running commands emit plain, non-TTY progress lines through stdout.
+Every command starts by naming its resolved state directory. `report` and the
+scan phase of `distill` report record/page counts as they fold the store;
+`ingest` and `backfill` announce each day's aggregate file count before ingest
+and emit a heartbeat every five seconds while a day is still running. These
+lines contain counts, provider/day identifiers, and diagnostic codes only —
+never transcript content or session paths. `report` is read-only; `distill`
+writes only after the scan, when it proposes qualifying inert candidates.
+
 ## How days are attributed
 
 - `claude-code`: `<root>/*/*.jsonl` whose file **mtime** falls on `--day`
@@ -78,6 +87,13 @@ pnpm --filter transcript-insights start -- report --state ~/ti-state
 - `store/` — the kernel's file store (append-only governed records) plus this
   demo's own `demo` namespace holding per-day aggregate ingest summaries
   (counts and diagnostic codes only).
+
+The first list in a process validates the namespace's record files and builds
+an insertion-ordered path catalog in memory. Later cursor pages seek through
+that catalog and reopen only the records in the requested page. A report over
+an existing large state therefore performs linear filesystem work rather than
+re-reading the whole namespace for every 200-record page; no derived index or
+transcript data is persisted.
 
 ## What the report claims — and what it doesn't
 

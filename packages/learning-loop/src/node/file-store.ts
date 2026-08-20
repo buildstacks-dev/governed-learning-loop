@@ -8,9 +8,13 @@
 // re-verified immediately before the rename). Reads open with O_NOFOLLOW and
 // re-check realpath confinement, so symlinks into or out of the root are
 // refused. Semantics mirror the in-memory reference store exactly; the
-// public conformance suite runs unchanged. Lock ordering: a key lock may
-// acquire the namespace meta lock, never the reverse — no cycles.
-import { mkdir, readdir, realpath, rename, unlink } from "node:fs/promises";
+// public conformance suite runs unchanged. Listing builds one validated,
+// insertion-ordered path catalog per namespace and reuses it while the
+// namespace write counter and kind-directory identities stay unchanged. A
+// cursor page therefore reopens only records at/after that cursor instead of
+// rereading every cell in the namespace. Lock ordering: a key lock may acquire
+// the namespace meta lock, never the reverse — no cycles.
+import { mkdir, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { JsonValue } from "../canonical/json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
@@ -73,8 +77,21 @@ function copyEntry(entry: StreamEntry): StreamEntry {
   return { id: entry.id, digest: entry.digest, value: toJsonValue(entry.value) };
 }
 
+interface CatalogEntry {
+  readonly key: RecordKey;
+  readonly insertionIndex: number;
+}
+
+interface NamespaceCatalog {
+  readonly writeCount: number;
+  readonly directorySignature: string;
+  readonly all: readonly CatalogEntry[];
+  readonly byKind: ReadonlyMap<string, readonly CatalogEntry[]>;
+}
+
 export function createFileStore(options: FileStoreOptions): LearningStore {
   const root = resolve(options.rootDir);
+  const catalogs = new Map<string, NamespaceCatalog>();
   const lockOptions: LockOptions = {
     ttlMs: options.lockTtlMs ?? 10_000,
     timeoutMs: options.lockTimeoutMs ?? 10_000,
@@ -351,7 +368,109 @@ export function createFileStore(options: FileStoreOptions): LearningStore {
       }
       if (entry.isDirectory()) dirs.push(entryPath);
     }
-    return dirs;
+    return dirs.sort();
+  }
+
+  async function directorySignature(dirs: readonly string[]): Promise<string> {
+    const parts: string[] = [];
+    for (const dir of dirs) {
+      const details = await stat(dir, { bigint: true });
+      if (!details.isDirectory()) throw corruptStoreFile(dir, "kind path is not a directory");
+      parts.push(`${dir}\0${String(details.dev)}\0${String(details.ino)}\0${String(details.mtimeNs)}`);
+    }
+    return parts.join("\n");
+  }
+
+  async function scanCatalog(nsDir: string, meta: NamespaceMeta, dirs: readonly string[]): Promise<NamespaceCatalog> {
+    const entries: CatalogEntry[] = [];
+    for (const dir of dirs) {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith(".") || !entry.name.endsWith(".json")) continue;
+        const filePath = join(dir, entry.name);
+        if (entry.isSymbolicLink()) {
+          throw corruptStoreFile(filePath, "record path is a symbolic link; refusing to follow");
+        }
+        if (!entry.isFile()) throw corruptStoreFile(filePath, "record path is not a regular file");
+        const read = await readNoFollow(filePath);
+        if (read.outcome === "missing") continue; // no code path deletes record files
+        if (read.outcome !== "ok") throw corruptStoreFile(filePath, "record path is not a regular readable file");
+        const cell = parseCellText(read.text, filePath);
+        if (recordFile(root, cell.key) !== filePath) {
+          throw corruptStoreFile(filePath, "stored key does not match its location");
+        }
+        entries.push({ key: copyKey(cell.key), insertionIndex: cell.insertionIndex });
+      }
+    }
+    entries.sort((left, right) => left.insertionIndex - right.insertionIndex);
+    for (let index = 1; index < entries.length; index += 1) {
+      const previous = entries[index - 1];
+      const current = entries[index];
+      if (previous !== undefined && current !== undefined && previous.insertionIndex === current.insertionIndex) {
+        throw corruptStoreFile(nsDir, `duplicate insertion index ${String(current.insertionIndex)}`);
+      }
+    }
+    const byKind = new Map<string, CatalogEntry[]>();
+    for (const entry of entries) {
+      const kindEntries = byKind.get(entry.key.kind) ?? [];
+      kindEntries.push(entry);
+      byKind.set(entry.key.kind, kindEntries);
+    }
+    return {
+      writeCount: meta.writeCount,
+      directorySignature: await directorySignature(dirs),
+      all: entries,
+      byKind,
+    };
+  }
+
+  async function catalogFor(
+    nsDir: string,
+    namespace: string,
+  ): Promise<{
+    readonly catalog: NamespaceCatalog;
+    readonly meta: NamespaceMeta;
+  }> {
+    // A stable scan is normally immediate. If another process publishes a
+    // cell while the catalog is being built, retry so the cached view never
+    // treats a half-observed directory as current. Continuous writers do not
+    // starve readers: the third scan is returned uncached and the next page
+    // checks the namespace again.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const metaBefore = await readMeta(namespace);
+      const dirsBefore = await collectKindDirs(nsDir, namespace, undefined);
+      const signatureBefore = await directorySignature(dirsBefore);
+      const cached = catalogs.get(namespace);
+      if (cached !== undefined && cached.writeCount === metaBefore.writeCount) {
+        if (cached.directorySignature === signatureBefore) return { catalog: cached, meta: metaBefore };
+      }
+
+      const scanned = await scanCatalog(nsDir, metaBefore, dirsBefore);
+      const metaAfter = await readMeta(namespace);
+      const dirsAfter = await collectKindDirs(nsDir, namespace, undefined);
+      const signatureAfter = await directorySignature(dirsAfter);
+      const stable =
+        metaBefore.writeCount === metaAfter.writeCount &&
+        signatureBefore === signatureAfter &&
+        scanned.directorySignature === signatureAfter;
+      if (stable) {
+        catalogs.set(namespace, scanned);
+        return { catalog: scanned, meta: metaAfter };
+      }
+      if (attempt === 2) return { catalog: scanned, meta: metaAfter };
+    }
+    throw new Error("unreachable catalog scan state");
+  }
+
+  function firstEntryAfter(entries: readonly CatalogEntry[], insertionIndex: number): number {
+    let low = 0;
+    let high = entries.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      const entry = entries[middle];
+      if (entry !== undefined && entry.insertionIndex <= insertionIndex) low = middle + 1;
+      else high = middle;
+    }
+    return low;
   }
 
   async function list(query: {
@@ -379,34 +498,33 @@ export function createFileStore(options: FileStoreOptions): LearningStore {
     if ((await confinedRealDir(nsDir)) === undefined) {
       return { records: [], snapshotRevision: "0" };
     }
-    const meta = await readMeta(query.namespace);
-    const cells: (RecordCell | StreamCell)[] = [];
-    for (const dir of await collectKindDirs(nsDir, query.namespace, query.kind)) {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith(".") || !entry.name.endsWith(".json")) continue;
-        const filePath = join(dir, entry.name);
-        if (entry.isSymbolicLink()) {
-          throw corruptStoreFile(filePath, "record path is a symbolic link; refusing to follow");
-        }
-        if (!entry.isFile()) throw corruptStoreFile(filePath, "record path is not a regular file");
-        const read = await readNoFollow(filePath);
-        if (read.outcome === "missing") continue; // no code path deletes record files
-        if (read.outcome !== "ok") throw corruptStoreFile(filePath, "record path is not a regular readable file");
-        const cell = parseCellText(read.text, filePath);
-        if (recordFile(root, cell.key) !== filePath) {
-          throw corruptStoreFile(filePath, "stored key does not match its location");
-        }
-        if (cell.form === "tombstone") continue;
-        cells.push(cell);
+    const { catalog, meta } = await catalogFor(nsDir, query.namespace);
+    const entries = query.kind === undefined ? catalog.all : (catalog.byKind.get(query.kind) ?? []);
+    const live: { readonly record: StoredRecord; readonly insertionIndex: number }[] = [];
+    for (let index = firstEntryAfter(entries, afterIndex); index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (entry === undefined) break;
+      const filePath = recordFile(root, entry.key);
+      const cell = await readCellAt(filePath);
+      if (cell === undefined) throw corruptStoreFile(filePath, "indexed record is missing");
+      if (
+        cell.key.namespace !== entry.key.namespace ||
+        cell.key.kind !== entry.key.kind ||
+        cell.key.id !== entry.key.id ||
+        cell.insertionIndex !== entry.insertionIndex
+      ) {
+        throw corruptStoreFile(filePath, "indexed record identity does not match the stored cell");
+      }
+      if (cell.form !== "tombstone") {
+        live.push({ record: toStoredRecord(cell), insertionIndex: cell.insertionIndex });
+        if (live.length > query.limit) break;
       }
     }
-    cells.sort((left, right) => left.insertionIndex - right.insertionIndex);
-    const live = cells.filter((cell) => cell.insertionIndex > afterIndex);
     const page = live.slice(0, query.limit);
-    const lastCell = page[page.length - 1];
+    const lastEntry = page[page.length - 1];
     return {
-      records: page.map((cell) => toStoredRecord(cell)),
-      ...(live.length > page.length && lastCell !== undefined ? { nextCursor: String(lastCell.insertionIndex) } : {}),
+      records: page.map((entry) => entry.record),
+      ...(live.length > page.length && lastEntry !== undefined ? { nextCursor: String(lastEntry.insertionIndex) } : {}),
       snapshotRevision: String(meta.writeCount),
     };
   }

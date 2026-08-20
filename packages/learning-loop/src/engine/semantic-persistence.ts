@@ -33,6 +33,11 @@ import {
 } from "./semantic-validation.js";
 import { persistHealthFinding } from "./source-receipts.js";
 import { persistDetectorExecutionScopeIndex, persistInsightDerivationScopeIndex } from "./semantic-scope-index.js";
+import {
+  buildDerivationRecurrenceClaims,
+  loadCommittedDerivationRecurrenceClaims,
+  persistDerivationRecurrenceClaims,
+} from "./recurrence-claims.js";
 import type { ExecutionRecurrenceBinding } from "./detector-recurrence.js";
 import {
   persistPreparedExecutionRecurrence,
@@ -158,6 +163,8 @@ export async function persistDetectorExecution(
   if (recurrenceBinding !== undefined) {
     await persistPreparedExecutionRecurrence(context, recurrenceBinding);
   }
+  const derivationRecurrenceClaims = buildDerivationRecurrenceClaims(execution, recurrenceBinding, derivations);
+  await persistDerivationRecurrenceClaims(context, derivationRecurrenceClaims);
   await persistExecutionReceipt(context, execution);
 
   const reloaded = await loadDetectorExecutionRecord(context, execution.id);
@@ -183,6 +190,16 @@ export async function persistDetectorExecution(
       !storedLinks.some((link) => links.some((expected) => expected.linkDigest === link.linkDigest))
     ) {
       throw invalid("store.corrupt", "semantic execution graph was not preserved", []);
+    }
+  }
+  for (const expected of derivationRecurrenceClaims) {
+    const claims = await loadCommittedDerivationRecurrenceClaims(
+      context,
+      expected.derivationId,
+      expected.derivationDigest,
+    );
+    if (!claims.some((claim) => claim.claimDigest === expected.claimDigest)) {
+      throw invalid("store.corrupt", "derivation recurrence claim was not preserved", []);
     }
   }
 }

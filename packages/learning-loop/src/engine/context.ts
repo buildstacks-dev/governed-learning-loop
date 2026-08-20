@@ -47,6 +47,10 @@ export type RecordKind =
   | "detector-execution"
   | "detector-recurrence-binding"
   | "detector-recurrence-group"
+  | "derivation-recurrence-claim"
+  | "derivation-recurrence"
+  | "candidate-recurrence-claim"
+  | "detector-recurrence-group-candidate"
   | "detector-pack-run-receipt";
 
 export interface EngineContext {
@@ -164,6 +168,13 @@ const parseStreamEntryIdAt: Parse<string> = (input, path) => {
 };
 
 function expectedStoredDigest(kind: RecordKind, value: unknown): string {
+  if (
+    (kind === "derivation-recurrence" || kind === "detector-recurrence-group-candidate") &&
+    Array.isArray(value) &&
+    value.length > 5_000
+  ) {
+    throw invalid("store.corrupt", "recurrence claim stream exceeds its ceiling", ["value"]);
+  }
   if (kind === "detector-recurrence-group") {
     if (!Array.isArray(value)) {
       throw invalid("store.corrupt", "detector recurrence group must be a stream-entry array", ["value"]);
@@ -183,6 +194,8 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
     kind === "episode-outcome" ||
     kind === "source-revision" ||
     kind === "derivation-execution" ||
+    kind === "derivation-recurrence" ||
+    kind === "detector-recurrence-group-candidate" ||
     kind === "detector-recurrence-group"
   ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);

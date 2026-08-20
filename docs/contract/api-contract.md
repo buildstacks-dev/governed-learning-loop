@@ -1866,13 +1866,130 @@ additionally caps aggregate receipt bytes at 64 MiB, receipt items, child refs
 and population episodes at 5,000 each, and unique group folds at 100. No digest
 helper or receipt writer is public.
 
-Exact Candidate/review claims, current assessed governance, deduplication,
-rejection suppression, same-group supersession and concurrent proposal
-admission remain a separate governance slice. Automatic population discovery
-and scheduling/routing remain outside this receipt. Core/reference/host pack
+Private derivation/Candidate recurrence claims are implemented by decision
+0016, but receipt assessment, current Candidate/review governance,
+deduplication, rejection suppression and concurrent proposal admission remain
+a separate governance slice. Automatic population discovery and
+scheduling/routing remain outside this receipt. Core/reference/host pack
 contents and reference consumers are #30d. Optional semantic-provider
 generation and disclosure are #13. Default-quality and candidate-utility
 claims remain #26.
+
+#### Private derivation and Candidate recurrence claims
+
+The kernel records observational recurrence lineage without adding a public
+claim type or writer. The engine-private records are:
+
+```ts
+interface DerivationRecurrenceClaim {
+  readonly schemaVersion: 1;
+  readonly derivationId: string;
+  readonly derivationDigest: string;
+  readonly executionId: string;
+  readonly executionKeyDigest: string;
+  readonly executionDigest: string;
+  readonly scopeDigest: string;
+  readonly groupKeyDigest: string;
+  readonly decisionBindingDigest: string;
+  readonly populationDigest: string;
+  readonly episodeIdentityDigests: readonly string[];
+  readonly episodeIdentitySetDigest: string;
+  readonly distinctEpisodeCount: number;
+  readonly claimDigest: string;
+}
+
+interface RecurrenceCommittedMemberSnapshot {
+  readonly executionId: string;
+  readonly executionKeyDigest: string;
+  readonly executionDigest: string;
+  readonly decisionBindingDigest: string;
+  readonly memberDigest: string;
+}
+
+type CandidateRecurrenceClaim =
+  | {
+      readonly schemaVersion: 1;
+      readonly candidateId: string;
+      readonly candidateDigest: string;
+      readonly scopeDigest: string;
+      readonly candidate: CandidateV2;
+      readonly status: "not_bound";
+      readonly reason: "manual" | "derivation_unbound";
+      readonly claimDigest: string;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly candidateId: string;
+      readonly candidateDigest: string;
+      readonly scopeDigest: string;
+      readonly candidate: CandidateV2;
+      readonly status: "grouped";
+      readonly derivationId: string;
+      readonly derivationDigest: string;
+      readonly derivationClaimDigests: readonly string[];
+      readonly groupKeyDigest: string;
+      readonly proposalMembers: readonly RecurrenceCommittedMemberSnapshot[];
+      readonly proposalMemberSnapshotDigest: string;
+      readonly episodeIdentityDigestsAtProposal: readonly string[];
+      readonly episodeIdentitySetDigest: string;
+      readonly distinctEpisodeCount: number;
+      readonly supersedes: {
+        readonly candidateId: string;
+        readonly candidateDigest: string;
+        readonly claimDigest: string;
+      } | null;
+      readonly claimDigest: string;
+    };
+```
+
+A derivation claim is content-addressed by claimDigest and appended by exact
+`claim:<claimDigest>` reference under the derivation id. Multiple exact
+execution witnesses are retained only when every committed claim resolves one
+group; another group key is store corruption. Each claim revalidates the exact
+derivation, execution receipt/commit view, recurrence decision, group member
+and population. The claim and append reference precede the execution receipt,
+so valid crash remnants remain orphaned until exact retry completes the
+receipt.
+
+Both private `claimDigest` values hash every content field shown above,
+including the embedded Candidate where present, while excluding only
+`schemaVersion` and `claimDigest`. `proposalMemberSnapshotDigest` hashes the
+exact sorted `proposalMembers` array; `episodeIdentitySetDigest` hashes the
+exact sorted episode-identity array. The Candidate content digest and all
+public record goldens remain unchanged.
+
+Every new Candidate proposal creates one nullable decision containing the exact
+parsed Candidate-v2 bytes. Manual proposals
+record `manual`; derivation-backed proposals without exactly one qualified
+group record `derivation_unbound`. A grouped decision freezes the full
+committed group at proposal through sorted exact member snapshots and their
+digest, then recomputes the exact episode-identity set/count from those member
+bindings. Later append-only group growth is a current superset, never a rewrite
+of that baseline. Exact same-group Candidate supersession is recorded but does
+not yet become an admission rule.
+
+The Candidate-id decision is written and reloaded first, freezing exact
+proposer, attestation and proposal time. The private candidate-by-content
+ownership lock then additively binds the paired `recurrenceClaimDigest`,
+complete parsed `recurrenceClaim`, and complete parsed `candidate` bytes for
+new proposals. The optional group-Candidate append follows; it and the exact
+lock are reloaded/revalidated before the Candidate record is created last. A
+decision- or index-only crash therefore retains exact Candidate attribution
+and proposal baseline even when evidence or the group changes. Retry requires
+the same verified proposer ref/attestation, and another id cannot steal an
+in-progress claim-aware lock. A claim-aware lock with a missing or mismatched
+decision is invalid. Historical locks without this optional
+digest/claim/Candidate triple remain byte-compatible and their Candidates
+report `historical_unbound`; no read, review or upgrade backfills a claim.
+
+Claim and group streams are capped at 5,000 entries, proposal member and
+episode sets at 5,000 values, and same-group derivation witnesses share one
+bounded group fold. Raw malformed bytes or impossible bindings propagate
+`schema.corrupt` or `store.corrupt`; a self-consistent but referentially invalid Candidate claim is
+visible through its typed invalid lineage. Claims do not alter the recurrence
+group key, Candidate content digest, review matrix, pack governance snapshot,
+proposal admission, publication, authority, utility or efficacy. Pack receipts
+remain `not_assessed/candidate_claims_deferred` in this slice.
 
 ### Candidate
 
@@ -2985,6 +3102,34 @@ export interface CandidateView {
         readonly diagnostics: readonly Diagnostic[];
         readonly derivation?: InsightDerivationView;
       };
+  readonly recurrenceLineage:
+    | {
+        readonly status: "not_bound";
+        readonly reason: "manual" | "derivation_unbound" | "historical_unbound";
+      }
+    | {
+        readonly status: "resolved";
+        readonly claimDigest: string;
+        readonly groupKeyDigest: string;
+        readonly derivationId: string;
+        readonly derivationDigest: string;
+        readonly episodeIdentitySetDigest: string;
+        readonly distinctEpisodeCountAtProposal: number;
+        readonly currentExecutionCount: number;
+        readonly currentDistinctEpisodeCount: number;
+      }
+    | {
+        readonly status: "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+        readonly claim?: {
+          readonly claimDigest: string;
+          readonly groupKeyDigest: string;
+          readonly derivationId: string;
+          readonly derivationDigest: string;
+          readonly episodeIdentitySetDigest: string;
+          readonly distinctEpisodeCountAtProposal: number;
+        };
+      };
 }
 
 export interface ProposeOutcome extends CandidateView {
@@ -3308,6 +3453,19 @@ through the invalid branch and blocks review and publication. The Candidate
 EvidenceHealthView combines current Candidate refs and current
 derivation/execution health. The read does not call `propose`, claim a content
 digest, or mutate the store.
+`recurrenceLineage` independently reports `not_bound`, `resolved`, or
+`invalid`. Current manual and unavailable-derivation decisions use the closed
+`manual` and `derivation_unbound` reasons; a Candidate whose historical
+content-ownership lock omitted recurrence lineage remains
+`historical_unbound`. A resolved view exposes exact claim/group/derivation and
+proposal episode-set digests, the frozen proposal-time distinct count, and
+current committed execution/episode counts. Current group growth may increase
+the latter counts but cannot change the frozen member snapshot or baseline.
+An invalid claim may expose only its immutable claim projection plus
+diagnostics. Because decision 0016 is observational, typed recurrence
+invalidity does not change GovernanceView or review/proposal disposition;
+malformed raw claim/stream bytes still fail as `schema.corrupt` or
+`store.corrupt`.
 For a v1 candidate the fold also reports its permanent `legacy_unbound`
 constraint and keeps publication blocked regardless of historical review
 disposition. Reading a v1 record never resolves its evidence ids or creates a
@@ -3870,6 +4028,23 @@ The core suite should prove at least:
   scope-local public revision, and provide no locator/group-key/content search;
 - receipt byte/item/population/group-identity/Candidate-binding/reason ceilings
   fail closed without truncation;
+- derivation recurrence claims bind exact committed execution/decision/member
+  lineage, retain multiple same-group witnesses, reject a second group, exclude
+  pre-receipt orphans, memoize one bounded group fold, and fail at 5,001 claim
+  references without truncation;
+- every new Candidate-v2 decision embeds exact Candidate attribution and
+  proposal bytes; decision, full Candidate/claim content lock, optional group
+  member and Candidate receipt recover in order across failures and lost
+  acknowledgements;
+- same-content contenders cannot steal an anchored Candidate id or proposer,
+  while distinct Candidate contents in one group remain allowed because this
+  slice performs no deduplication or suppression;
+- grouped Candidate claims freeze exact proposal member refs and the full
+  episode-identity set, remain valid under later group growth, reject
+  self-consistent member/baseline/anchor tamper, and expose only observational
+  lineage without changing GovernanceView;
+- historical Candidate ownership locks without claim bytes remain
+  `historical_unbound` and are never backfilled on read;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

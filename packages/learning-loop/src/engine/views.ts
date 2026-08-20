@@ -20,6 +20,8 @@ import { computeGovernanceView } from "./governance.js";
 import { semanticGraphSnapshotRevision } from "./semantic-graph.js";
 import { semanticScopeIndexSnapshotRevision } from "./semantic-scope-index.js";
 import type { InsightDerivationView } from "./semantic-views.js";
+import type { CandidateRecurrenceLineage } from "./recurrence-claims.js";
+import { loadCandidateRecurrenceLineage } from "./recurrence-claims.js";
 
 const MAX_GOVERNANCE_SNAPSHOT_ATTEMPTS = 3;
 
@@ -34,6 +36,7 @@ export interface CandidateGovernanceState {
         readonly diagnostics: readonly Diagnostic[];
         readonly derivation?: InsightDerivationView;
       };
+  readonly recurrenceLineage: CandidateRecurrenceLineage;
 }
 
 /**
@@ -110,6 +113,7 @@ async function candidateGovernanceStateOnce(
   requiresIndependentReview: boolean,
 ): Promise<CandidateGovernanceState> {
   const derivation = await revalidateCandidateDerivation(context, candidate);
+  const recurrenceLineage = await loadCandidateRecurrenceLineage(context, candidate);
   const reviews = await loadReviews(context, candidate, derivation);
   const governance = computeGovernanceView({
     candidateDigest: candidate.contentDigest,
@@ -148,7 +152,7 @@ async function candidateGovernanceStateOnce(
     };
   }
   if (evidenceHealth.status === "ready" && lineageDiagnostics.length === 0 && derivationDiagnostics.length === 0) {
-    return { governance, evidenceHealth, derivationLineage };
+    return { governance, evidenceHealth, derivationLineage, recurrenceLineage };
   }
   const code =
     derivationDiagnostics.length > 0
@@ -179,6 +183,7 @@ async function candidateGovernanceStateOnce(
     },
     evidenceHealth,
     derivationLineage,
+    recurrenceLineage,
   };
 }
 

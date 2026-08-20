@@ -12,7 +12,7 @@ import type { Candidate, CandidateIntervention, CandidateV2, RiskTier } from "..
 import { candidateContentDigest, candidateScopeDigest, parseCandidate } from "../records/candidate.js";
 import type { VerifiedPrincipal } from "../records/principal.js";
 import type { Scope } from "../records/scope.js";
-import { parseDurableId } from "../records/semantic-shared.js";
+import { parseDigestAt, parseDurableId } from "../records/semantic-shared.js";
 import type { EngineContext } from "./context.js";
 import {
   createOnly,
@@ -28,6 +28,14 @@ import type { CandidateView } from "./query.js";
 import { candidateGovernanceStateOf } from "./views.js";
 import { resolveCandidateEvidence } from "./evidence-binding.js";
 import { candidateDerivationSupersessionDiagnostics, resolveDerivedCandidateInput } from "./derivation-binding.js";
+import type { CandidateRecurrenceClaim } from "./recurrence-claims.js";
+import {
+  loadCandidateRecurrenceClaim,
+  parseCandidateRecurrenceClaim,
+  persistCandidateRecurrenceClaim,
+  persistCandidateRecurrenceDecision,
+  prepareCandidateRecurrenceClaim,
+} from "./recurrence-claims.js";
 
 interface CandidateInputCommon {
   readonly id: string;
@@ -74,13 +82,52 @@ const parseInterventionAt: Parse<CandidateIntervention> = (value, path) => {
 interface DigestIndexEntry {
   readonly candidateId: string;
   readonly contentDigest: string;
+  readonly recurrenceClaimDigest?: string;
+  readonly recurrenceClaim?: CandidateRecurrenceClaim;
+  readonly candidate?: CandidateV2;
 }
 
 function parseDigestIndexEntry(input: unknown): DigestIndexEntry {
   const fields = readFields(input, ["candidate-by-digest"]);
+  const recurrenceClaimDigest = fields.opt("recurrenceClaimDigest", parseDigestAt);
+  const recurrenceClaim = fields.opt("recurrenceClaim", (value) => parseCandidateRecurrenceClaim(value));
+  const candidate = fields.opt("candidate", (value) => {
+    const parsed = parseCandidate(value);
+    if (parsed.schemaVersion !== 2) {
+      throw new LearningLoopError("store.corrupt", [
+        { code: "store.corrupt", severity: "error", message: "candidate content lock embeds a legacy Candidate" },
+      ]);
+    }
+    return parsed;
+  });
+  if (
+    (recurrenceClaimDigest === undefined) !== (recurrenceClaim === undefined) ||
+    (recurrenceClaimDigest === undefined) !== (candidate === undefined) ||
+    (recurrenceClaim !== undefined && recurrenceClaim.claimDigest !== recurrenceClaimDigest)
+  ) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "candidate content lock recurrence bytes are mismatched" },
+    ]);
+  }
+  const candidateId = fields.req("candidateId", parseNonEmptyText);
+  const contentDigest = fields.req("contentDigest", parseNonEmptyText);
+  if (
+    candidate !== undefined &&
+    (candidate.id !== candidateId ||
+      candidate.contentDigest !== contentDigest ||
+      recurrenceClaim === undefined ||
+      !recurrenceClaimMatchesCandidate(candidate, recurrenceClaim))
+  ) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "candidate content lock embedded bytes are mismatched" },
+    ]);
+  }
   return {
-    candidateId: fields.req("candidateId", parseNonEmptyText),
-    contentDigest: fields.req("contentDigest", parseNonEmptyText),
+    candidateId,
+    contentDigest,
+    ...(recurrenceClaimDigest === undefined ? {} : { recurrenceClaimDigest }),
+    ...(recurrenceClaim === undefined ? {} : { recurrenceClaim }),
+    ...(candidate === undefined ? {} : { candidate }),
   };
 }
 
@@ -90,6 +137,65 @@ function hasOwnField(input: unknown, key: string): boolean {
 
 function snapshotScope(scope: Scope): Scope {
   return Object.freeze(scope.map((segment) => Object.freeze({ type: segment.type, id: segment.id })));
+}
+
+async function loadAnchoredRetryClaim(
+  context: EngineContext,
+  candidateId: string,
+  scope: Scope,
+  proposerRef: VerifiedPrincipal["ref"],
+  proposerAttestationDigest: string,
+): Promise<
+  | {
+      readonly claim: CandidateRecurrenceClaim;
+      readonly candidate: CandidateV2;
+    }
+  | undefined
+> {
+  const claim = await loadCandidateRecurrenceClaim(context, candidateId);
+  if (claim === undefined) return undefined;
+  if (claim.scopeDigest !== candidateScopeDigest(scope)) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "anchored Candidate retry input is mismatched" },
+    ]);
+  }
+  if (
+    recordDigest(toJsonValue(claim.candidate.proposedBy)) !== recordDigest(toJsonValue(proposerRef)) ||
+    claim.candidate.proposerAttestationDigest !== proposerAttestationDigest
+  ) {
+    throw new LearningLoopError("store.conflict", [
+      { code: "store.conflict", severity: "error", message: "anchored Candidate belongs to another proposer" },
+    ]);
+  }
+  const stored = await loadStoredRecord(context, "candidate-by-digest", claim.candidateDigest);
+  if (stored === undefined) return { claim, candidate: claim.candidate };
+  const entry = parseDigestIndexEntry(stored.value);
+  if (entry.candidateId !== candidateId) {
+    throw new LearningLoopError("store.conflict", [
+      { code: "store.conflict", severity: "error", message: "candidate content is owned by another proposal" },
+    ]);
+  }
+  if (
+    entry.contentDigest !== claim.candidateDigest ||
+    entry.recurrenceClaimDigest !== claim.claimDigest ||
+    entry.recurrenceClaim === undefined ||
+    recordDigest(toJsonValue(entry.recurrenceClaim)) !== recordDigest(toJsonValue(claim))
+  ) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "anchored Candidate retry content lock is mismatched" },
+    ]);
+  }
+  const lockedCandidate = entry.candidate;
+  if (
+    lockedCandidate === undefined ||
+    recordDigest(toJsonValue(lockedCandidate.proposedBy)) !== recordDigest(toJsonValue(proposerRef)) ||
+    lockedCandidate.proposerAttestationDigest !== proposerAttestationDigest
+  ) {
+    throw new LearningLoopError("store.conflict", [
+      { code: "store.conflict", severity: "error", message: "anchored Candidate belongs to another proposer" },
+    ]);
+  }
+  return { claim, candidate: lockedCandidate };
 }
 
 async function outcomeFor(
@@ -117,6 +223,7 @@ async function outcomeFor(
     governance,
     evidenceHealth: state.evidenceHealth,
     derivationLineage: state.derivationLineage,
+    recurrenceLineage: state.recurrenceLineage,
   };
 }
 
@@ -140,16 +247,48 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
   let evidenceRefs: CandidateV2["evidenceRefs"];
   let intervention: CandidateIntervention;
   let derivationRef: CandidateV2["derivationRef"];
+  let anchoredRetry:
+    | {
+        readonly claim: CandidateRecurrenceClaim;
+        readonly candidate: CandidateV2;
+      }
+    | undefined;
   if (derivationId === undefined) {
     problem = fields.req("problem", parseNonEmptyText);
     hypothesis = fields.req("hypothesis", parseNonEmptyText);
     const evidenceIds = fields.req("evidenceIds", parseArrayOf(parseNonEmptyText));
     intervention = fields.req("intervention", parseInterventionAt);
-    const evidence = await resolveCandidateEvidence(context, evidenceIds, scope);
-    if (evidence.health.status === "invalid" || evidence.refs.length !== evidenceIds.length) {
-      throw new LearningLoopError("candidate.evidence_invalid", evidence.health.diagnostics);
+    anchoredRetry = await loadAnchoredRetryClaim(context, id, scope, proposerRef, proposerAttestationDigest);
+    if (anchoredRetry !== undefined) {
+      const locked = anchoredRetry.candidate;
+      if (
+        anchoredRetry.claim.status !== "not_bound" ||
+        anchoredRetry.claim.reason !== "manual" ||
+        locked.derivationRef !== undefined ||
+        locked.problem !== problem ||
+        locked.hypothesis !== hypothesis ||
+        recordDigest(toJsonValue(locked.intervention)) !== recordDigest(toJsonValue(intervention)) ||
+        locked.proposedRisk !== proposedRisk ||
+        locked.supersedes !== supersedes ||
+        recordDigest(toJsonValue(locked.evidenceRefs.map((reference) => reference.recordId))) !==
+          recordDigest(toJsonValue(evidenceIds))
+      ) {
+        throw new LearningLoopError("store.conflict", [
+          { code: "store.conflict", severity: "error", message: "manual Candidate retry differs from anchored bytes" },
+        ]);
+      }
+      scope = locked.scope;
+      problem = locked.problem;
+      hypothesis = locked.hypothesis;
+      evidenceRefs = locked.evidenceRefs;
+      intervention = locked.intervention;
+    } else {
+      const evidence = await resolveCandidateEvidence(context, evidenceIds, scope);
+      if (evidence.health.status === "invalid" || evidence.refs.length !== evidenceIds.length) {
+        throw new LearningLoopError("candidate.evidence_invalid", evidence.health.diagnostics);
+      }
+      evidenceRefs = evidence.refs;
     }
-    evidenceRefs = evidence.refs;
   } else {
     for (const override of ["problem", "hypothesis", "evidenceIds", "intervention"]) {
       if (hasOwnField(input, override)) {
@@ -162,13 +301,33 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
         ]);
       }
     }
-    const resolved = await resolveDerivedCandidateInput(context, derivationId, scope);
-    scope = resolved.derivation.scope;
-    problem = resolved.problem;
-    hypothesis = resolved.hypothesis;
-    evidenceRefs = resolved.evidenceRefs;
-    intervention = resolved.intervention;
-    derivationRef = { id: resolved.derivation.id, digest: resolved.derivation.derivationDigest };
+    anchoredRetry = await loadAnchoredRetryClaim(context, id, scope, proposerRef, proposerAttestationDigest);
+    if (anchoredRetry === undefined) {
+      const resolved = await resolveDerivedCandidateInput(context, derivationId, scope);
+      scope = resolved.derivation.scope;
+      problem = resolved.problem;
+      hypothesis = resolved.hypothesis;
+      evidenceRefs = resolved.evidenceRefs;
+      intervention = resolved.intervention;
+      derivationRef = { id: resolved.derivation.id, digest: resolved.derivation.derivationDigest };
+    } else {
+      if (
+        anchoredRetry.candidate.derivationRef?.id !== derivationId ||
+        anchoredRetry.candidate.proposedRisk !== proposedRisk ||
+        anchoredRetry.candidate.supersedes !== supersedes
+      ) {
+        throw new LearningLoopError("store.conflict", [
+          { code: "store.conflict", severity: "error", message: "derived Candidate retry differs from anchored bytes" },
+        ]);
+      }
+      const locked = anchoredRetry.candidate;
+      scope = locked.scope;
+      problem = locked.problem;
+      hypothesis = locked.hypothesis;
+      evidenceRefs = locked.evidenceRefs;
+      intervention = locked.intervention;
+      derivationRef = locked.derivationRef;
+    }
   }
 
   let originalDigest: string | undefined;
@@ -237,22 +396,66 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
     supersedes === undefined || originalDigest === undefined
       ? assembledBase
       : { ...assembledBase, supersedes, originalDigest };
-  const candidate = parseCandidate(assembled);
+  const parsedCandidate = parseCandidate(assembled);
+  if (parsedCandidate.schemaVersion !== 2) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "propose assembled a legacy Candidate" },
+    ]);
+  }
+  let candidate: CandidateV2 = parsedCandidate;
   const derivationSupersession = await candidateDerivationSupersessionDiagnostics(context, candidate);
   if (derivationSupersession.length > 0) {
     throw new LearningLoopError("candidate.derivation_supersedes_mismatch", derivationSupersession);
   }
+  if (anchoredRetry?.candidate !== undefined) {
+    if (anchoredRetry.candidate.contentDigest !== candidate.contentDigest) {
+      throw new LearningLoopError("store.corrupt", [
+        { code: "store.corrupt", severity: "error", message: "anchored Candidate content changed during retry" },
+      ]);
+    }
+    candidate = anchoredRetry.candidate;
+  }
+  const terminalCandidate = await loadCandidate(context, candidate.id);
+  if (terminalCandidate !== undefined) {
+    if (terminalCandidate.contentDigest !== candidate.contentDigest) {
+      throw new LearningLoopError("store.conflict", [
+        {
+          code: "store.conflict",
+          severity: "error",
+          message: `candidate "${candidate.id}" already exists with different content`,
+        },
+      ]);
+    }
+    return outcomeFor(context, terminalCandidate, [
+      {
+        code: "candidate.duplicate_content",
+        severity: "info",
+        message: "candidate id already holds the exact content; returning the terminal Candidate",
+      },
+    ]);
+  }
+  const recurrenceClaim = anchoredRetry?.claim ?? (await prepareCandidateRecurrenceClaim(context, candidate));
+  if (!recurrenceClaimMatchesCandidate(candidate, recurrenceClaim)) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "Candidate recurrence decision is mismatched" },
+    ]);
+  }
+  await persistCandidateRecurrenceDecision(context, recurrenceClaim);
   const operationId = `propose/${candidate.id}/${contentDigest}`;
 
-  // Atomic content claim: the digest-index record is create-only, so exactly
-  // one candidate id can own a content digest. If a previous propose crashed
-  // (or was refused) between claiming the digest and persisting its
-  // candidate, the stale claim is repaired below via compareAndSet — the
-  // index is engine bookkeeping, never a governance record.
-  const indexEntry: DigestIndexEntry = { candidateId: candidate.id, contentDigest };
+  // Atomic private content-ownership/result lock: exactly one candidate id and
+  // recurrence decision can own this content digest. It is audit lineage, not
+  // a public authority or publication entitlement.
+  const indexEntry: DigestIndexEntry = {
+    candidateId: candidate.id,
+    contentDigest,
+    recurrenceClaimDigest: recurrenceClaim.claimDigest,
+    recurrenceClaim,
+    candidate,
+  };
   const indexStatus = await createOnly(context, "candidate-by-digest", contentDigest, indexEntry, operationId);
   if (indexStatus === "created") {
-    return createClaimedCandidate(context, candidate, operationId);
+    return createClaimedCandidate(context, candidate, recurrenceClaim, operationId);
   }
 
   // exists_same or conflict: this content digest is already claimed.
@@ -279,9 +482,74 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
     ]);
   }
   if (existing === undefined && existingEntry.candidateId === candidate.id) {
-    // Our own earlier identical propose crashed after claiming the digest but
-    // before persisting the candidate; resume forward.
-    return createClaimedCandidate(context, candidate, operationId);
+    const anchoredClaim = await loadCandidateRecurrenceClaim(context, candidate.id);
+    if (existingEntry.recurrenceClaimDigest !== undefined && existingEntry.recurrenceClaim !== undefined) {
+      const exactAnchoredClaim = anchoredClaim ?? existingEntry.recurrenceClaim;
+      if (
+        existingEntry.recurrenceClaimDigest !== exactAnchoredClaim.claimDigest ||
+        !recurrenceClaimMatchesCandidate(candidate, exactAnchoredClaim) ||
+        (anchoredClaim !== undefined &&
+          recordDigest(toJsonValue(anchoredClaim)) !== recordDigest(toJsonValue(existingEntry.recurrenceClaim)))
+      ) {
+        throw new LearningLoopError("store.corrupt", [
+          {
+            code: "store.corrupt",
+            severity: "error",
+            message: "candidate content lock and anchored recurrence decision are mismatched",
+          },
+        ]);
+      }
+      return createClaimedCandidate(context, candidate, exactAnchoredClaim, operationId);
+    }
+    if (anchoredClaim !== undefined || existingEntry.recurrenceClaim !== undefined) {
+      throw new LearningLoopError("store.corrupt", [
+        {
+          code: "store.corrupt",
+          severity: "error",
+          message: "candidate recurrence decision is not anchored by its content lock",
+        },
+      ]);
+    }
+  }
+  if (existing === undefined && existingEntry.candidateId !== candidate.id) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const committed = await loadCandidate(context, existingEntry.candidateId);
+      if (committed !== undefined) {
+        if (committed.contentDigest !== contentDigest) {
+          throw new LearningLoopError("store.corrupt", [
+            {
+              code: "store.corrupt",
+              severity: "error",
+              message: "in-progress recurrence claim committed other content",
+            },
+          ]);
+        }
+        return outcomeFor(context, committed, [
+          {
+            code: "candidate.duplicate_content",
+            severity: "info",
+            message: "candidate content was committed concurrently; returning the exact content owner",
+          },
+        ]);
+      }
+      await loadCandidateRecurrenceClaim(context, existingEntry.candidateId);
+    }
+    throw new LearningLoopError("store.conflict", [
+      {
+        code: "store.conflict",
+        severity: "error",
+        message: "candidate content is already owned by another in-progress proposal; retry",
+      },
+    ]);
+  }
+  if (existing !== undefined && existingEntry.candidateId === candidate.id) {
+    throw new LearningLoopError("store.conflict", [
+      {
+        code: "store.conflict",
+        severity: "error",
+        message: "candidate id already holds other content and its content lock cannot be repaired",
+      },
+    ]);
   }
   // Stale claim: the named candidate either never materialized or holds
   // different content (its propose was refused after the claim). Take the
@@ -314,14 +582,29 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
       },
     ]);
   }
-  return createClaimedCandidate(context, candidate, operationId);
+  return createClaimedCandidate(context, candidate, recurrenceClaim, operationId);
 }
 
 async function createClaimedCandidate(
   context: EngineContext,
   candidate: Candidate,
+  recurrenceClaim: CandidateRecurrenceClaim,
   operationId: string,
 ): Promise<ProposeOutcome> {
+  const existing = await loadCandidate(context, candidate.id);
+  if (existing !== undefined) {
+    if (existing.contentDigest === candidate.contentDigest) return outcomeFor(context, existing, []);
+    throw new LearningLoopError("store.conflict", [
+      {
+        code: "store.conflict",
+        severity: "error",
+        message: `candidate "${candidate.id}" already exists with different content; candidates are create-only and never overwritten`,
+      },
+    ]);
+  }
+  await assertCandidateContentLock(context, candidate, recurrenceClaim);
+  await persistCandidateRecurrenceClaim(context, recurrenceClaim);
+  await assertCandidateContentLock(context, candidate, recurrenceClaim);
   const status = await createOnly(context, "candidate", candidate.id, candidate, operationId);
   if (status === "conflict") {
     // The candidate id is already taken by DIFFERENT content: create-only
@@ -337,4 +620,54 @@ async function createClaimedCandidate(
     ]);
   }
   return outcomeFor(context, candidate, []);
+}
+
+function recurrenceClaimMatchesCandidate(candidate: Candidate, claim: CandidateRecurrenceClaim): boolean {
+  if (
+    candidate.schemaVersion !== 2 ||
+    claim.candidateId !== candidate.id ||
+    claim.candidateDigest !== candidate.contentDigest ||
+    claim.scopeDigest !== candidateScopeDigest(candidate.scope) ||
+    recordDigest(toJsonValue(claim.candidate)) !== recordDigest(toJsonValue(candidate))
+  ) {
+    return false;
+  }
+  if (claim.status === "not_bound") {
+    const manual = candidate.schemaVersion !== 2 || candidate.derivationRef === undefined;
+    return (claim.reason === "manual") === manual;
+  }
+  return (
+    candidate.schemaVersion === 2 &&
+    candidate.derivationRef !== undefined &&
+    candidate.derivationRef.id === claim.derivationId &&
+    candidate.derivationRef.digest === claim.derivationDigest &&
+    (candidate.supersedes === undefined
+      ? claim.supersedes === null
+      : claim.supersedes?.candidateId === candidate.supersedes)
+  );
+}
+
+async function assertCandidateContentLock(
+  context: EngineContext,
+  candidate: Candidate,
+  recurrenceClaim: CandidateRecurrenceClaim,
+): Promise<void> {
+  const stored = await loadStoredRecord(context, "candidate-by-digest", candidate.contentDigest);
+  if (stored === undefined) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "candidate content lock disappeared before receipt" },
+    ]);
+  }
+  const entry = parseDigestIndexEntry(stored.value);
+  if (
+    entry.candidateId !== candidate.id ||
+    entry.contentDigest !== candidate.contentDigest ||
+    entry.recurrenceClaimDigest !== recurrenceClaim.claimDigest ||
+    entry.recurrenceClaim === undefined ||
+    recordDigest(toJsonValue(entry.recurrenceClaim)) !== recordDigest(toJsonValue(recurrenceClaim))
+  ) {
+    throw new LearningLoopError("store.conflict", [
+      { code: "store.conflict", severity: "error", message: "candidate content lock changed before receipt" },
+    ]);
+  }
 }

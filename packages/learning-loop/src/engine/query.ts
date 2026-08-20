@@ -36,6 +36,7 @@ import type { GovernanceView } from "./governance.js";
 import type { LearningReportQuery } from "./report.js";
 import { candidateGovernanceStateOf } from "./views.js";
 import type { InsightDerivationView } from "./semantic-views.js";
+import type { CandidateRecurrenceLineage } from "./recurrence-claims.js";
 
 const MAX_QUERY_LIMIT = 500;
 const MAX_FILTER_VALUES = 1_000;
@@ -169,6 +170,7 @@ export interface CandidateView {
         readonly diagnostics: readonly Diagnostic[];
         readonly derivation?: InsightDerivationView;
       };
+  readonly recurrenceLineage: CandidateRecurrenceLineage;
 }
 
 interface ParsedPageQuery {
@@ -1143,5 +1145,6 @@ export async function runGetCandidateView(
     governance: state.governance,
     evidenceHealth: state.evidenceHealth,
     derivationLineage: state.derivationLineage,
+    recurrenceLineage: state.recurrenceLineage,
   };
 }

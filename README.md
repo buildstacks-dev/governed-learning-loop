@@ -143,9 +143,10 @@ insight/evidence-health group reporting. Configured pack items explicitly say
 `not_grouped | unassessed | capped` only when an exact child result is retained;
 no-result items omit the unknown classification. Group-capped child facts
 still persist and remain inert. Rejection-suppression configuration is
-registered and digested but deliberately non-enforcing. Durable pack receipts/queries,
-Candidate-to-group claims, deduplication, review-based suppression and proposal
-admission remain separate follow-up slices.
+registered and digested but deliberately non-enforcing. Subsequent slices added
+durable pack receipts/queries and observational Candidate-to-group claims;
+assessment, deduplication, review-based suppression and proposal admission
+remain separate follow-up work.
 
 #30c2b2-receipts adds a content-bound DetectorPackRunReceipt for configured
 commit runs whose requested population resolves one-to-one in the exact scope.
@@ -159,6 +160,19 @@ commit, governance and current evidence health. Missing/wrong-scope inputs,
 policy omission and dry runs create no receipt. The assessed Candidate/review
 branch is parseable for future audit but is historical and non-enforcing in
 this runtime.
+
+#30c2b2-claims adds private observational links from an exact committed
+derivation execution to one recurrence group and from every new Candidate to a
+nullable recurrence decision. Grouped Candidates freeze exact proposal-time
+member references and the full committed episode-identity baseline; current
+group growth is reported separately. The decision freezes the full
+Candidate-v2 snapshot, and the content-ownership lock binds both complete
+Candidate and claim bytes before the optional group member and Candidate
+record, so exact same-proposer retry forward-completes without rewriting
+historical Candidates. CandidateView
+exposes `recurrenceLineage`, but claims do not deduplicate, suppress, refuse,
+review, authorize or validate a proposal. Pack governance remains explicitly
+not assessed until the next decision.
 
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.

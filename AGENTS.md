@@ -145,9 +145,9 @@ between code and contract, open an issue — never silently drift either one.
   `not_grouped | unassessed | capped`. Group caps are transient reporting
   dispositions: no-result items omit the unknown classification, and caps do
   not truncate or block exact child persistence.
-  rejectionSuppression bytes are registered and digested but non-enforcing
-  until durable pack receipts, Candidate/group claims, review snapshots and
-  proposal admission land in later decisions.
+  rejectionSuppression bytes are registered and digested but remain
+  non-enforcing after durable receipts and observational Candidate/group claims;
+  review assessment and proposal admission require a later decision.
 - **Pack receipts are retry-stable, scoped audit facts.** Only a configured
   commit with a one-to-one exact-scope population may create a
   DetectorPackRunReceipt; dry, policy-omitted, missing or wrong-scope inputs
@@ -159,6 +159,18 @@ between code and contract, open an issue — never silently drift either one.
   child and recurrence reference. Governance remains explicitly not_assessed;
   reserved assessed bytes grant no Candidate, suppression, authority, utility
   or efficacy.
+- **Recurrence claims are private and observational.** Exact grouped
+  derivations append content-addressed same-group execution claims before the
+  execution receipt. Every new Candidate first freezes an exact Candidate-v2
+  snapshot in a `manual`, `derivation_unbound`, or grouped recurrence decision;
+  the content-ownership lock binds that full decision/Candidate before the
+  optional group append and Candidate receipt. Grouped decisions freeze exact
+  proposal-time recurrence members and the full episode-identity baseline;
+  later group growth is only a current superset. Historical Candidates are
+  never backfilled. CandidateView exposes the closed recurrence-lineage status,
+  but this slice does not deduplicate, suppress, refuse, review, authorize,
+  validate, or claim utility. Raw malformed claim graphs remain
+  `schema.corrupt` or `store.corrupt`.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

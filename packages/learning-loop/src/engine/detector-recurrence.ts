@@ -96,6 +96,15 @@ interface GroupStats {
   readonly storedEpisodeIdentityDigests: ReadonlySet<string>;
   readonly executionIds: ReadonlySet<string>;
   readonly episodeIdentityDigests: ReadonlySet<string>;
+  readonly committedMembers: readonly RecurrenceCommittedMemberSnapshot[];
+}
+
+export interface RecurrenceCommittedMemberSnapshot {
+  readonly executionId: string;
+  readonly executionKeyDigest: string;
+  readonly executionDigest: string;
+  readonly decisionBindingDigest: string;
+  readonly memberDigest: string;
 }
 
 function sameCanonical(left: unknown, right: unknown): boolean {
@@ -421,6 +430,7 @@ async function committedGroupStats(context: EngineContext, groupKeyDigest: strin
   const storedExecutionIds = new Set<string>();
   const episodeIdentityDigests = new Set<string>();
   const storedEpisodeIdentityDigests = new Set<string>();
+  const committedMembers: RecurrenceCommittedMemberSnapshot[] = [];
   let episodeReferenceCount = 0;
   for (const member of members) {
     storedExecutionIds.add(member.value.executionId);
@@ -464,6 +474,13 @@ async function committedGroupStats(context: EngineContext, groupKeyDigest: strin
     }
     assertBindingMatchesExecution(context, binding, execution);
     executionIds.add(execution.id);
+    committedMembers.push({
+      executionId: execution.id,
+      executionKeyDigest: execution.executionKeyDigest,
+      executionDigest: execution.executionDigest,
+      decisionBindingDigest: binding.bindingDigest,
+      memberDigest: member.value.memberDigest,
+    });
     for (const episode of binding.memberEpisodes) episodeIdentityDigests.add(episode.episodeIdentityDigest);
     if (episodeIdentityDigests.size > MAX_GROUP_EPISODES) {
       throw new LearningLoopError("detector.limit_exceeded", [
@@ -482,6 +499,9 @@ async function committedGroupStats(context: EngineContext, groupKeyDigest: strin
     storedEpisodeIdentityDigests,
     executionIds,
     episodeIdentityDigests,
+    committedMembers: committedMembers.sort((left, right) =>
+      left.executionId < right.executionId ? -1 : left.executionId > right.executionId ? 1 : 0,
+    ),
   };
 }
 
@@ -726,6 +746,7 @@ export async function recurrenceReceiptLineage(
   readonly episodeIdentityDigests: readonly string[];
   readonly executionIds: readonly string[];
   readonly executionCount: number;
+  readonly members: readonly RecurrenceCommittedMemberSnapshot[];
 }> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const before = await semanticGraphSnapshotRevision(context);
@@ -733,7 +754,8 @@ export async function recurrenceReceiptLineage(
     const binding = await loadExecutionRecurrenceBinding(context, execution.id);
     if (recurrence.status !== "grouped") {
       const after = await semanticGraphSnapshotRevision(context);
-      if (before === after) return { binding, episodeIdentityDigests: [], executionIds: [], executionCount: 0 };
+      if (before === after)
+        return { binding, episodeIdentityDigests: [], executionIds: [], executionCount: 0, members: [] };
       continue;
     }
     if (binding === undefined || binding.groupKeyDigest !== recurrence.groupKeyDigest) {
@@ -752,7 +774,13 @@ export async function recurrenceReceiptLineage(
       throw invalid("store.corrupt", "recurrence receipt lineage counts do not match one stable group", []);
     }
     const executionIds = [...stats.executionIds].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return { binding, episodeIdentityDigests, executionIds, executionCount: executionIds.length };
+    return {
+      binding,
+      episodeIdentityDigests,
+      executionIds,
+      executionCount: executionIds.length,
+      members: stats.committedMembers,
+    };
   }
   throw new LearningLoopError("detector.snapshot_changed", [
     {

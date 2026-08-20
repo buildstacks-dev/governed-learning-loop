@@ -58,7 +58,7 @@ async function outcomeFor(
 }
 
 export async function runPropose(context: EngineContext, input: CandidateInput): Promise<ProposeOutcome> {
-  assertVerifiedPrincipal(input.proposedBy, "proposedBy");
+  assertVerifiedPrincipal(context.identity, input.proposedBy, "proposedBy");
   const scope = context.scopePolicy.validate(input.scope);
   const contentDigest = candidateContentDigest({
     scope,

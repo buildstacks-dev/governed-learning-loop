@@ -4,7 +4,7 @@
 // in the internal ./brands.js module and is never publicly exported).
 import { parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
-import { verifiedPrincipalBrand } from "./brands.js";
+import { identityPortBrand, verifiedPrincipalBrand } from "./brands.js";
 
 const PRINCIPAL_KINDS = ["human", "agent", "service"] as const;
 
@@ -22,7 +22,12 @@ export interface VerifiedPrincipal {
 }
 
 export interface IdentityPort {
+  readonly id: string;
+  readonly version: string;
+  readonly configurationDigest: string;
+  readonly registrationDigest: string;
   verify(evidence: unknown): Promise<VerifiedPrincipal>;
+  readonly [identityPortBrand]: true;
 }
 
 export const parsePrincipalRefAt: Parse<PrincipalRef> = (input, path) => {

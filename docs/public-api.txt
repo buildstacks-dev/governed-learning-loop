@@ -13,6 +13,7 @@ root:ScopePolicy
 root:ScopeSegment
 root:createExactScopePolicy
 root:IdentityPort
+root:createIdentityPort
 root:PrincipalRef
 root:VerifiedPrincipal
 root:parsePrincipalRef

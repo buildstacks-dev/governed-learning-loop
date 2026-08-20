@@ -2,7 +2,7 @@
 // the accept-with-blocking-finding refusal. Generation and review must be
 // attributed and independent (kernel invariant 2).
 import { describe, expect, it } from "vitest";
-import { candidateInput, createHarness, reviewerFor } from "./engine-harness.js";
+import { candidateInput, createHarness, createHarnessIdentityPort, reviewerFor } from "./engine-harness.js";
 
 describe("learning.reviewCandidate", () => {
   it("refuses a self-review: the proposer cannot provide the decisive review", async () => {
@@ -120,5 +120,36 @@ describe("learning.reviewCandidate", () => {
     await expect(
       learning.reviewCandidate({ id: "rev-1", candidateId: "no-such-candidate", reviewer: reviewerFor(reviewerB) }),
     ).rejects.toMatchObject({ name: "LearningLoopError", code: "review.candidate_not_found" });
+  });
+
+  it("rejects a foreign-port reviewer before invoking it or writing a review", async () => {
+    const configuredIdentity = createHarnessIdentityPort();
+    const foreignIdentity = createHarnessIdentityPort();
+    expect(foreignIdentity.registrationDigest).toBe(configuredIdentity.registrationDigest);
+
+    const { learning, store, proposer, reviewerB } = await createHarness([], { identity: configuredIdentity });
+    const { candidate } = await learning.propose(candidateInput(proposer));
+    const foreignReviewer = await foreignIdentity.verify({
+      principalId: reviewerB.ref.id,
+      kind: reviewerB.ref.kind,
+      independenceDomain: reviewerB.ref.independenceDomain,
+    });
+    expect(foreignReviewer.ref).toEqual(reviewerB.ref);
+    expect(foreignReviewer.attestationDigest).toBe(reviewerB.attestationDigest);
+
+    let calls = 0;
+    const reviewer = reviewerFor(foreignReviewer, () => {
+      calls += 1;
+      return { verdict: "must not run" };
+    });
+    await expect(
+      learning.reviewCandidate({ id: "rev-foreign", candidateId: candidate.id, reviewer }),
+    ).rejects.toMatchObject({ name: "LearningLoopError", code: "identity.unverified" });
+    expect(calls).toBe(0);
+    expect(await store.get({ namespace: "learning", kind: "review", id: "rev-foreign" })).toBeUndefined();
+
+    await expect(
+      learning.reviewCandidate({ id: "rev-own", candidateId: candidate.id, reviewer: reviewerFor(reviewerB) }),
+    ).resolves.toMatchObject({ id: "rev-own", reviewer: reviewerB.ref });
   });
 });

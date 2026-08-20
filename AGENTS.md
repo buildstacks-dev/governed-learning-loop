@@ -57,6 +57,9 @@ These are protocol rules, not configuration:
 5. **Missing or invalid measurement is never zero and never a pass.**
 6. **Trust is granted by host registration, not claimed by adapters** —
    transcript-derived evidence is capped at `advisory`.
+7. **Verified principals are loop-bound capabilities** — only a kernel-created
+   identity port may mint them, and propose/review accept a handle only from
+   the exact identity-port instance configured on that loop.
 
 ## Transcript adapter privacy rules
 

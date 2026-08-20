@@ -15,6 +15,7 @@ export type { Scope, ScopePolicy, ScopeSegment } from "./records/scope.js";
 export { createExactScopePolicy } from "./records/scope.js";
 export type { IdentityPort, PrincipalRef, VerifiedPrincipal } from "./records/principal.js";
 export { parsePrincipalRef } from "./records/principal.js";
+export { createIdentityPort } from "./engine/identity.js";
 export type { ContentPolicy, Provenance, SourceDescriptor, TrustClass } from "./records/provenance.js";
 export { parseProvenance } from "./records/provenance.js";
 export type { Observation } from "./records/observation.js";

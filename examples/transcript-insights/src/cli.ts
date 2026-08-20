@@ -12,17 +12,8 @@
 // and import ./run.ts directly (vitest resolves `.js` specifiers itself).
 import { registerHooks } from "node:module";
 
-const VITEST_STUB_URL = new URL("./vitest-stub.ts", import.meta.url).href;
-
 registerHooks({
   resolve: (specifier, context, nextResolve) => {
-    // The kernel /testing entrypoint (needed only for its identity-port
-    // minter) eagerly re-exports the vitest-based store-conformance suite;
-    // outside a vitest worker that import throws. Divert exactly that one
-    // importer to an inert local stub — see ./vitest-stub.ts.
-    if (specifier === "vitest" && context.parentURL !== undefined && context.parentURL.includes("/src/testing/")) {
-      return { url: VITEST_STUB_URL, shortCircuit: true };
-    }
     try {
       return nextResolve(specifier, context);
     } catch (error) {

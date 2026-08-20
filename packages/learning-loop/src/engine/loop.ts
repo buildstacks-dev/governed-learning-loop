@@ -23,6 +23,7 @@ import type { ScopePolicy } from "../records/scope.js";
 import type { EngineContext } from "./context.js";
 import type { IngestOptions, IngestReceipt } from "./ingest.js";
 import { runIngest } from "./ingest.js";
+import { identityRegistryProjection } from "./identity.js";
 import type { LearningPolicy } from "./policy.js";
 import { extractPolicyRules } from "./policy.js";
 import type { CandidateInput, ProposeOutcome } from "./propose.js";
@@ -106,6 +107,8 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   }
 
   const policyRules = extractPolicyRules(config.policy);
+  const identityPort = config.identity;
+  const identity = identityRegistryProjection(identityPort);
   const queryCursorScope =
     config.queryCursorScope === undefined
       ? `process:${randomUUID()}`
@@ -121,6 +124,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   // is a new registry revision; the revision is bound into ingest receipts.
   const registryRevision = sha256HexOfCanonicalJson({
     policy: { id: config.policy.id, digest: config.policy.digest },
+    identity,
     scopePolicy: { id: config.scopePolicy.id, digest: config.scopePolicy.digest },
     contentPolicies: [...contentPoliciesById.values()]
       .map((policy) => ({ id: policy.id, digest: policy.digest }))
@@ -142,6 +146,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     scopePolicy: config.scopePolicy,
     contentPoliciesById,
     sources,
+    identity: identityPort,
     registryRevision,
     queryCursorScopeDigest,
     clock: config.clock ?? systemClock,

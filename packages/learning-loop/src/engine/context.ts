@@ -11,6 +11,7 @@ import { invalid, parseArrayOf, parseNonEmptyText, parseOneOf, readFields } from
 import type { Parse } from "../parse/toolkit.js";
 import type { Candidate, RiskTier } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
+import type { IdentityPort } from "../records/principal.js";
 import type { ContentPolicy } from "../records/provenance.js";
 import type { ScopePolicy } from "../records/scope.js";
 import type { LearningPolicy, PolicyRules } from "./policy.js";
@@ -34,6 +35,7 @@ export interface EngineContext {
   readonly scopePolicy: ScopePolicy;
   readonly contentPoliciesById: ReadonlyMap<string, ContentPolicy>;
   readonly sources: ReadonlySet<RegisteredSource<unknown>>;
+  readonly identity: IdentityPort;
   readonly registryRevision: string;
   readonly queryCursorScopeDigest: string;
   readonly clock: Clock;

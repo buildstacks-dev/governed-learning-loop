@@ -13,6 +13,7 @@ import type { Candidate, RiskTier } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
 import type { DetectorPackManifest } from "../records/detector-pack.js";
 import { DETECTOR_RECURRENCE_GROUP_MEMBER_LIMIT } from "../records/detector-recurrence.js";
+import type { DetectorOrchestrationPolicy } from "../records/detector-orchestration-policy.js";
 import type { DetectorRegistration } from "../records/detector-registration.js";
 import type { LearningLensRegistration } from "../records/learning-lens.js";
 import type { IdentityPort } from "../records/principal.js";
@@ -61,6 +62,7 @@ export interface EngineContext {
   readonly semanticLensesByRef?: ReadonlyMap<string, LearningLensRegistration>;
   readonly sourceSemanticProfilesBySourceId?: ReadonlyMap<string, SourceSemanticProfile>;
   readonly detectorImplementationsByRef?: ReadonlyMap<string, RegisteredDetectorImplementation>;
+  readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
   readonly registryRevision: string;
   readonly queryCursorScopeDigest: string;
   readonly clock: Clock;

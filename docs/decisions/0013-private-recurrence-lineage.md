@@ -164,11 +164,15 @@ bindings, append-only exact group members, receipt-last crash recovery,
 bounded committed folds, dry-run previews, and public recurrence state on
 DetectorRunResult.
 
-**Deferred to #30c2b2:** an immutable orchestration policy, recurrence-group
-availability thresholds beyond detector-owned conditions, deduplication,
+**Implemented next by decision 0014:** an immutable orchestration policy,
+lower host-configured invocation ceiling, separate transient insight and
+evidence-health group caps, and explicit unassessed/capped reporting.
+Suppression configuration is content-bound but non-enforcing.
+
+**Still deferred:** Candidate/review assessment, deduplication,
 decisive-rejection suppression and override evidence, Candidate-to-group
 claims, durable pack-run/disposition receipts, and exact-scope pack-run audit
-queries. C2b1 does not create or refuse a Candidate.
+queries. C2b1 and the policy slice do not create or refuse a Candidate.
 
 Reference detector contents and fixtures remain #30d. Optional semantic/model
 workflows remain #13. Candidate-utility calibration and every quality or
@@ -187,5 +191,6 @@ publication, authorization, exposure, and activation stay outside this slice.
   `locator_unavailable`, never an invitation to rerun or migrate.
 - Pack changes do not fork group identity. Detector, lens, scope-policy,
   implementation, configuration, locator treatment, or key-policy changes do.
-- C2b1 adds no policy registration, pack receipt/query, Candidate authority,
-  provider dependency, destination, activation path, or efficacy metric.
+- C2b1 adds no pack receipt/query, Candidate authority, provider dependency,
+  destination, activation path, or efficacy metric. Decision 0014 adds only
+  non-enforcing policy registration and transient cap classifications.

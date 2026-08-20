@@ -2,6 +2,7 @@
 // explicit cap/refusal dispositions, and sequential exact-byte commit.
 import { describe, expect, it } from "vitest";
 import type {
+  DetectorOrchestrationPolicy,
   DetectorOrchestrationDisposition,
   DetectorPackManifest,
   DetectorPackRunInput,
@@ -17,10 +18,12 @@ import {
   conservativePolicy,
   createLearningLoop,
   defineDetectorImplementation,
+  detectorOrchestrationPolicyDigest,
   detectorPackManifestDigest,
   detectorRegistrationDigest,
   learningLensRegistrationDigest,
   parseDetectorPackManifest,
+  parseDetectorOrchestrationPolicy,
   parseDetectorRegistration,
   parseLearningLensRegistration,
   parseSemanticRegistryConfig,
@@ -58,6 +61,31 @@ function compareRef(left: object, right: object): number {
   const a = JSON.stringify(left);
   const b = JSON.stringify(right);
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function orchestrationPolicy(
+  input: {
+    readonly maximumInvocationsPerRun?: number;
+    readonly maximumInsightGroupsPerRun?: number;
+    readonly maximumEvidenceHealthGroupsPerRun?: number;
+    readonly rejectionSuppression?: DetectorOrchestrationPolicy["rejectionSuppression"];
+  } = {},
+): DetectorOrchestrationPolicy {
+  const base = {
+    id: "host.detector-orchestration",
+    version: "1.0.0",
+    caps: {
+      maximumInvocationsPerRun: input.maximumInvocationsPerRun ?? 100,
+      maximumInsightGroupsPerRun: input.maximumInsightGroupsPerRun ?? 100,
+      maximumEvidenceHealthGroupsPerRun: input.maximumEvidenceHealthGroupsPerRun ?? 100,
+    },
+    rejectionSuppression: input.rejectionSuppression ?? { mode: "disabled" },
+  };
+  return parseDetectorOrchestrationPolicy({
+    schemaVersion: 1,
+    ...base,
+    policyDigest: detectorOrchestrationPolicyDigest(base),
+  });
 }
 
 function createPackManifest(
@@ -369,13 +397,22 @@ async function packFixture(input: {
   readonly detectorIds?: readonly string[];
   readonly lensIds?: readonly string[];
   readonly detectorOutputKind?: DetectorRegistration["outputKind"];
+  readonly detectorOutputKinds?: readonly DetectorRegistration["outputKind"][];
+  readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
 }) {
   const harness = await createSemanticEngineHarness({ label: `base-${input.label ?? "pack"}` });
   const lenses = Array.from({ length: input.lensCount ?? 1 }, (_, index) =>
     createLens(harness, index, input.lensIds?.[index]),
   );
   const detectors = Array.from({ length: input.detectorCount }, (_, index) =>
-    createDetector(harness, index, "any_registered", undefined, input.detectorIds?.[index], input.detectorOutputKind),
+    createDetector(
+      harness,
+      index,
+      "any_registered",
+      undefined,
+      input.detectorIds?.[index],
+      input.detectorOutputKinds?.[index] ?? input.detectorOutputKind,
+    ),
   );
   const { registry, pack } = createRegistry({ harness, detectors, lenses });
   const calls = new Map<string, number>();
@@ -405,6 +442,9 @@ async function packFixture(input: {
     sources: [...harness.context.sources],
     semanticRegistry: registry,
     detectorImplementations: implementations,
+    ...(input.detectorOrchestrationPolicy === undefined
+      ? {}
+      : { detectorOrchestrationPolicy: input.detectorOrchestrationPolicy }),
     queryCursorScope: `pack-runner-${input.label ?? "fixture"}`,
   });
   const label = input.label ?? "pack";
@@ -437,6 +477,9 @@ async function packFixture(input: {
     detectorImplementationsByRef: new Map(
       implementations.map((implementation) => [detectorRefKey(implementation.detector), implementation]),
     ),
+    ...(input.detectorOrchestrationPolicy === undefined
+      ? {}
+      : { detectorOrchestrationPolicy: input.detectorOrchestrationPolicy }),
     registryRevision: receipt.registryRevision,
   };
   return {
@@ -951,5 +994,200 @@ describe("pack dry-run/commit exactness and aggregate caps", () => {
       (await harness.store.list({ namespace: "learning", kind: "detector-recurrence-group", limit: 10 })).records,
     ).toEqual([]);
     expect(harness.callbacks()).toBe(1);
+  });
+});
+
+describe("configured detector orchestration policy", () => {
+  it("keeps legacy omission free of recurrence dispositions and classifies configured ungrouped/grouped items", async () => {
+    const legacy = await packFixture({
+      detectorCount: 1,
+      label: "policy-legacy",
+      evaluate: (detector, window) => ({
+        conditionDetected: true,
+        insights: [insightDraft(window, detector.id.length)],
+        findings: [],
+        recurrenceLocator: PRIVATE_LOCATOR,
+      }),
+    });
+    const legacyResult = await legacy.learning.runDetectorPack({
+      mode: "dry_run",
+      pack: packRef(legacy.pack),
+      scope: legacy.harness.scope,
+      episodeRecordIds: [legacy.episodeRecordId],
+    });
+    expect(legacyResult.items[0]).not.toHaveProperty("recurrenceDisposition");
+
+    const configured = await packFixture({
+      detectorCount: 1,
+      label: "policy-grouped",
+      detectorOrchestrationPolicy: orchestrationPolicy(),
+      evaluate: (detector, window) => ({
+        conditionDetected: true,
+        insights: [insightDraft(window, detector.id.length)],
+        findings: [],
+        recurrenceLocator: PRIVATE_LOCATOR,
+      }),
+    });
+    const grouped = await configured.learning.runDetectorPack({
+      mode: "dry_run",
+      pack: packRef(configured.pack),
+      scope: configured.harness.scope,
+      episodeRecordIds: [configured.episodeRecordId],
+    });
+    expect(grouped.items[0]).toMatchObject({ recurrenceDisposition: "unassessed" });
+
+    const negative = await packFixture({
+      detectorCount: 1,
+      label: "policy-not-grouped",
+      detectorOrchestrationPolicy: orchestrationPolicy(),
+    });
+    const notGrouped = await negative.learning.runDetectorPack({
+      mode: "dry_run",
+      pack: packRef(negative.pack),
+      scope: negative.harness.scope,
+      episodeRecordIds: [negative.episodeRecordId],
+    });
+    expect(notGrouped.items[0]).toMatchObject({ recurrenceDisposition: "not_grouped" });
+  });
+
+  it("enforces configured maximum invocations before callbacks and snapshots later source-object mutation", async () => {
+    const configuredPolicy = orchestrationPolicy({ maximumInvocationsPerRun: 1 });
+    const fixture = await packFixture({
+      detectorCount: 3,
+      label: "policy-invocations",
+      detectorOrchestrationPolicy: configuredPolicy,
+    });
+    expect(Reflect.set(configuredPolicy.caps, "maximumInvocationsPerRun", 100)).toBe(true);
+    expect(Reflect.set(configuredPolicy, "policyDigest", "0".repeat(64))).toBe(true);
+    const result = await fixture.learning.runDetectorPack({
+      mode: "dry_run",
+      pack: packRef(fixture.pack),
+      scope: fixture.harness.scope,
+      episodeRecordIds: [fixture.episodeRecordId],
+    });
+    expect(result.items.map((item) => item.disposition)).toEqual(["executed", "capped", "capped"]);
+    expect(result.items.map((item) => item.recurrenceDisposition)).toEqual(["not_grouped", undefined, undefined]);
+    expect(result.items.slice(1).every((item) => item.diagnostics[0]?.code === "detector.pack_invocation_capped")).toBe(
+      true,
+    );
+    expect([...fixture.calls.values()].reduce((sum, count) => sum + count, 0)).toBe(1);
+  });
+
+  it("caps distinct insight and evidence-health groups with separate denominators", async () => {
+    const fixture = await packFixture({
+      detectorCount: 4,
+      detectorOutputKinds: ["insight_derivation", "insight_derivation", "evidence_health", "evidence_health"],
+      label: "policy-family-caps",
+      detectorOrchestrationPolicy: orchestrationPolicy({
+        maximumInsightGroupsPerRun: 1,
+        maximumEvidenceHealthGroupsPerRun: 1,
+      }),
+      evaluate: (detector, window) =>
+        detector.outputKind === "insight_derivation"
+          ? {
+              conditionDetected: true,
+              insights: [insightDraft(window, detector.id.length)],
+              findings: [],
+              recurrenceLocator: PRIVATE_LOCATOR,
+            }
+          : {
+              conditionDetected: true,
+              insights: [],
+              findings: [healthFindingDraft(window, detector.id.length)],
+              recurrenceLocator: PRIVATE_LOCATOR,
+            },
+    });
+    const result = await fixture.learning.runDetectorPack({
+      mode: "dry_run",
+      pack: packRef(fixture.pack),
+      scope: fixture.harness.scope,
+      episodeRecordIds: [fixture.episodeRecordId],
+    });
+    expect(result.items.map((item) => item.recurrenceDisposition)).toEqual([
+      "unassessed",
+      "capped",
+      "unassessed",
+      "capped",
+    ]);
+    expect(result.status).toBe("partial");
+    expect(result.items.every((item) => item.callbackInvoked)).toBe(true);
+    for (const item of result.items) {
+      const capDiagnostics = item.diagnostics.filter((diagnostic) => diagnostic.code === "detector.pack_group_capped");
+      expect(capDiagnostics).toHaveLength(item.recurrenceDisposition === "capped" ? 1 : 0);
+    }
+  });
+
+  it("counts an existing exact group once and keeps rejection-suppression registration inert", async () => {
+    const fixture = await packFixture({
+      detectorCount: 2,
+      label: "policy-existing-group",
+      detectorOrchestrationPolicy: orchestrationPolicy({
+        maximumInsightGroupsPerRun: 1,
+        rejectionSuppression: { mode: "evidence_multiplier", minimumDistinctEpisodeMultiplier: 100 },
+      }),
+      evaluate: (detector, window) => ({
+        conditionDetected: true,
+        insights: [insightDraft(window, detector.id.length)],
+        findings: [],
+        recurrenceLocator: PRIVATE_LOCATOR,
+      }),
+    });
+    const firstDetector = fixture.detectors[0];
+    const firstLens = fixture.lenses[0];
+    if (firstDetector === undefined || firstLens === undefined) throw new Error("expected policy fixture refs");
+    await fixture.learning.runDetector({
+      mode: "commit",
+      detector: detectorRef(firstDetector),
+      pack: packRef(fixture.pack),
+      lens: lensRef(firstLens),
+      scope: fixture.harness.scope,
+      episodeRecordIds: [fixture.episodeRecordId],
+    });
+    const result = await fixture.learning.runDetectorPack({
+      mode: "dry_run",
+      pack: packRef(fixture.pack),
+      scope: fixture.harness.scope,
+      episodeRecordIds: [fixture.episodeRecordId],
+    });
+    expect(result.items.map((item) => item.recurrenceDisposition)).toEqual(["unassessed", "capped"]);
+    expect(result.items[0]).toMatchObject({ disposition: "existing", callbackInvoked: false });
+    expect(JSON.stringify(result)).not.toContain("suppressed");
+    expect((await fixture.store.list({ namespace: "learning", kind: "candidate", limit: 10 })).records).toEqual([]);
+    expect((await fixture.store.list({ namespace: "learning", kind: "review", limit: 10 })).records).toEqual([]);
+  });
+
+  it("counts a repeated exact group key once inside the defensive policy projection", async () => {
+    const configuredPolicy = orchestrationPolicy({ maximumInsightGroupsPerRun: 1 });
+    const fixture = await packFixture({
+      detectorCount: 1,
+      label: "policy-duplicate-group",
+      detectorOrchestrationPolicy: configuredPolicy,
+      evaluate: (detector, window) => ({
+        conditionDetected: true,
+        insights: [insightDraft(window, detector.id.length)],
+        findings: [],
+        recurrenceLocator: PRIVATE_LOCATOR,
+      }),
+    });
+    const reference = fixture.pack.detectors[0];
+    if (reference === undefined) throw new Error("expected duplicate group detector ref");
+    const duplicatePack = { ...fixture.pack, detectors: [reference, reference] };
+    const duplicateContext: EngineContext = {
+      ...fixture.context,
+      detectorOrchestrationPolicy: configuredPolicy,
+      semanticPacksByRef: new Map([[packRefKey(packRef(fixture.pack)), duplicatePack]]),
+    };
+    const result = await runDetectorPack(duplicateContext, {
+      mode: "dry_run",
+      pack: packRef(fixture.pack),
+      scope: fixture.harness.scope,
+      episodeRecordIds: [fixture.episodeRecordId],
+    });
+    expect(result.items).toHaveLength(2);
+    expect(result.items.map((item) => item.result?.recurrence)).toEqual([
+      result.items[0]?.result?.recurrence,
+      result.items[0]?.result?.recurrence,
+    ]);
+    expect(result.items.map((item) => item.recurrenceDisposition)).toEqual(["unassessed", "unassessed"]);
   });
 });

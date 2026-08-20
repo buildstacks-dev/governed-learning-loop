@@ -3,6 +3,7 @@ import type {
   DetectorExecutionQuery,
   DetectorExecutionRecord,
   DetectorExecutionView,
+  DetectorOrchestrationPolicy,
   DetectorOrchestrationDisposition,
   DetectorPackManifest,
   DetectorPackRunInput,
@@ -26,11 +27,13 @@ import {
   createLearningLoop,
   detectorExecutionDigest,
   detectorExecutionKeyDigest,
+  detectorOrchestrationPolicyDigest,
   detectorPackManifestDigest,
   detectorRegistrationDigest,
   defineDetectorImplementation,
   defineSourceRegistration,
   parseDetectorExecutionRecord,
+  parseDetectorOrchestrationPolicy,
   parseDetectorPackManifest,
   parseDetectorRegistration,
   parseSemanticRegistryConfig,
@@ -376,6 +379,21 @@ test("strict consumer can construct and parse host-neutral semantic records from
     treatment: "public_structural",
     structuralLabel: "status_poll",
   };
+  const strictOrchestrationPolicyBase: Omit<DetectorOrchestrationPolicy, "schemaVersion" | "policyDigest"> = {
+    id: "strict-orchestration-policy",
+    version: "1.0.0",
+    caps: {
+      maximumInvocationsPerRun: 10,
+      maximumInsightGroupsPerRun: 5,
+      maximumEvidenceHealthGroupsPerRun: 5,
+    },
+    rejectionSuppression: { mode: "disabled" },
+  };
+  const strictOrchestrationPolicy = parseDetectorOrchestrationPolicy({
+    schemaVersion: 1,
+    ...strictOrchestrationPolicyBase,
+    policyDigest: detectorOrchestrationPolicyDigest(strictOrchestrationPolicyBase),
+  });
   const strictImplementation: RegisteredDetectorImplementation = defineDetectorImplementation({
     registration,
     evaluate: (window: DetectorWindow) => {
@@ -408,6 +426,10 @@ test("strict consumer can construct and parse host-neutral semantic records from
   });
   expect(strictRunInput.mode).toBe("dry_run");
   expect(strictRecurrenceLocator).toEqual({ treatment: "public_structural", structuralLabel: "status_poll" });
+  expect(strictOrchestrationPolicy).toMatchObject({
+    id: "strict-orchestration-policy",
+    caps: { maximumInvocationsPerRun: 10 },
+  });
   expect(typeof acceptsRunResult).toBe("function");
   expect(typeof acceptsPackRunResult).toBe("function");
   expect(typeof semanticLearning.runDetectorPack).toBe("function");

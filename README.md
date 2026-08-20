@@ -137,9 +137,15 @@ descriptive, not harm, preference, utility, or efficacy claims. Folds fail
 closed above 5,000 members, 50,000 exact episode references, or 5,000 distinct
 episode identities.
 
-Durable orchestration policy, deduplication, rejection suppression, digested
-host caps, Candidate-to-group claims, and scoped pack-run receipts remain
-#30c2b2.
+#30c2b2-policy adds an optional content-digested orchestration policy. Hosts
+may lower the 100-child admission ceiling and independently cap transient
+insight/evidence-health group reporting. Configured pack items explicitly say
+`not_grouped | unassessed | capped` only when an exact child result is retained;
+no-result items omit the unknown classification. Group-capped child facts
+still persist and remain inert. Rejection-suppression configuration is
+registered and digested but deliberately non-enforcing. Durable pack receipts/queries,
+Candidate-to-group claims, deduplication, review-based suppression and proposal
+admission remain separate follow-up slices.
 
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.

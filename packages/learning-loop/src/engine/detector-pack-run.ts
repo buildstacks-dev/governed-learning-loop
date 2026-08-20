@@ -52,6 +52,7 @@ export interface DetectorPackRunResult {
     readonly detector: DetectorRunInput["detector"];
     readonly lens: DetectorRunInput["lens"];
     readonly disposition: DetectorOrchestrationDisposition;
+    readonly recurrenceDisposition?: "not_grouped" | "unassessed" | "capped";
     readonly callbackInvoked: boolean;
     readonly result?: DetectorRunResult;
     readonly diagnostics: readonly Diagnostic[];
@@ -198,18 +199,7 @@ function outputKeys(result: DetectorRunResult): readonly string[] {
 }
 
 function retainedBytes(result: DetectorRunResult): number {
-  const boundedResult =
-    result.recurrence.status === "grouped"
-      ? {
-          ...result,
-          recurrence: {
-            ...result.recurrence,
-            distinctEpisodeCount: 5_000,
-            executionCount: 5_000,
-          },
-        }
-      : result;
-  return Buffer.byteLength(canonicalJsonText(toJsonValue(boundedResult)), "utf8");
+  return Buffer.byteLength(canonicalJsonText(toJsonValue(result)), "utf8");
 }
 
 function refusablePlanningError(error: unknown): error is LearningLoopError {
@@ -254,7 +244,11 @@ function refusedItem(
 
 function resultWithStatus(input: DetectorPackRunInput, items: DetectorPackRunResult["items"]): DetectorPackRunResult {
   const partial = items.some(
-    (item) => item.disposition === "capped" || item.disposition === "refused" || item.disposition === "incomplete",
+    (item) =>
+      item.disposition === "capped" ||
+      item.disposition === "refused" ||
+      item.disposition === "incomplete" ||
+      item.recurrenceDisposition === "capped",
   );
   return {
     mode: input.mode,
@@ -263,9 +257,59 @@ function resultWithStatus(input: DetectorPackRunInput, items: DetectorPackRunRes
     scope: input.scope,
     items,
     diagnostics: partial
-      ? [diagnostic("detector.pack_partial", "warning", "detector pack completed with non-ready invocations")]
+      ? [
+          diagnostic(
+            "detector.pack_partial",
+            "warning",
+            "detector pack completed with non-ready or capped orchestration items",
+          ),
+        ]
       : [],
   };
+}
+
+function applyRecurrencePolicy(context: EngineContext, items: DetectorPackRunResult["items"][number][]): void {
+  const policy = context.detectorOrchestrationPolicy;
+  if (policy === undefined) return;
+  const groupDispositions = new Map<string, "unassessed" | "capped">();
+  let insightGroups = 0;
+  let evidenceHealthGroups = 0;
+  for (const [index, item] of items.entries()) {
+    const recurrence = item.result?.recurrence;
+    if (item.result === undefined) continue;
+    const diagnostics = item.diagnostics.filter((entry) => entry.code !== "detector.pack_group_capped");
+    if (recurrence?.status !== "grouped" || item.result.execution === undefined) {
+      items[index] = { ...item, recurrenceDisposition: "not_grouped", diagnostics };
+      continue;
+    }
+    let groupDisposition = groupDispositions.get(recurrence.groupKeyDigest);
+    if (groupDisposition === undefined) {
+      if (item.result.execution.outputKind === "insight_derivation") {
+        groupDisposition = insightGroups < policy.caps.maximumInsightGroupsPerRun ? "unassessed" : "capped";
+        insightGroups += 1;
+      } else {
+        groupDisposition =
+          evidenceHealthGroups < policy.caps.maximumEvidenceHealthGroupsPerRun ? "unassessed" : "capped";
+        evidenceHealthGroups += 1;
+      }
+      groupDispositions.set(recurrence.groupKeyDigest, groupDisposition);
+    }
+    items[index] = {
+      ...item,
+      recurrenceDisposition: groupDisposition,
+      diagnostics:
+        groupDisposition === "capped"
+          ? [
+              ...diagnostics,
+              diagnostic(
+                "detector.pack_group_capped",
+                "warning",
+                "detector recurrence group exceeded the configured per-run group cap",
+              ),
+            ]
+          : diagnostics,
+    };
+  }
 }
 
 export async function runDetectorPack(
@@ -302,7 +346,9 @@ export async function runDetectorPack(
       items.push(cappedItem(selection, false, "detector.pack_aggregate_capped"));
       continue;
     }
-    if (admittedInvocations >= MAX_ADMITTED_INVOCATIONS) {
+    const maximumInvocations =
+      context.detectorOrchestrationPolicy?.caps.maximumInvocationsPerRun ?? MAX_ADMITTED_INVOCATIONS;
+    if (admittedInvocations >= maximumInvocations) {
       items.push(cappedItem(selection, false, "detector.pack_invocation_capped"));
       continue;
     }
@@ -375,6 +421,8 @@ export async function runDetectorPack(
     );
   }
 
+  applyRecurrencePolicy(context, items);
+
   if (input.mode === "commit") {
     for (const [index, item] of items.entries()) {
       const result = item.result;
@@ -411,6 +459,7 @@ export async function runDetectorPack(
         },
       };
     }
+    applyRecurrencePolicy(context, items);
   }
   return resultWithStatus(input, items);
 }

@@ -1,20 +1,39 @@
 // Store-backed folds shared by propose and review: load a candidate's stored
 // reviews (oldest first) and compute its governance view.
+import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
+import { toJsonValue } from "../canonical/to-json-value.js";
+import type { Diagnostic } from "../diagnostics.js";
 import { LearningLoopError } from "../diagnostics.js";
 import type { Candidate } from "../records/candidate.js";
 import type { CandidateReview } from "../records/review.js";
 import { parseCandidateReview, reviewInvalidReasons } from "../records/review.js";
+import { scopeDigest } from "../records/semantic-shared.js";
 import type { EngineContext } from "./context.js";
-import { effectiveRisk, iterateRecordPages } from "./context.js";
+import { effectiveRisk, iterateRecordPages, readRecordKindRevision } from "./context.js";
 import { candidateLineageDiagnostics } from "./candidate-lineage.js";
 import type { EvidenceHealthView } from "./evidence-binding.js";
 import { revalidateCandidateEvidence } from "./evidence-binding.js";
+import type { CandidateDerivationBinding } from "./derivation-binding.js";
+import { revalidateCandidateDerivation } from "./derivation-binding.js";
 import type { GovernanceView } from "./governance.js";
 import { computeGovernanceView } from "./governance.js";
+import { semanticGraphSnapshotRevision } from "./semantic-graph.js";
+import { semanticScopeIndexSnapshotRevision } from "./semantic-scope-index.js";
+import type { InsightDerivationView } from "./semantic-views.js";
+
+const MAX_GOVERNANCE_SNAPSHOT_ATTEMPTS = 3;
 
 export interface CandidateGovernanceState {
   readonly governance: GovernanceView;
   readonly evidenceHealth: EvidenceHealthView;
+  readonly derivationLineage:
+    | { readonly status: "not_bound" }
+    | { readonly status: "resolved"; readonly derivation: InsightDerivationView }
+    | {
+        readonly status: "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+        readonly derivation?: InsightDerivationView;
+      };
 }
 
 /**
@@ -22,9 +41,26 @@ export interface CandidateGovernanceState {
  * order, which within one engine process is persistence order; the last
  * element is therefore the latest decisive review.
  */
-export async function loadReviews(context: EngineContext, candidate: Candidate): Promise<readonly CandidateReview[]> {
+export async function loadReviews(
+  context: EngineContext,
+  candidate: Candidate,
+  derivationBinding?: CandidateDerivationBinding,
+): Promise<readonly CandidateReview[]> {
   const reviews: CandidateReview[] = [];
   const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  const binding = derivationBinding ?? (await revalidateCandidateDerivation(context, candidate));
+  const producerPrincipal =
+    binding.status === "resolved"
+      ? binding.resolved.producerPrincipal
+      : binding.status === "invalid"
+        ? binding.producerPrincipal
+        : undefined;
+  const producerImplementation =
+    binding.status === "resolved"
+      ? binding.resolved.producerImplementation
+      : binding.status === "invalid"
+        ? binding.producerImplementation
+        : undefined;
   for await (const page of iterateRecordPages(context.store, "review", { limit: 100 })) {
     for (const record of page.records) {
       const review = parseCandidateReview(record.value);
@@ -42,6 +78,15 @@ export async function loadReviews(context: EngineContext, candidate: Candidate):
       if (
         invalidReasons.length > 0 ||
         review.reviewer.id === candidate.proposedBy.id ||
+        (producerPrincipal !== null &&
+          producerPrincipal !== undefined &&
+          review.reviewer.id === producerPrincipal.id) ||
+        (producerPrincipal !== null &&
+          producerPrincipal !== undefined &&
+          review.reviewer.independenceDomain === producerPrincipal.independenceDomain) ||
+        (producerImplementation !== undefined &&
+          review.reviewerImplementation.id === producerImplementation.id &&
+          review.reviewerImplementation.version === producerImplementation.version) ||
         (riskRule.independentDomain && review.reviewer.independenceDomain === candidate.proposedBy.independenceDomain)
       ) {
         throw new LearningLoopError("store.corrupt", [
@@ -59,12 +104,13 @@ export async function loadReviews(context: EngineContext, candidate: Candidate):
   return reviews;
 }
 
-export async function candidateGovernanceStateOf(
+async function candidateGovernanceStateOnce(
   context: EngineContext,
   candidate: Candidate,
   requiresIndependentReview: boolean,
 ): Promise<CandidateGovernanceState> {
-  const reviews = await loadReviews(context, candidate);
+  const derivation = await revalidateCandidateDerivation(context, candidate);
+  const reviews = await loadReviews(context, candidate, derivation);
   const governance = computeGovernanceView({
     candidateDigest: candidate.contentDigest,
     requiresIndependentReview,
@@ -72,17 +118,48 @@ export async function candidateGovernanceStateOf(
   });
   const evidence = await revalidateCandidateEvidence(context, candidate);
   const lineageDiagnostics = await candidateLineageDiagnostics(context, candidate);
-  if (evidence.health.status === "ready" && lineageDiagnostics.length === 0) {
-    return { governance, evidenceHealth: evidence.health };
+  const derivationDiagnostics = derivation.status === "invalid" ? derivation.diagnostics : [];
+  const evidenceHealth = mergeEvidenceHealth(evidence.health, derivation.health);
+  let derivationLineage: CandidateGovernanceState["derivationLineage"];
+  if (derivation.status === "not_bound") derivationLineage = { status: "not_bound" };
+  else if (derivation.status === "resolved") {
+    derivationLineage = { status: "resolved", derivation: derivation.resolved.view };
+  } else {
+    derivationLineage = {
+      status: "invalid",
+      diagnostics: derivation.diagnostics,
+      ...(derivation.view === undefined ? {} : { derivation: derivation.view }),
+    };
+  }
+  const hasSemanticSupersessionMismatch = lineageDiagnostics.some(
+    (reason) => reason.code === "candidate.derivation_supersedes_mismatch",
+  );
+  if (lineageDiagnostics.length > 0 && (derivation.status !== "not_bound" || hasSemanticSupersessionMismatch)) {
+    const derivationView =
+      derivation.status === "resolved"
+        ? derivation.resolved.view
+        : derivation.status === "invalid"
+          ? derivation.view
+          : undefined;
+    derivationLineage = {
+      status: "invalid",
+      diagnostics: [...derivationDiagnostics, ...lineageDiagnostics],
+      ...(derivationView === undefined ? {} : { derivation: derivationView }),
+    };
+  }
+  if (evidenceHealth.status === "ready" && lineageDiagnostics.length === 0 && derivationDiagnostics.length === 0) {
+    return { governance, evidenceHealth, derivationLineage };
   }
   const code =
-    lineageDiagnostics.length > 0
-      ? "candidate.lineage_invalid"
-      : evidence.health.status === "legacy_unbound"
-        ? "candidate.legacy_unbound"
-        : evidence.health.status === "incomplete"
-          ? "candidate.evidence_incomplete"
-          : "candidate.evidence_invalid";
+    derivationDiagnostics.length > 0
+      ? "candidate.derivation_invalid"
+      : lineageDiagnostics.length > 0
+        ? "candidate.lineage_invalid"
+        : evidenceHealth.status === "legacy_unbound"
+          ? "candidate.legacy_unbound"
+          : evidenceHealth.status === "incomplete"
+            ? "candidate.evidence_incomplete"
+            : "candidate.evidence_invalid";
   return {
     governance: {
       ...governance,
@@ -94,11 +171,61 @@ export async function candidateGovernanceStateOf(
           severity: "error",
           message: "candidate evidence is not eligible for decisive governance",
         },
+        ...derivationDiagnostics,
         ...lineageDiagnostics,
-        ...evidence.health.diagnostics,
+        ...evidenceHealth.diagnostics,
         ...governance.reasons.filter((reason) => reason.code !== "review.required"),
       ],
     },
-    evidenceHealth: evidence.health,
+    evidenceHealth,
+    derivationLineage,
   };
+}
+
+async function candidateGovernanceSnapshotRevision(context: EngineContext, candidate: Candidate): Promise<string> {
+  const graphRevision = await semanticGraphSnapshotRevision(context);
+  const scopeIndexRevision = await semanticScopeIndexSnapshotRevision(context, scopeDigest(candidate.scope));
+  const candidateRevision = await readRecordKindRevision(context.store, "candidate");
+  const reviewRevision = await readRecordKindRevision(context.store, "review");
+  return sha256HexOfCanonicalJson(
+    toJsonValue({ graphRevision, scopeIndexRevision, candidateRevision, reviewRevision }),
+  );
+}
+
+export async function candidateGovernanceStateOf(
+  context: EngineContext,
+  candidate: Candidate,
+  requiresIndependentReview: boolean,
+): Promise<CandidateGovernanceState> {
+  for (let attempt = 0; attempt < MAX_GOVERNANCE_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const before = await candidateGovernanceSnapshotRevision(context, candidate);
+    try {
+      const state = await candidateGovernanceStateOnce(context, candidate, requiresIndependentReview);
+      const after = await candidateGovernanceSnapshotRevision(context, candidate);
+      if (before === after) return state;
+    } catch (error) {
+      if (
+        error instanceof LearningLoopError &&
+        (error.code === "evidence.snapshot_changed" ||
+          error.code === "query.snapshot_changed" ||
+          error.code === "candidate.derivation_snapshot_changed")
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new LearningLoopError("candidate.snapshot_changed", [
+    {
+      code: "candidate.snapshot_changed",
+      severity: "error",
+      message: "candidate governance inputs changed repeatedly while folding state",
+    },
+  ]);
+}
+
+function mergeEvidenceHealth(left: EvidenceHealthView, right: EvidenceHealthView): EvidenceHealthView {
+  const rank = { ready: 0, legacy_unbound: 1, incomplete: 2, invalid: 3 } as const;
+  const status = rank[left.status] >= rank[right.status] ? left.status : right.status;
+  return { status, diagnostics: [...left.diagnostics, ...right.diagnostics] };
 }

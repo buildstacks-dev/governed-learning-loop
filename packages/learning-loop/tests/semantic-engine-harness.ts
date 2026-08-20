@@ -404,6 +404,7 @@ export function createSemanticFacts(
   input: {
     readonly withEvidence?: boolean;
     readonly evidenceRef?: EvidenceRef;
+    readonly contradictoryEvidenceRefs?: readonly EvidenceRef[];
     readonly observationLabel?: string;
     readonly executionResult?: DetectorExecutionRecord["result"];
   } = {},
@@ -420,6 +421,7 @@ export function createSemanticFacts(
   const populationDigest = digest({ episodes, normalizationPolicyDigest, comparabilityPolicyDigest });
   const comparablePopulation = { episodeClass: "interactive", split: "held-out" };
   const evidenceRefs = input.withEvidence === false ? [] : [input.evidenceRef ?? harness.evidence];
+  const contradictoryEvidenceRefs = input.contradictoryEvidenceRefs ?? [];
   const derivationBase: Omit<InsightDerivation, "schemaVersion" | "id" | "derivationDigest"> = {
     scope: harness.scope,
     scopeDigest: scopeDigest(harness.scope),
@@ -447,7 +449,7 @@ export function createSemanticFacts(
       uncertainty: ["Causal impact remains unvalidated."],
     },
     impactHypothesis: { statement: "The procedure may reduce incomplete verification attempts." },
-    contradictoryEvidenceRefs: [],
+    contradictoryEvidenceRefs,
     missingEvidence: [],
     applicability: { statement: "Applies to this exact project scope.", exclusions: ["benchmark traffic"] },
     producer: {
@@ -502,7 +504,7 @@ export function createSemanticFacts(
   const windowBase = {
     sourceProfiles: [harness.profile],
     population: executionPopulation,
-    evidenceRefs,
+    evidenceRefs: [...evidenceRefs, ...contradictoryEvidenceRefs],
     evidenceHealthFindings: [],
     availableCapabilities: [...harness.profile.capabilities],
   };

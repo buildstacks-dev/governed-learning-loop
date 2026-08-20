@@ -130,6 +130,7 @@ const evidenceRefFixture: EvidenceRef = {
 function candidateV2FixtureFor(
   evidenceRefs: readonly EvidenceRef[],
   lineage?: { readonly supersedes: string; readonly originalDigest: string },
+  derivationRef?: { readonly id: string; readonly digest: string },
 ) {
   const digestInput = {
     schemaVersion: 2 as const,
@@ -137,6 +138,7 @@ function candidateV2FixtureFor(
     problem: candidateBoundFields.problem,
     hypothesis: candidateBoundFields.hypothesis,
     evidenceRefs,
+    ...(derivationRef === undefined ? {} : { derivationRef }),
     intervention: candidateBoundFields.intervention,
     proposedRisk: candidateBoundFields.proposedRisk,
     ...(lineage === undefined ? {} : lineage),
@@ -372,9 +374,21 @@ describe("parseCandidate schema v2 invariants", () => {
     expect(parseCandidate(candidateV2Fixture)).toEqual(candidateV2Fixture);
   });
 
-  it("requires a nonempty, duplicate-free ordered EvidenceRef list", () => {
+  it("allows empty evidence only with exact derivation lineage and otherwise requires ordered unique refs", () => {
     const empty = candidateV2FixtureFor([]);
     expect(errorFrom(() => parseCandidate(empty)).code).toBe("schema.invalid");
+
+    const derivationDigest = "a".repeat(64);
+    const populationOnly = candidateV2FixtureFor([], undefined, {
+      id: `insight-${derivationDigest}`,
+      digest: derivationDigest,
+    });
+    expect(parseCandidate(populationOnly)).toEqual(populationOnly);
+    const mismatchedDerivation = candidateV2FixtureFor([], undefined, {
+      id: `insight-${"b".repeat(64)}`,
+      digest: derivationDigest,
+    });
+    expect(errorFrom(() => parseCandidate(mismatchedDerivation)).code).toBe("schema.corrupt");
 
     const exactDuplicate = candidateV2FixtureFor([evidenceRefFixture, evidenceRefFixture]);
     expect(errorFrom(() => parseCandidate(exactDuplicate)).code).toBe("schema.invalid");

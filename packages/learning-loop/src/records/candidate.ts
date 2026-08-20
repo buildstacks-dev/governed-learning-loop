@@ -205,10 +205,12 @@ const parseInterventionAt: Parse<CandidateIntervention> = (input, path) => {
 
 const parseDerivationRefAt: Parse<NonNullable<CandidateV2["derivationRef"]>> = (input, path) => {
   const fields = readFields(input, path);
-  return {
-    id: fields.req("id", parseDurableIdAt),
-    digest: fields.req("digest", parseDigestAt),
-  };
+  const id = fields.req("id", parseDurableIdAt);
+  const digest = fields.req("digest", parseDigestAt);
+  if (id !== `insight-${digest}`) {
+    throw invalid("schema.corrupt", "candidate derivation reference id does not match its digest", [...path, "id"]);
+  }
+  return { id, digest };
 };
 
 const parseCandidateSchemaVersionAt: Parse<1 | 2> = (input, path) => {
@@ -264,8 +266,11 @@ function parseCandidateV1(fields: ReturnType<typeof readFields>): CandidateV1 {
 function parseCandidateV2(fields: ReturnType<typeof readFields>): CandidateV2 {
   const common = commonFields(fields);
   const evidenceRefs = fields.req("evidenceRefs", parseArrayOf(parseEvidenceRefAt));
-  if (evidenceRefs.length === 0) {
-    throw invalid("schema.invalid", "Candidate v2 requires at least one evidence reference", ["evidenceRefs"]);
+  const derivationRef = fields.opt("derivationRef", parseDerivationRefAt);
+  if (evidenceRefs.length === 0 && derivationRef === undefined) {
+    throw invalid("schema.invalid", "Candidate v2 requires evidence references or exact derivation lineage", [
+      "evidenceRefs",
+    ]);
   }
   const referenceDigests = new Set<string>();
   const recordKeys = new Set<string>();
@@ -277,7 +282,6 @@ function parseCandidateV2(fields: ReturnType<typeof readFields>): CandidateV2 {
     referenceDigests.add(reference.referenceDigest);
     recordKeys.add(recordKey);
   }
-  const derivationRef = fields.opt("derivationRef", parseDerivationRefAt);
   const supersedes = fields.opt("supersedes", parseDurableIdAt);
   const originalDigest = fields.opt("originalDigest", parseDigestAt);
   if ((supersedes === undefined) !== (originalDigest === undefined)) {

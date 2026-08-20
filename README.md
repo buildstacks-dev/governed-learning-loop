@@ -100,9 +100,11 @@ auditable but never become authority. Learning lenses may require exact episode
 population evidence as well as observation or measurement evidence.
 
 There is deliberately no public execution-write method. Callable detector
-pairing and orchestration remain #30c; Candidate derivation resolution remains
-#30b2b; reference packs/examples are #30d; optional semantic providers are
-#13; held-out candidate-utility calibration is #26.
+pairing and orchestration remain #30c. #30b2b adds explicit derivation-backed
+Candidate proposal with exact field mapping, population-only episode support,
+mirrored revision lineage, and review independent from proposer and producer.
+Reference packs/examples are #30d; optional semantic providers are #13;
+held-out candidate-utility calibration is #26.
 Evidence-health findings stay separate from behavioral derivations, and only
 the verified `propose` path may turn a derivation into an inert Candidate.
 

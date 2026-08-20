@@ -176,6 +176,7 @@ remain duplicate-free. Scope entries recompute `scopeDigest`.
 
 ## 2026-08-20 implementation amendment
 
-Decision 0009 implements the private receipt-last persistence and typed audit
-reads previously deferred to #30b, while Candidate derivation resolution stays
-deferred to #30b2b and callable detector execution stays #30c.
+Decision 0009 implements private receipt-last persistence and typed audit
+reads previously deferred to #30b. Decision 0010 implements derivation-backed
+Candidate proposal and producer-independent review. Callable detector
+execution stays #30c.

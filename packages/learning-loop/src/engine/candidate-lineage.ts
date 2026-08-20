@@ -6,11 +6,14 @@ import type { Candidate } from "../records/candidate.js";
 import { candidateScopeDigest } from "../records/candidate.js";
 import type { EngineContext } from "./context.js";
 import { loadCandidate } from "./context.js";
+import { candidateDerivationSupersessionDiagnostics } from "./derivation-binding.js";
 
 export async function candidateLineageDiagnostics(
   context: EngineContext,
   candidate: Candidate,
 ): Promise<readonly Diagnostic[]> {
+  const semanticDiagnostics = await candidateDerivationSupersessionDiagnostics(context, candidate);
+  if (semanticDiagnostics.length > 0) return semanticDiagnostics;
   if (candidate.schemaVersion === 1 || candidate.supersedes === undefined) return [];
   const predecessor = await loadCandidate(context, candidate.supersedes);
   if (predecessor === undefined) {

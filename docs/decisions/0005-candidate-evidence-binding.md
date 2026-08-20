@@ -137,3 +137,11 @@ defined to enter that binding; it remains issue #31c work.
 - #31c must add the missing measurement ownership checks before enabling
   measurement evidence requests; it must not weaken the EvidenceRef binding or
   reinterpret already-stored candidates.
+
+## 2026-08-20 derivation amendment
+
+Decision 0010 retains nonempty evidence for manual Candidate v2 but permits an
+empty list with an exact `derivationRef` only when store-backed governance
+resolves a committed, current, evidence-health-ready nonempty episode
+population. The ref id is exactly `insight-${digest}`. Existing Candidate bytes,
+schema version, and digest inclusion remain unchanged.

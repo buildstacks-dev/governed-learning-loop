@@ -35,6 +35,7 @@ import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import type { GovernanceView } from "./governance.js";
 import type { LearningReportQuery } from "./report.js";
 import { candidateGovernanceStateOf } from "./views.js";
+import type { InsightDerivationView } from "./semantic-views.js";
 
 const MAX_QUERY_LIMIT = 500;
 const MAX_FILTER_VALUES = 1_000;
@@ -160,6 +161,14 @@ export interface CandidateView {
   readonly candidate: Candidate;
   readonly governance: GovernanceView;
   readonly evidenceHealth: EvidenceHealthView;
+  readonly derivationLineage:
+    | { readonly status: "not_bound" }
+    | { readonly status: "resolved"; readonly derivation: InsightDerivationView }
+    | {
+        readonly status: "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+        readonly derivation?: InsightDerivationView;
+      };
 }
 
 interface ParsedPageQuery {
@@ -1129,5 +1138,10 @@ export async function runGetCandidateView(
   if (candidate === undefined) return undefined;
   const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
   const state = await candidateGovernanceStateOf(context, candidate, riskRule.independentReview);
-  return { candidate, governance: state.governance, evidenceHealth: state.evidenceHealth };
+  return {
+    candidate,
+    governance: state.governance,
+    evidenceHealth: state.evidenceHealth,
+    derivationLineage: state.derivationLineage,
+  };
 }

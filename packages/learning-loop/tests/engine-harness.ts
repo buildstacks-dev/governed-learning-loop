@@ -172,10 +172,12 @@ export function journeyEvidence(): ManualEvidenceInput {
   };
 }
 
+type ManualCandidateInput = Extract<CandidateInput, { readonly problem: string }>;
+
 export function candidateInput(
   proposedBy: VerifiedPrincipal,
-  overrides: Partial<Omit<CandidateInput, "proposedBy">> = {},
-): CandidateInput {
+  overrides: Partial<Omit<ManualCandidateInput, "proposedBy">> = {},
+): ManualCandidateInput {
   return {
     id: "cand-1",
     scope: SCOPE,

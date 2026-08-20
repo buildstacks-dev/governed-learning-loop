@@ -2,7 +2,7 @@
 # Public Contract for a TypeScript Learning Loop
 
 **Date:** 2026-08-12  
-**Status:** ratified public contract; record schema version 1 plus Candidate schema version 2
+**Status:** ratified public contract; versioned records include Candidate 2 and EvidenceRef 2
 **Working import:** `@cormidia/learning-loop` — provisional
 
 ## The developer experience to optimize
@@ -392,14 +392,41 @@ export interface EpisodeRecord {
 }
 ```
 
+The engine-private append stream stores exact outcome attempts as:
+
+```ts
+interface EpisodeOutcomeClaim {
+  readonly schemaVersion: 1;
+  readonly episodeRecordId: string;
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly sourceRef: string;
+  readonly sourceRevision: string;
+  readonly episodeId: string;
+  readonly status: EpisodeOutcome["status"];
+  readonly measurementRefs: readonly MeasurementEvidenceRefV2[];
+  readonly claimDigest: string;
+}
+```
+
+`claimDigest` binds every field except `schemaVersion` and `claimDigest`.
+Claims are appended under the exact episode record id with deterministic entry
+ids; identical retries are idempotent and every distinct attempt remains in
+order. Each measurement reference must belong to the claim's exact source,
+registration, source revision, and episode. The latest valid claim is the
+current folded outcome, while earlier claim digests remain retained history.
+This record and its append primitive are engine-private; normal ingest is the
+only façade transition that may create one.
+
 Open or low-confidence transcript sessions may be indexed, but they cannot enter efficacy evaluation until an episode boundary is confirmed. Late outcomes append evidence and produce a new folded view; they do not rewrite the original events.
 
-Durable source-page receipts do not by themselves prove measurement
-ownership. Validation of `MetricDefinition.valueType`, exact
-measurement-to-episode and evidence-to-episode ownership, and
-episode-outcome measurement ownership is the later issue #31c contract slice.
-Until then, no receipt turns a structurally parsed measurement into a passing
-efficacy claim.
+`parseMeasurementRecord` validates from `unknown` and requires the runtime
+scalar type of `value` to equal `metric.valueType` exactly after finite-number
+parsing. It never coerces a string to a number, a number to a boolean, or a
+missing value to zero. Durable source-page receipts still do not prove cited
+observation, episode, or outcome ownership by themselves; that qualification
+is carried by schema-version-2 measurement references and append-only outcome
+claims below.
 
 ### Candidate
 
@@ -413,9 +440,7 @@ export interface CandidateIntervention {
   readonly rollbackIntent: string;
 }
 
-export interface EvidenceRef {
-  readonly schemaVersion: 1;
-  readonly kind: "observation" | "measurement";
+interface EvidenceRefCommon {
   readonly recordId: string;
   readonly recordDigest: string;
   readonly sourceId: string;
@@ -439,11 +464,31 @@ export interface EvidenceRef {
     readonly pageReceiptId: string;
     readonly pageReceiptDigest: string;
   };
+}
+
+export interface EvidenceRefV1 extends EvidenceRefCommon {
+  readonly schemaVersion: 1;
+  readonly kind: "observation" | "measurement";
   readonly referenceDigest: string;
 }
 
+export type ObservationEvidenceRef = EvidenceRefV1 & {
+  readonly kind: "observation";
+};
+
+export interface MeasurementEvidenceRefV2 extends EvidenceRefCommon {
+  readonly schemaVersion: 2;
+  readonly kind: "measurement";
+  readonly supportingEvidenceRefs: readonly ObservationEvidenceRef[];
+  readonly referenceDigest: string;
+}
+
+export type EvidenceRef = EvidenceRefV1 | MeasurementEvidenceRefV2;
+
 export declare function evidenceRefDigest(
-  input: Omit<EvidenceRef, "schemaVersion" | "referenceDigest">,
+  input:
+    | Omit<EvidenceRefV1, "schemaVersion" | "referenceDigest">
+    | Omit<MeasurementEvidenceRefV2, "referenceDigest">,
 ): string;
 
 export declare function parseEvidenceRef(input: unknown): EvidenceRef;
@@ -531,11 +576,15 @@ export declare function candidateContentDigest(input: CandidateDigestInput): str
 export declare function parseCandidate(input: unknown): Candidate;
 ```
 
-`EvidenceRef.referenceDigest` binds every field except the schema marker and
-the digest itself. It is not a caller assertion: `propose` constructs it after
-loading and parsing the exact evidence record, same-source episode record and
-identity claim, and both source-page receipts. The evidence record and episode
-may have different page receipts. `recordId` must be exactly
+Schema-version-1 `EvidenceRef.referenceDigest` bytes remain unchanged and bind
+every field except the schema marker and digest itself. Schema-version-2
+measurement references include `schemaVersion: 2` for domain separation and
+bind every common field plus every complete supporting observation reference
+in order; only `referenceDigest` is excluded. References are not caller
+assertions: the kernel constructs them after loading and parsing the exact
+records, same-source episode record and identity claim, and source-page
+receipts. An evidence record and episode may have different page receipts.
+`recordId` must be exactly
 `${sourceId}/${sourceRecordId}`; the episode record must belong to that source;
 `pageReceiptId` must equal `source-page-${pageReceiptDigest}`; and
 `episode.pageReceiptId` must equal
@@ -552,6 +601,17 @@ Every digest in an `EvidenceRef` is a 64-character lower-case SHA-256 value.
 ordered candidate scope segments `{ type, id }`. Source, revision, record and
 page references retain decision 0004's bounded, control-free, already
 privacy-treated rules; a reference is lineage, not a new trust grant.
+
+`MeasurementEvidenceRefV2.supportingEvidenceRefs` is nonempty, ordered, capped
+at 1,000 entries, and unique by both reference digest and durable record id. Every support is a
+schema-version-1 observation reference with the same source id, source
+registration revision, privacy-treated source reference, source revision,
+loop registry revision, and exact episode record, identity, scope, and episode
+receipt as the measurement. Its own observation page may differ. Minting
+resolves the measurement's ordered `evidenceIds` exactly; missing, extra,
+ambiguous, cross-source, cross-revision, cross-episode, corrupt, or duplicate
+citations refuse qualification. A v1 measurement reference remains parseable
+audit history but is unqualified.
 
 Candidate v1 canonical bytes and digest semantics remain unchanged. They bind
 the existing scope, problem, hypothesis, ordered `evidenceIds`, intervention,
@@ -595,13 +655,13 @@ or auto-migrate them. They cannot become publication-eligible, active context,
 or evidence-backed behavioral claims. Existing v1 reviews remain historical
 audit records only.
 
-`EvidenceRef.kind` reserves both observations and measurements, but #31b
-proposal resolution accepts observations only. Measurements remain blocked
-until #31c adds metric value-type validation and exact measurement-to-evidence,
-measurement-to-episode, and episode-outcome ownership. A receipt alone never
-makes a measurement eligible. A referenced `blocks_use` evidence-health
-finding refuses proposal resolution; `limits_claims` and `blocks_audit` remain
-explicit review and claim constraints rather than silently becoming evidence.
+Candidate proposal may resolve observations and schema-version-2 measurement
+references. A measurement is eligible only when its exact reference is a
+member of the latest resolved outcome claim for its episode and its folded
+evidence health permits use. A receipt or historical claim alone never makes a
+measurement eligible. A referenced `blocks_use` evidence-health finding
+refuses proposal resolution; `limits_claims` and `blocks_audit` remain explicit
+review and claim constraints rather than silently becoming evidence.
 
 ### Review
 
@@ -938,6 +998,7 @@ export interface SourcePageReceipt {
     readonly measurements: number;
     readonly episodes: number;
     readonly rejected: number;
+    readonly reused?: number;
   };
   readonly diagnosticCounts: readonly {
     readonly code: string;
@@ -960,7 +1021,8 @@ export interface EvidenceHealthFinding {
     | "source.revision_changed"
     | "source.record_rejected"
     | "source.content_policy_refused"
-    | "source.adapter_diagnostic";
+    | "source.adapter_diagnostic"
+    | "source.ownership_mismatch";
   readonly effect: "limits_claims" | "blocks_audit" | "blocks_use";
   readonly sourceId: string;
   readonly sourceRegistrationRevision: string;
@@ -1040,10 +1102,23 @@ finding ids are deterministic functions of `receiptDigest` and
 `findingDigest`. The page receipt binds exactly the source registration
 revision, adapter version, content-policy id and digest, loop registry
 revision, source/page references, state, ordered derivative
-`(kind, id, digest)` tuples, projection counts (including rejected records),
+`(kind, id, digest)` tuples, projection counts (including rejected and reused records),
 normalized diagnostic counts, and health-finding ids. `schemaVersion`, `id`,
 and `receiptDigest` are excluded. Counts are non-negative safe integers and
-must agree with the relevant arrays. Diagnostic tuples are sorted by code then
+must satisfy `derivatives.length + rejected + reused = total projections`,
+where an omitted historical `reused` is zero. Valid projections already
+committed by another exact page receipt increment `reused` and do not add an
+ambiguous second derivative tuple. Historical omission is preserved in parsed
+records and digest bytes; new ingest receipts include the field only when it
+is nonzero, so an idempotent historical page reproduces its original bytes.
+Before a derivative record is created, the engine atomically claims its one
+source/page and content-policy/loop owner in a private create-only cell
+(bootstrapping from a historical committed receipt). Concurrent different
+pages cannot both commit
+the tuple: one receipt owns it and the other counts reuse. The private claim is
+not a receipt or authority; if its owner page never commits, the derivative
+remains incomplete until that exact page is retried.
+Diagnostic tuples are sorted by code then
 severity, unique, and carry positive safe-integer counts; they never contain a
 message, path, raw details, or source content. Every derivative id must use the
 receipt source's schema-version-1 `<sourceId>/<sourceRecordId>` prefix, and a
@@ -1056,6 +1131,9 @@ An evidence-health `findingDigest` binds exactly `code`, `effect`, `sourceId`,
 downstream claims to state the finding's constraint, `blocks_audit` excludes
 the affected evidence from audit-grade comparisons, and `blocks_use` refuses
 the affected derivatives. None of these effects creates a learning candidate.
+`source.ownership_mismatch` is always a `blocks_use` finding: a citation,
+measurement, episode, or outcome that crosses its exact source/episode lineage
+cannot be qualified by policy.
 
 Revision claims are append-only per exact source registration, `sourceRef`,
 and `pageRef`. An authenticated `observedRevision` on an unavailable page is a
@@ -1564,6 +1642,21 @@ export interface EpisodeView {
         readonly status: "unresolved";
         readonly diagnostics: readonly Diagnostic[];
       };
+  readonly outcomeLineage:
+    | {
+        readonly status: "absent";
+      }
+    | {
+        readonly status: "legacy_unbound";
+        readonly diagnostics: readonly Diagnostic[];
+      }
+    | {
+        readonly status: "resolved";
+        readonly claimDigest: string;
+        readonly historyDigests: readonly string[];
+        readonly measurementRefs: readonly MeasurementEvidenceRefV2[];
+        readonly evidenceHealth: EvidenceHealthView;
+      };
 }
 
 export interface LearningReportQuery {
@@ -1643,14 +1736,14 @@ outcome; neither changes the deterministic durable import bytes.
 
 `CandidateInput.evidenceIds` is an ordered resolution request, not candidate
 record content. It must be nonempty and duplicate-free, and each value
-addresses an exact durable observation id. The verified `propose` transition
+addresses an exact durable observation or qualified measurement id. The verified `propose` transition
 resolves those ids through durable records,
 episode identity and source-page receipts, verifies the candidate's exact scope
 ownership, and persists only `CandidateV2.evidenceRefs`. Callers cannot provide
 preassembled references or `originalDigest`. When `supersedes` is present,
 `propose` loads the predecessor and derives the bound original digest. A
-missing, measurement-kind, ambiguous, corrupt, mismatched, or `blocks_use`
-request fails without creating a candidate. Evidence constrained by
+missing, legacy-measurement, non-latest measurement, ambiguous, corrupt,
+mismatched, or `blocks_use` request fails without creating a candidate. Evidence constrained by
 `limits_claims`, `blocks_audit`, partial completeness, or unknown completeness
 may create an inert v2 candidate, but its `EvidenceHealthView` is `incomplete`,
 governance is blocked, and the reviewer port is not invoked.
@@ -1664,6 +1757,20 @@ The five query methods are read-only, domain-specific views over engine-owned re
 Query cursors are opaque and bind the domain kind, normalized filters, immutable registry revision, and a query-cursor store scope. A cursor used with another query, registry, or store scope is invalid. `LearningLoopConfig.queryCursorScope` lets a host provide a stable, non-secret tenant/store identity of at most 1,000 characters when cursors must resume across loop instances; it must not contain a secret because only its digest travels in the cursor. If omitted, the engine creates a process-local scope and cursors are valid only for that loop instance. Page `limit` is excluded from the binding so a resumed reader may change page size. Each page's `snapshotRevision` is the store revision observed for that page. Episode pages recheck that revision after loading identity claims and fail with `query.snapshot_changed` if the composite view crossed a concurrent write. Appends may become visible on later pages, so the iterable is not a frozen detector, calibration, or experiment population; such workflows must persist and digest their exact eligible record set.
 
 `EpisodeView.identity` comes from an engine-private, append-only sidecar claim stream created during ingestion. Each claim preserves source id, source record id, projected episode id, optional parent and episode class, registry revision, trust ceiling, and episode completeness without changing historical `EpisodeRecord` bytes. One distinct claim resolves; two claims atomically fold to conflict. Re-ingesting an existing episode idempotently backfills a missing claim. Conflicting or unavailable lineage produces `status: "unresolved"` with typed diagnostics and never a fabricated identity.
+
+`EpisodeView.episode` never exposes an unqualified raw
+`EpisodeRecord.outcome`. With no raw outcome and no appended claim,
+`outcomeLineage` is `absent`. A stored schema-v1 outcome without an appended
+claim is `legacy_unbound` with diagnostics and is stripped from the returned
+episode. A resolved append-only claim supplies `claimDigest`, the ordered
+retained `historyDigests`, exact `MeasurementEvidenceRefV2` values, and folded
+evidence health. Only then does the view synthesize `episode.outcome` from the
+latest claim's status and measurement record ids. Normal ingest appends these
+claims after resolving measurements and citations; there is no public force-
+outcome or append-outcome façade. Episode queries include the outcome stream in
+their composite snapshot check, and `statuses` filters the synthesized latest
+outcome rather than legacy raw bytes. `resolved` means that lineage is valid;
+it does not make `succeeded` or an empty measurement list an efficacy pass.
 
 `getImportReceipt` is an exact, pure read of one durable import receipt and
 returns `undefined` only when that id does not exist. It reparses and verifies
@@ -2062,7 +2169,8 @@ Initial error families should cover:
 - the closed durable evidence-health codes `source.missing`,
   `source.unreadable`, `source.unsupported`, `source.corrupt`,
   `source.partial`, `source.revision_changed`, `source.record_rejected`,
-  `source.content_policy_refused`, and `source.adapter_diagnostic`;
+  `source.content_policy_refused`, `source.adapter_diagnostic`, and
+  `source.ownership_mismatch`;
 - `store.conflict`, `store.corrupt`, and `store.unavailable`;
 - `review.not_independent` and `review.binding_mismatch`;
 - `policy.blocked`, `policy.authority_insufficient`, and `policy.risk_floor`;
@@ -2087,6 +2195,9 @@ Rules:
 - schema-version-1 candidates have no migration: they remain
   `legacy_unbound` audit records, while an explicit new v2 proposal may bind a
   predecessor's exact digest through `supersedes` and `originalDigest`;
+- schema-version-1 evidence-reference bytes remain stable; a v1 measurement
+  reference stays unqualified, while exact cited-observation ownership creates
+  a new schema-version-2 measurement reference rather than rewriting it;
 - where another record family permits migration, it retains original digests
   as lineage, computes new digests for changed canonical bytes, and preserves
   provenance; an original digest never authenticates migrated content, and
@@ -2107,8 +2218,16 @@ The core suite should prove at least:
   audit-only; reads and upgrades never auto-migrate them;
 - candidate v2 proposal refuses cross-source id collisions, stale or corrupt
   records and receipts, unresolved episode identity, scope mismatch,
-  empty or duplicate evidence, `blocks_use` evidence health, and measurement
-  references pending #31c;
+  empty or duplicate evidence, `blocks_use` evidence health, and unqualified or
+  non-latest measurement references;
+- metric runtime values must match `valueType`; v2 measurement references bind
+  nonempty ordered, duplicate-free, same-source/revision/episode cited
+  observations while v1 measurement references remain unqualified;
+- append-only outcome claims retain every attempt, synthesize only the latest
+  resolved episode outcome, and leave raw legacy outcomes `legacy_unbound`;
+- reasserted projections use receipt `reused` accounting without creating a
+  second derivative commit marker, while historical omitted `reused` bytes and
+  digests remain stable;
 - reordering or changing any full v2 evidence reference, derivation binding,
   predecessor id, or predecessor digest changes the candidate digest;
 - a proposer cannot provide the decisive review;

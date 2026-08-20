@@ -10,8 +10,8 @@ import { invalid } from "../parse/toolkit.js";
 import type { RegisteredSource } from "../ports/evidence.js";
 import type { Candidate } from "../records/candidate.js";
 import { candidateScopeDigest } from "../records/candidate.js";
-import type { EvidenceRef } from "../records/evidence-ref.js";
-import { evidenceRefDigest, parseEvidenceRef } from "../records/evidence-ref.js";
+import type { EvidenceRef, MeasurementEvidenceRefV2, ObservationEvidenceRef } from "../records/evidence-ref.js";
+import { evidenceRefDigest, parseEvidenceRef, parseObservationEvidenceRefAt } from "../records/evidence-ref.js";
 import type { EpisodeRecord, MeasurementRecord } from "../records/episode.js";
 import { parseEpisodeRecord, parseMeasurementRecord } from "../records/episode.js";
 import type { Observation } from "../records/observation.js";
@@ -30,6 +30,7 @@ import {
 } from "./context.js";
 import type { EpisodeIdentityRecord } from "./episode-identity.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
+import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import { adapterFor } from "./source-registration.js";
 
 const MAX_EVIDENCE_IDS = 1_000;
@@ -41,6 +42,7 @@ const EVIDENCE_SNAPSHOT_KINDS: readonly RecordKind[] = [
   "measurement",
   "episode",
   "episode-identity",
+  "episode-outcome",
   "source-revision",
   "source-page-receipt",
   "evidence-health",
@@ -48,6 +50,11 @@ const EVIDENCE_SNAPSHOT_KINDS: readonly RecordKind[] = [
 
 type EvidenceRecord = Observation | MeasurementRecord;
 type EvidenceKind = EvidenceRef["kind"];
+
+interface ResolveOptions {
+  readonly allowMeasurements: boolean;
+  readonly requireOutcomeClaim: boolean;
+}
 
 export interface EvidenceHealthView {
   readonly status: "ready" | "incomplete" | "invalid" | "legacy_unbound";
@@ -112,6 +119,22 @@ function result(
     records,
     health: { status: health.status, diagnostics: health.diagnostics },
   };
+}
+
+function mergeHealth(health: MutableHealth, child: EvidenceHealthView): void {
+  if (child.status === "invalid" || child.status === "legacy_unbound") health.status = "invalid";
+  else if (child.status === "incomplete" && health.status === "ready") health.status = "incomplete";
+  health.diagnostics.push(...child.diagnostics);
+}
+
+const COMPLETENESS_RANK = { complete: 0, partial: 1, unknown: 2 } as const;
+
+function worstCompleteness(references: readonly ObservationEvidenceRef[]): ObservationEvidenceRef["completeness"] {
+  let worst: ObservationEvidenceRef["completeness"] = "complete";
+  for (const reference of references) {
+    if (COMPLETENESS_RANK[reference.completeness] > COMPLETENESS_RANK[worst]) worst = reference.completeness;
+  }
+  return worst;
 }
 
 function containsControlCharacter(value: string): boolean {
@@ -547,7 +570,9 @@ async function foldReceiptHealth(
   }
 }
 
-function buildEvidenceRef(item: FullyBoundEvidence): EvidenceRef {
+function commonReferenceFields(
+  item: FullyBoundEvidence,
+): Omit<ObservationEvidenceRef, "schemaVersion" | "kind" | "referenceDigest"> {
   const provenance = item.record.provenance;
   const sourceRecordId = provenance.recordRef;
   if (sourceRecordId === undefined) {
@@ -563,8 +588,7 @@ function buildEvidenceRef(item: FullyBoundEvidence): EvidenceRef {
     pageReceiptDigest: item.episodeReceipt.receiptDigest,
     scopeDigest: candidateScopeDigest(item.episode.episode.scope),
   };
-  const bound = {
-    kind: item.kind,
+  return {
     recordId: item.record.id,
     recordDigest: item.digest,
     sourceId: provenance.sourceId,
@@ -580,7 +604,40 @@ function buildEvidenceRef(item: FullyBoundEvidence): EvidenceRef {
     completeness: provenance.completeness,
     episode,
   };
-  return parseEvidenceRef({ schemaVersion: 1, ...bound, referenceDigest: evidenceRefDigest(bound) });
+}
+
+function buildObservationEvidenceRef(item: FullyBoundEvidence): ObservationEvidenceRef {
+  if (item.kind !== "observation") {
+    throw invalid("schema.corrupt", "measurement cannot become an observation evidence reference", ["kind"]);
+  }
+  const common = commonReferenceFields(item);
+  const bound = { kind: "observation" as const, ...common };
+  const parsed = parseEvidenceRef({ schemaVersion: 1, ...bound, referenceDigest: evidenceRefDigest(bound) });
+  if (parsed.schemaVersion !== 1 || parsed.kind !== "observation") {
+    throw invalid("schema.corrupt", "observation evidence parser returned another reference kind", ["kind"]);
+  }
+  return { ...parsed, kind: "observation" };
+}
+
+function buildMeasurementEvidenceRef(
+  item: FullyBoundEvidence,
+  supportingEvidenceRefs: readonly ObservationEvidenceRef[],
+): MeasurementEvidenceRefV2 {
+  if (item.kind !== "measurement") {
+    throw invalid("schema.corrupt", "observation cannot become a measurement evidence reference", ["kind"]);
+  }
+  const common = commonReferenceFields(item);
+  const bound = {
+    schemaVersion: 2 as const,
+    kind: "measurement" as const,
+    ...common,
+    supportingEvidenceRefs,
+  };
+  const parsed = parseEvidenceRef({ ...bound, referenceDigest: evidenceRefDigest(bound) });
+  if (parsed.schemaVersion !== 2 || parsed.kind !== "measurement") {
+    throw invalid("schema.corrupt", "measurement evidence parser returned another reference kind", ["kind"]);
+  }
+  return parsed;
 }
 
 async function evidenceSnapshotRevision(context: EngineContext): Promise<string> {
@@ -596,6 +653,7 @@ async function resolveCandidateEvidenceOnce(
   context: EngineContext,
   exactDurableIds: readonly string[],
   scope: Scope,
+  options: ResolveOptions,
 ): Promise<CandidateEvidenceResolution> {
   const health: MutableHealth = { status: "ready", diagnostics: [] };
   const ids = validateExactIds(exactDurableIds, health);
@@ -725,17 +783,6 @@ async function resolveCandidateEvidenceOnce(
         evidenceDiagnostic("evidence.incomplete", "warning", "evidence or episode identity is not complete"),
       );
     }
-    if (item.kind === "measurement") {
-      markHealth(
-        health,
-        "invalid",
-        evidenceDiagnostic(
-          "evidence.measurement_unqualified",
-          "error",
-          "measurement evidence is recognized but unqualified until measurement ownership is implemented",
-        ),
-      );
-    }
   }
   await foldReceiptHealth(
     context,
@@ -743,25 +790,111 @@ async function resolveCandidateEvidenceOnce(
     health,
   );
 
-  return result(
-    fullyBound.map(buildEvidenceRef),
-    fullyBound.map((item) => item.record),
-    health,
-  );
+  const references: EvidenceRef[] = [];
+  const records: EvidenceRecord[] = [];
+  for (const item of fullyBound) {
+    if (item.kind === "observation") {
+      references.push(buildObservationEvidenceRef(item));
+      records.push(item.record);
+      continue;
+    }
+    if (!options.allowMeasurements) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.ownership_mismatch",
+          "error",
+          "a measurement cannot support another measurement evidence reference",
+        ),
+      );
+      continue;
+    }
+    const measurement = parseMeasurementRecord(toJsonValue(item.record));
+    const supporting = await resolveCandidateEvidenceOnce(context, measurement.evidenceIds, scope, {
+      allowMeasurements: false,
+      requireOutcomeClaim: false,
+    });
+    mergeHealth(health, supporting.health);
+    const supportingEvidenceRefs: ObservationEvidenceRef[] = [];
+    let ownershipMatches = supporting.refs.length === measurement.evidenceIds.length;
+    for (const [index, reference] of supporting.refs.entries()) {
+      if (reference.schemaVersion !== 1 || reference.kind !== "observation") {
+        ownershipMatches = false;
+        continue;
+      }
+      if (
+        reference.sourceId !== item.record.provenance.sourceId ||
+        reference.sourceRegistrationRevision !== item.registration.registryRevision ||
+        reference.sourceRef !== item.record.provenance.sourceRef ||
+        reference.sourceRevision !== item.record.provenance.sourceRevision ||
+        reference.loopRegistryRevision !== item.receipt.loopRegistryRevision ||
+        reference.episode.episodeId !== item.record.episodeId ||
+        reference.episode.episodeRecordId !== item.episode.episode.id
+      ) {
+        ownershipMatches = false;
+      }
+      supportingEvidenceRefs.push(parseObservationEvidenceRefAt(reference, ["supportingEvidenceRefs", index]));
+    }
+    if (
+      supporting.health.status === "invalid" ||
+      supporting.health.status === "legacy_unbound" ||
+      !ownershipMatches ||
+      supportingEvidenceRefs.length === 0 ||
+      measurement.provenance.completeness !== worstCompleteness(supportingEvidenceRefs)
+    ) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.ownership_mismatch",
+          "error",
+          "measurement evidence does not bind exact same-source observations and completeness",
+        ),
+      );
+      continue;
+    }
+    const reference = buildMeasurementEvidenceRef(item, supportingEvidenceRefs);
+    if (options.requireOutcomeClaim) {
+      const outcome = await loadLatestEpisodeOutcomeClaim(context, reference.episode.episodeRecordId);
+      if (
+        outcome.status !== "resolved" ||
+        !outcome.latest.measurementRefs.some(
+          (claimed) => canonicalJsonText(toJsonValue(claimed)) === canonicalJsonText(toJsonValue(reference)),
+        )
+      ) {
+        markHealth(
+          health,
+          "invalid",
+          evidenceDiagnostic(
+            "evidence.outcome_unbound",
+            "error",
+            "measurement evidence is not bound by the latest episode outcome claim",
+          ),
+        );
+        continue;
+      }
+    }
+    references.push(reference);
+    records.push(measurement);
+  }
+
+  return result(references, records, health);
 }
 
 /**
  * Retries the composite read unless every evidence-bearing namespace retained
  * one stable revision across the full record/receipt/identity/health fold.
  */
-export async function resolveCandidateEvidence(
+async function resolveEvidenceWithOptions(
   context: EngineContext,
   exactDurableIds: readonly string[],
   scope: Scope,
+  options: ResolveOptions,
 ): Promise<CandidateEvidenceResolution> {
   for (let attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt += 1) {
     const before = await evidenceSnapshotRevision(context);
-    const resolved = await resolveCandidateEvidenceOnce(context, exactDurableIds, scope);
+    const resolved = await resolveCandidateEvidenceOnce(context, exactDurableIds, scope, options);
     const after = await evidenceSnapshotRevision(context);
     if (before === after) return resolved;
   }
@@ -772,6 +905,29 @@ export async function resolveCandidateEvidence(
       message: "evidence changed repeatedly while resolving candidate lineage; retry the operation",
     },
   ]);
+}
+
+export function resolveCandidateEvidence(
+  context: EngineContext,
+  exactDurableIds: readonly string[],
+  scope: Scope,
+): Promise<CandidateEvidenceResolution> {
+  return resolveEvidenceWithOptions(context, exactDurableIds, scope, {
+    allowMeasurements: true,
+    requireOutcomeClaim: true,
+  });
+}
+
+/** Internal outcome-ingest path: mint exact measurement refs before the claim exists. */
+export function resolveOutcomeMeasurementEvidence(
+  context: EngineContext,
+  exactDurableIds: readonly string[],
+  scope: Scope,
+): Promise<CandidateEvidenceResolution> {
+  return resolveEvidenceWithOptions(context, exactDurableIds, scope, {
+    allowMeasurements: true,
+    requireOutcomeClaim: false,
+  });
 }
 
 /** Revalidates every embedded v2 reference; v1 candidates remain unbound. */

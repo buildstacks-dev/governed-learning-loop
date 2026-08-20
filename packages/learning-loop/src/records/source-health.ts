@@ -32,6 +32,7 @@ const NORMALIZED_DIAGNOSTIC_CODES = [
   "store.conflict",
   "store.corrupt",
   "episode.identity_conflict",
+  "evidence.ownership_mismatch",
   "policy.blocked",
 ] as const;
 const HEALTH_CODES = [
@@ -44,6 +45,7 @@ const HEALTH_CODES = [
   "source.record_rejected",
   "source.content_policy_refused",
   "source.adapter_diagnostic",
+  "source.ownership_mismatch",
 ] as const;
 const HEALTH_EFFECTS = ["limits_claims", "blocks_audit", "blocks_use"] as const;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
@@ -139,6 +141,8 @@ export interface SourcePageReceipt {
     readonly measurements: number;
     readonly episodes: number;
     readonly rejected: number;
+    /** Projections already committed by another exact page receipt. */
+    readonly reused?: number;
   };
   readonly diagnosticCounts: readonly SourceDiagnosticCount[];
   readonly healthFindingIds: readonly string[];
@@ -261,11 +265,13 @@ const parseDiagnosticCountAt: Parse<SourceDiagnosticCount> = (input, path) => {
 const parseProjectionCountsAt: Parse<SourcePageReceipt["projectionCounts"]> = (input, path) => {
   const fields = readFields(input, path);
   const parseCount = parseSafeIntegerAt(0, "projection count");
+  const reused = fields.opt("reused", parseCount);
   return {
     observations: fields.req("observations", parseCount),
     measurements: fields.req("measurements", parseCount),
     episodes: fields.req("episodes", parseCount),
     rejected: fields.req("rejected", parseCount),
+    ...(reused !== undefined ? { reused } : {}),
   };
 };
 
@@ -291,11 +297,14 @@ export function parseSourcePageReceipt(input: unknown): SourcePageReceipt {
   };
   const totalProjections =
     receipt.projectionCounts.observations + receipt.projectionCounts.measurements + receipt.projectionCounts.episodes;
+  const accountedProjections =
+    receipt.derivatives.length + receipt.projectionCounts.rejected + (receipt.projectionCounts.reused ?? 0);
   if (
     !Number.isSafeInteger(totalProjections) ||
-    receipt.derivatives.length + receipt.projectionCounts.rejected !== totalProjections
+    !Number.isSafeInteger(accountedProjections) ||
+    accountedProjections !== totalProjections
   ) {
-    throw invalid("schema.corrupt", "projection counts do not agree with accepted derivatives and rejections", [
+    throw invalid("schema.corrupt", "projection counts do not agree with accepted, rejected, and reused projections", [
       "projectionCounts",
     ]);
   }
@@ -322,7 +331,10 @@ export function parseSourcePageReceipt(input: unknown): SourcePageReceipt {
   }
   if (
     receipt.state.status !== "available" &&
-    (totalProjections !== 0 || receipt.projectionCounts.rejected !== 0 || receipt.derivatives.length !== 0)
+    (totalProjections !== 0 ||
+      receipt.projectionCounts.rejected !== 0 ||
+      (receipt.projectionCounts.reused ?? 0) !== 0 ||
+      receipt.derivatives.length !== 0)
   ) {
     throw invalid("schema.corrupt", "an unavailable source page cannot contain projections or derivatives", ["state"]);
   }

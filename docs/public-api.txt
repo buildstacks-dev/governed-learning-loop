@@ -25,6 +25,9 @@ root:parseProvenance
 root:Observation
 root:parseObservation
 root:EvidenceRef
+root:EvidenceRefV1
+root:ObservationEvidenceRef
+root:MeasurementEvidenceRefV2
 root:evidenceRefDigest
 root:parseEvidenceRef
 root:EpisodeOutcome

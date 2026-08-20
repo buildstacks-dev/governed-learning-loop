@@ -32,6 +32,7 @@ const SAFE_DIAGNOSTIC_CODES = new Set([
   "store.conflict",
   "store.corrupt",
   "episode.identity_conflict",
+  "evidence.ownership_mismatch",
   "policy.blocked",
   "source.adapter_diagnostic",
 ]);
@@ -51,6 +52,7 @@ function transientMessage(code: string): string {
   if (code === "store.conflict") return "a create-only record conflicted with stored content";
   if (code === "store.corrupt") return "the durable store returned invalid content";
   if (code === "episode.identity_conflict") return "episode identity claims conflicted";
+  if (code === "evidence.ownership_mismatch") return "evidence ownership validation failed";
   if (code === "policy.blocked") return "content policy refused projected content";
   if (code === "ingest.duplicate") return "one or more records were already stored with identical content";
   return "the source or content policy reported a privacy-minimized diagnostic";

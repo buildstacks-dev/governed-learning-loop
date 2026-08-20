@@ -174,6 +174,17 @@ export const parseProjectedEpisodeAt: Parse<ProjectedEpisode> = (input, path) =>
   const completeness = fields.opt("completeness", parseOneOf(COMPLETENESS_VALUES));
   const parentEpisodeId = fields.opt("parentEpisodeId", parseProjectionIdentifier);
   const episodeClass = fields.opt("episodeClass", parseProjectionIdentifier);
+  const measurementSourceRecordIds = fields.req("measurementSourceRecordIds", parseArrayOf(parseProjectionIdentifier));
+  if (status === undefined && measurementSourceRecordIds.length > 0) {
+    throw new LearningLoopError("schema.invalid", [
+      {
+        code: "schema.invalid",
+        severity: "error",
+        message: "episode measurement references require an explicit outcome status",
+        path: [...path, "measurementSourceRecordIds"],
+      },
+    ]);
+  }
   return {
     sourceRecordId: fields.req("sourceRecordId", parseProjectionIdentifier),
     episodeId: fields.req("episodeId", parseProjectionIdentifier),
@@ -184,6 +195,6 @@ export const parseProjectedEpisodeAt: Parse<ProjectedEpisode> = (input, path) =>
     openedAt: fields.req("openedAt", parseNonEmptyText),
     ...(closedAt !== undefined ? { closedAt } : {}),
     ...(status !== undefined ? { status } : {}),
-    measurementSourceRecordIds: fields.req("measurementSourceRecordIds", parseArrayOf(parseNonEmptyText)),
+    measurementSourceRecordIds,
   };
 };

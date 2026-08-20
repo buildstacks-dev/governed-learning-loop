@@ -2,8 +2,14 @@
 // opaque filter-bound cursors, provenance-preserving observation/measurement
 // reads, source-isolated episode identities, and read-only candidate views.
 import { describe, expect, it } from "vitest";
-import type { EvidencePage, EvidenceSource, LearningStore, QueryPage } from "../src/index.js";
-import { defineSourceRegistration, parseObservation, sha256HexOfCanonicalJson, toJsonValue } from "../src/index.js";
+import type { EvidencePage, EvidenceSource, JsonValue, LearningStore, QueryPage } from "../src/index.js";
+import {
+  defineSourceRegistration,
+  parseMeasurementRecord,
+  parseObservation,
+  sha256HexOfCanonicalJson,
+  toJsonValue,
+} from "../src/index.js";
 import { createInMemoryStore } from "../src/testing/index.js";
 import {
   CONTENT_POLICY_ID,
@@ -323,7 +329,17 @@ describe("typed learning queries", () => {
           measuredAt: "2026-08-17T11:02:00.000Z",
         },
       ],
-      episodes: [],
+      episodes: [
+        {
+          sourceRecordId: "episode-partial",
+          episodeId: "native-session-7",
+          completeness: "partial",
+          scope: SCOPE,
+          openedAt: "2026-08-17T11:00:00.000Z",
+          closedAt: "2026-08-17T11:03:00.000Z",
+          measurementSourceRecordIds: [],
+        },
+      ],
       diagnostics: [],
     };
     const advisory = defineSourceRegistration({
@@ -410,6 +426,159 @@ describe("typed learning queries", () => {
     const reader = await createHarness([], { store: tamperingStore });
 
     await expect(collectPages(reader.learning.queryObservations({ limit: 10 }))).rejects.toMatchObject({
+      code: "store.corrupt",
+    });
+  });
+
+  it("rejects valid parsed bytes returned behind a different observation, measurement, receipt, health, or import key", async () => {
+    const base = createInMemoryStore();
+    const healthSource = defineSourceRegistration({
+      source: fixtureSource("query-boundary-health", [
+        {
+          sourceRef: "health-artifact",
+          pageRef: "health-page-a",
+          state: { status: "available", sourceRevision: "health-revision-a", completeness: "partial" },
+          observations: [],
+          measurements: [],
+          episodes: [],
+          diagnostics: [],
+        },
+        {
+          sourceRef: "health-artifact",
+          pageRef: "health-page-b",
+          state: { status: "available", sourceRevision: "health-revision-b", completeness: "partial" },
+          observations: [],
+          measurements: [],
+          episodes: [],
+          diagnostics: [],
+        },
+      ]),
+      trustCeiling: "advisory",
+      contentPolicyId: CONTENT_POLICY_ID,
+    });
+    const writer = await createHarness([healthSource], { store: base });
+    await writer.learning.ingest(writer.manual, journeyEvidence());
+    await writer.learning.ingest(healthSource, null);
+
+    type Replacement = {
+      readonly form: "list" | "get";
+      readonly kind: string;
+      readonly targetId: string;
+      readonly value: JsonValue;
+      readonly digest: string;
+    };
+    let replacement: Replacement | undefined;
+    const boundaryStore: LearningStore = {
+      get: async (key) => {
+        const record = await base.get(key);
+        if (
+          record !== undefined &&
+          replacement?.form === "get" &&
+          replacement.kind === key.kind &&
+          replacement.targetId === key.id
+        ) {
+          return { ...record, value: replacement.value, digest: replacement.digest };
+        }
+        return record;
+      },
+      create: (key, value, digest, operationId) => base.create(key, value, digest, operationId),
+      compareAndSet: (key, expectedRevision, value, digest, operationId) =>
+        base.compareAndSet(key, expectedRevision, value, digest, operationId),
+      append: (stream, expectedRevision, entries, operationId) =>
+        base.append(stream, expectedRevision, entries, operationId),
+      tombstone: (input) => base.tombstone(input),
+      list: async (query) => {
+        const page = await base.list(query);
+        if (replacement?.form !== "list" || replacement.kind !== query.kind) return page;
+        return {
+          ...page,
+          records: page.records.map((record) =>
+            record.key.id === replacement?.targetId
+              ? { ...record, value: replacement.value, digest: replacement.digest }
+              : record,
+          ),
+        };
+      },
+    };
+    const reader = await createHarness([healthSource], { store: boundaryStore });
+    const recordsOf = (kind: string) => base.list({ namespace: "learning", kind, limit: 100 });
+
+    const observationStored = (await recordsOf("observation")).records[0];
+    if (observationStored === undefined) throw new Error("missing observation fixture");
+    const observationValue = toJsonValue({
+      ...parseObservation(observationStored.value),
+      id: "manual-evidence/foreign-observation-inner-id",
+    });
+    replacement = {
+      form: "list",
+      kind: "observation",
+      targetId: observationStored.key.id,
+      value: observationValue,
+      digest: sha256HexOfCanonicalJson(observationValue),
+    };
+    await expect(collectPages(reader.learning.queryObservations({ limit: 10 }))).rejects.toMatchObject({
+      code: "store.corrupt",
+    });
+
+    const measurementStored = (await recordsOf("measurement")).records[0];
+    if (measurementStored === undefined) throw new Error("missing measurement fixture");
+    const measurementValue = toJsonValue({
+      ...parseMeasurementRecord(measurementStored.value),
+      id: "manual-evidence/foreign-measurement-inner-id",
+    });
+    replacement = {
+      form: "list",
+      kind: "measurement",
+      targetId: measurementStored.key.id,
+      value: measurementValue,
+      digest: sha256HexOfCanonicalJson(measurementValue),
+    };
+    await expect(collectPages(reader.learning.queryMeasurements({ limit: 10 }))).rejects.toMatchObject({
+      code: "store.corrupt",
+    });
+
+    const receiptRecords = (await recordsOf("source-page-receipt")).records;
+    const receiptTarget = receiptRecords[0];
+    const receiptOther = receiptRecords.find((record) => record.key.id !== receiptTarget?.key.id);
+    if (receiptTarget === undefined || receiptOther === undefined) throw new Error("missing receipt fixtures");
+    replacement = {
+      form: "list",
+      kind: "source-page-receipt",
+      targetId: receiptTarget.key.id,
+      value: toJsonValue(receiptOther.value),
+      digest: receiptOther.digest,
+    };
+    await expect(collectPages(reader.learning.querySourcePageReceipts({ limit: 10 }))).rejects.toMatchObject({
+      code: "store.corrupt",
+    });
+
+    const healthRecords = (await recordsOf("evidence-health")).records;
+    const healthTarget = healthRecords[0];
+    const healthOther = healthRecords.find((record) => record.key.id !== healthTarget?.key.id);
+    if (healthTarget === undefined || healthOther === undefined) throw new Error("missing health fixtures");
+    replacement = {
+      form: "list",
+      kind: "evidence-health",
+      targetId: healthTarget.key.id,
+      value: toJsonValue(healthOther.value),
+      digest: healthOther.digest,
+    };
+    await expect(collectPages(reader.learning.queryEvidenceHealthFindings({ limit: 10 }))).rejects.toMatchObject({
+      code: "store.corrupt",
+    });
+
+    const importRecords = (await recordsOf("import-receipt")).records;
+    const importTarget = importRecords[0];
+    const importOther = importRecords.find((record) => record.key.id !== importTarget?.key.id);
+    if (importTarget === undefined || importOther === undefined) throw new Error("missing import fixtures");
+    replacement = {
+      form: "get",
+      kind: "import-receipt",
+      targetId: importTarget.key.id,
+      value: toJsonValue(importOther.value),
+      digest: importOther.digest,
+    };
+    await expect(reader.learning.getImportReceipt({ importReceiptId: importTarget.key.id })).rejects.toMatchObject({
       code: "store.corrupt",
     });
   });

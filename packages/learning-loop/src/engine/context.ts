@@ -24,10 +24,12 @@ export type RecordKind =
   | "measurement"
   | "episode"
   | "episode-identity"
+  | "episode-outcome"
   | "source-revision"
   | "source-page-receipt"
   | "import-receipt"
   | "evidence-health"
+  | "derivative-owner"
   | "candidate"
   | "review"
   | "candidate-by-digest";
@@ -140,7 +142,7 @@ const parseStreamEntryIdAt: Parse<string> = (input, path) => {
 };
 
 function expectedStoredDigest(kind: RecordKind, value: unknown): string {
-  if (kind === "episode-identity" || kind === "source-revision") {
+  if (kind === "episode-identity" || kind === "episode-outcome" || kind === "source-revision") {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
     return sha256HexOfCanonicalJson(entryIds);
   }

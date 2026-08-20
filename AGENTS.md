@@ -43,18 +43,27 @@ between code and contract, open an issue — never silently drift either one.
   declares an opaque, privacy-treated source/page identity and a closed
   availability state. Receipt-last persistence binds exact registration,
   policy, revision, derivative, count, and normalized diagnostic lineage.
+  A private create-only page-owner claim prevents concurrent pages from both
+  committing one derivative; reasserted records are counted as reused without
+  creating a second commit receipt.
   Missing, unreadable, unsupported, corrupt, partial, or revision-changed
   evidence produces closed evidence-health records; it is never silently an
   empty successful page or a behavioral candidate.
 - **Candidate evidence is kernel-resolved and content-bound.** Callers request
-  exact durable observation ids; only `propose` may resolve records, episode
-  identity, scope, and source-page receipts into ordered, nonempty,
-  duplicate-free Candidate-v2 `EvidenceRef` values. Candidate v1 remains
+  exact durable observation or qualified measurement ids; only `propose` may
+  resolve records, episode identity, scope, and source-page receipts into
+  ordered, nonempty, duplicate-free Candidate-v2 `EvidenceRef` values.
+  Candidate v1 remains
   byte-stable, `legacy_unbound`, and audit-only, with no automatic migration. A
   successor is an explicit new proposal with exact predecessor lineage.
   Candidate views expose only the closed evidence-health status; it grants no
-  trust or authority. Measurement references stay refused until issue #31c
-  lands their ownership rules.
+  trust or authority.
+- **Measurements and outcomes are ownership-bound.** Runtime values exactly
+  match their metric value type. Qualified measurement references bind a
+  nonempty ordered set of same-source, same-revision, same-episode observation
+  references. Normal ingest appends retained outcome claims; raw legacy outcome
+  ids, missing values, ownership mismatches, and incomplete evidence never pass
+  or become zero.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

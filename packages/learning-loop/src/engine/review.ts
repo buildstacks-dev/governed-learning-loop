@@ -28,6 +28,7 @@ import { assertVerifiedPrincipal } from "./identity.js";
 import type { CandidateDerivationBinding } from "./derivation-binding.js";
 import { revalidateCandidateDerivation } from "./derivation-binding.js";
 import { appendCandidateReviewReference, verifyExistingCandidateReviewReference } from "./candidate-review-index.js";
+import { loadCandidateAdmissionLineageRecords } from "./recurrence-admission.js";
 
 /** Semantic-judgment port for candidate review (contract §Semantic judgment). */
 export interface CandidateReviewer {
@@ -106,6 +107,19 @@ function assertReviewableDerivation(binding: CandidateDerivationBinding): void {
   throw new LearningLoopError("review.derivation_invalid", [
     { code: "review.derivation_invalid", severity: "error", message: "candidate derivation is not reviewable" },
     ...binding.diagnostics,
+  ]);
+}
+
+async function assertReviewableAdmission(context: EngineContext, candidate: Candidate): Promise<void> {
+  if (candidate.schemaVersion !== 2) return;
+  const admission = await loadCandidateAdmissionLineageRecords(context, candidate);
+  if (admission.status !== "invalid") return;
+  throw new LearningLoopError("review.admission_invalid", [
+    {
+      code: "review.admission_invalid",
+      severity: "error",
+      message: "Candidate admission lineage is structurally invalid",
+    },
   ]);
 }
 
@@ -218,6 +232,7 @@ export async function runReviewCandidate(
       ...lineageDiagnostics,
     ]);
   }
+  await assertReviewableAdmission(context, candidate);
 
   const existingStored = await loadStoredRecord(context, "review", reviewId);
   if (existingStored !== undefined) {
@@ -287,6 +302,7 @@ export async function runReviewCandidate(
     throw new LearningLoopError("review.lineage_invalid", currentLineageDiagnostics);
   }
   assertReviewableEvidence(await revalidateCandidateEvidence(context, currentCandidate));
+  await assertReviewableAdmission(context, currentCandidate);
 
   const record: CandidateReview = {
     schemaVersion: 1,

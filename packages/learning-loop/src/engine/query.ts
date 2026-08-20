@@ -171,6 +171,31 @@ export interface CandidateView {
         readonly derivation?: InsightDerivationView;
       };
   readonly recurrenceLineage: CandidateRecurrenceLineage;
+  readonly admissionLineage:
+    | {
+        readonly status: "not_subject";
+        readonly reason: "manual" | "recurrence_unbound" | "policy_unconfigured" | "historical_pre_admission";
+      }
+    | {
+        readonly status: "resolved";
+        readonly bindingDigest: string;
+        readonly reservationKeyDigest: string;
+        readonly reservationDigest: string;
+        readonly snapshotDigest: string;
+        readonly policyDigest: string;
+        readonly basis: "group_available" | "required_supersession" | "rejection_override" | "historical_supersession";
+      }
+    | {
+        readonly status: "historical";
+        readonly bindingDigest: string;
+        readonly reservationKeyDigest: string;
+        readonly reservationDigest: string;
+        readonly snapshotDigest: string;
+        readonly policyDigest: string;
+        readonly basis: "group_available" | "required_supersession" | "rejection_override" | "historical_supersession";
+        readonly diagnostics: readonly Diagnostic[];
+      }
+    | { readonly status: "invalid"; readonly diagnostics: readonly Diagnostic[] };
 }
 
 interface ParsedPageQuery {
@@ -1146,5 +1171,6 @@ export async function runGetCandidateView(
     evidenceHealth: state.evidenceHealth,
     derivationLineage: state.derivationLineage,
     recurrenceLineage: state.recurrenceLineage,
+    admissionLineage: state.admissionLineage,
   };
 }

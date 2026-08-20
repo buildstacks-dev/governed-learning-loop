@@ -40,6 +40,11 @@ import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import type { QueryPage } from "./query.js";
 import { loadDetectorExecutionRecord, loadRegistrySnapshot } from "./semantic-graph.js";
 import { loadDetectorExecutionView } from "./semantic-views.js";
+import type { CandidateAdmissionEligibilityCache } from "./recurrence-admission.js";
+import {
+  candidateAdmissionEligibilityStatus,
+  createCandidateAdmissionEligibilityCache,
+} from "./recurrence-admission.js";
 import {
   assessRecurrenceGroupGovernance,
   createRecurrenceGovernanceReadCache,
@@ -105,6 +110,7 @@ interface GovernanceReadState {
   readonly workBudget: { claimRefs: number };
   readonly cache: RecurrenceGovernanceReadCache;
   readonly assessments: Map<string, Promise<GroupGovernance>>;
+  readonly admissionEligibility: CandidateAdmissionEligibilityCache;
 }
 
 function createGovernanceReadState(): GovernanceReadState {
@@ -112,6 +118,7 @@ function createGovernanceReadState(): GovernanceReadState {
     workBudget: { claimRefs: 0 },
     cache: createRecurrenceGovernanceReadCache(),
     assessments: new Map(),
+    admissionEligibility: createCandidateAdmissionEligibilityCache(),
   };
 }
 
@@ -438,6 +445,8 @@ async function currentGovernanceBinding(
         workBudget: state.workBudget,
         groupLineage: lineage,
         cache: state.cache,
+        candidateAdmissionStatus: (candidate) =>
+          candidateAdmissionEligibilityStatus(context, candidate, state.admissionEligibility),
       });
     } catch (error) {
       if (error instanceof LearningLoopError && error.code === "detector.limit_exceeded") {
@@ -478,6 +487,8 @@ async function currentGovernanceBinding(
         workBudget: state.workBudget,
         groupLineage: lineage,
         cache: state.cache,
+        candidateAdmissionStatus: (candidate) =>
+          candidateAdmissionEligibilityStatus(context, candidate, state.admissionEligibility),
       });
       state.assessments.set(cacheKey, pending);
     }

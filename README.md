@@ -143,10 +143,10 @@ insight/evidence-health group reporting. Configured pack items explicitly say
 `not_grouped | unassessed | capped` only when an exact child result is retained;
 no-result items omit the unknown classification. Group-capped child facts
 still persist and remain inert. Rejection-suppression configuration is
-registered and digested but deliberately non-enforcing. Subsequent slices added
-durable pack receipts/queries and observational Candidate-to-group claims;
-assessment, deduplication, review-based suppression and proposal admission
-remain separate follow-up work.
+registered and digested but grants nothing by itself. Subsequent slices add
+durable pack receipts/queries, observational Candidate-to-group claims and
+assessment, then decision 0018 separately enforces the same pure classifier
+through a serialized pre-write Candidate admission snapshot.
 
 #30c2b2-receipts adds a content-bound DetectorPackRunReceipt for configured
 commit runs whose requested population resolves one-to-one in the exact scope.
@@ -186,6 +186,30 @@ changes `propose`, review eligibility, publication, authority, utility, or
 efficacy. Candidate evidence revalidation still inherits global evidence
 revision/receipt scanning, so complete scope-local analysis work remains an
 explicit follow-up rather than a shipped claim.
+
+#30c2b2-admission serializes subject grouped proposals through one private
+per-recurrence-group CAS slot stream. Admission double-reads an exact
+policy/registry/recurrence/frontier snapshot before writing anything for the
+proposed Candidate. Empty groups admit one fresh Candidate; revise and eligible
+reject branches require exact same-group supersession; below-threshold
+rejections and deduplicated/ambiguous frontiers refuse generically. A sole exact
+pre-marker predecessor can migrate only through mirrored supersession.
+
+The durable order is recurrence decision, neutral content lock, review marker,
+snapshot, reservation, slot, binding, group member, then Candidate receipt.
+Retries forward-complete the winning slot; stale absence caches reload and a
+new unvalidated tail is never extended. Slotted snapshot+reservation history is
+bounded to an aggregate 64 MiB, including the prospective pair before the slot.
+CandidateView exposes closed `admissionLineage`; invalid admission blocks review
+before and after its callback, while exact historical admission remains
+reviewable. Admission adds no public writer or root export and grants no
+publication, authority, validation, utility, or efficacy.
+
+This guarantee assumes a trusted host exclusively cuts a group/scope over to a
+configured admission-capable loop. Concurrent old or policy-unconfigured
+writers remain non-subject and can bypass the stream. Candidate evidence checks
+also retain the documented global revision/source-receipt scan debt, so the
+library still does not claim completely scope-local assessment work.
 
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.

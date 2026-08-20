@@ -130,8 +130,10 @@ lineage.
 deduplication/suppression descriptions, exact review frontiers, and
 current/historical assessed receipt views.
 
-**Still deferred:** enforced deduplication, decisive-rejection suppression,
-override admission, and proposal refusal.
+**Implemented next by decision 0018:** enforced deduplication,
+decisive-rejection suppression, override admission, and proposal refusal for
+subject grouped Candidates through a separate stable-snapshot/per-group-slot
+graph. Pack orchestration and receipts remain non-enforcing.
 
 Reference detector contents and synthetic controls remain #30d. Optional
 semantic/model workflows remain #13. Candidate-utility calibration and every

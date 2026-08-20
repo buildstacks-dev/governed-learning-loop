@@ -802,6 +802,97 @@ async function assertExactCandidateRecurrenceOwnership(
   }
 }
 
+export async function validatePreparedCandidateRecurrenceClaim(
+  context: EngineContext,
+  candidate: CandidateV2,
+  claim: Extract<CandidateRecurrenceClaim, { readonly status: "grouped" }>,
+): Promise<Awaited<ReturnType<typeof recurrenceReceiptLineage>>> {
+  if (!candidateClaimMatchesRecord(candidate, claim)) {
+    throw recurrenceInvalid("prepared Candidate recurrence claim is mismatched");
+  }
+  const derivationClaims = await loadCommittedDerivationRecurrenceClaims(
+    context,
+    claim.derivationId,
+    claim.derivationDigest,
+  );
+  const exactClaims = new Map(derivationClaims.map((value) => [value.claimDigest, value]));
+  if (
+    claim.derivationClaimDigests.some(
+      (claimDigest) => exactClaims.get(claimDigest)?.groupKeyDigest !== claim.groupKeyDigest,
+    )
+  ) {
+    throw recurrenceInvalid("prepared Candidate derivation recurrence claims are mismatched");
+  }
+  const witnessEpisodes = [
+    ...new Set(
+      claim.derivationClaimDigests.flatMap((claimDigest) => exactClaims.get(claimDigest)?.episodeIdentityDigests ?? []),
+    ),
+  ].sort((left, right) => (left < right ? -1 : 1));
+  if (witnessEpisodes.some((episodeDigest) => !claim.episodeIdentityDigestsAtProposal.includes(episodeDigest))) {
+    throw recurrenceInvalid("prepared Candidate recurrence baseline omits derivation evidence");
+  }
+  if (claim.supersedes !== null) {
+    const predecessor = await loadCandidate(context, claim.supersedes.candidateId);
+    const predecessorClaim = await loadCandidateRecurrenceClaim(context, claim.supersedes.candidateId);
+    if (
+      predecessor === undefined ||
+      predecessorClaim?.status !== "grouped" ||
+      predecessor.contentDigest !== claim.supersedes.candidateDigest ||
+      predecessorClaim.claimDigest !== claim.supersedes.claimDigest ||
+      predecessorClaim.groupKeyDigest !== claim.groupKeyDigest ||
+      predecessorClaim.scopeDigest !== claim.scopeDigest ||
+      candidate.supersedes !== predecessor.id
+    ) {
+      throw recurrenceInvalid("prepared Candidate recurrence predecessor is mismatched");
+    }
+    await assertExactCandidateRecurrenceOwnership(context, predecessor, predecessorClaim);
+  } else if (candidate.supersedes !== undefined) {
+    throw recurrenceInvalid("prepared Candidate recurrence claim omitted its predecessor");
+  }
+  const witness = derivationClaims.find((value) => value.groupKeyDigest === claim.groupKeyDigest);
+  if (witness === undefined) throw recurrenceInvalid("prepared Candidate recurrence claim has no witness");
+  const execution = await loadDetectorExecutionRecord(context, witness.executionId);
+  if (execution === undefined) throw recurrenceInvalid("prepared Candidate recurrence witness is missing");
+  const current = await recurrenceReceiptLineage(context, execution);
+  if (
+    current.binding?.groupKeyDigest !== claim.groupKeyDigest ||
+    claim.episodeIdentityDigestsAtProposal.some(
+      (episodeDigest) => !current.episodeIdentityDigests.includes(episodeDigest),
+    )
+  ) {
+    throw recurrenceInvalid("prepared Candidate recurrence group is mismatched");
+  }
+  const currentMembers = new Map(current.members.map((member) => [member.executionId, member]));
+  const proposalEpisodeDigests = new Set<string>();
+  for (const frozenMember of claim.proposalMembers) {
+    const currentMember = currentMembers.get(frozenMember.executionId);
+    const memberExecution = await loadDetectorExecutionRecord(context, frozenMember.executionId);
+    const memberBinding = await loadExecutionRecurrenceBinding(context, frozenMember.executionId);
+    if (
+      currentMember === undefined ||
+      recordDigest(toJsonValue(currentMember)) !== recordDigest(toJsonValue(frozenMember)) ||
+      memberExecution === undefined ||
+      memberExecution.executionKeyDigest !== frozenMember.executionKeyDigest ||
+      memberExecution.executionDigest !== frozenMember.executionDigest ||
+      memberBinding === undefined ||
+      memberBinding.bindingDigest !== frozenMember.decisionBindingDigest ||
+      memberBinding.groupKeyDigest !== claim.groupKeyDigest
+    ) {
+      throw recurrenceInvalid("prepared Candidate proposal member lineage is mismatched");
+    }
+    for (const episode of memberBinding.memberEpisodes) proposalEpisodeDigests.add(episode.episodeIdentityDigest);
+  }
+  const proposalEpisodes = [...proposalEpisodeDigests].sort((left, right) => (left < right ? -1 : 1));
+  if (
+    recordDigest(toJsonValue(proposalEpisodes)) !== recordDigest(toJsonValue(claim.episodeIdentityDigestsAtProposal)) ||
+    claim.episodeIdentitySetDigest !== digest(proposalEpisodes) ||
+    claim.distinctEpisodeCount !== proposalEpisodes.length
+  ) {
+    throw recurrenceInvalid("prepared Candidate recurrence baseline is mismatched");
+  }
+  return current;
+}
+
 export async function persistCandidateRecurrenceClaim(
   context: EngineContext,
   claim: CandidateRecurrenceClaim,
@@ -1070,6 +1161,23 @@ function recurrenceInvalid(message: string): LearningLoopError {
 export interface CurrentGroupCandidateClaim {
   readonly candidate: Candidate;
   readonly claim: Extract<CandidateRecurrenceClaim, { readonly status: "grouped" }>;
+}
+
+export async function candidateRecurrenceGroupMemberCount(
+  context: EngineContext,
+  groupKeyDigest: string,
+): Promise<number> {
+  const stored = await loadStoredRecord(context, "detector-recurrence-group-candidate", groupKeyDigest);
+  return stored === undefined ? 0 : parseCandidateGroupMembers(stored.value, ["group-candidate"]).length;
+}
+
+export async function loadCandidateRecurrenceGroupMemberKeys(
+  context: EngineContext,
+  groupKeyDigest: string,
+): Promise<ReadonlySet<string>> {
+  const stored = await loadStoredRecord(context, "detector-recurrence-group-candidate", groupKeyDigest);
+  const members = stored === undefined ? [] : parseCandidateGroupMembers(stored.value, ["group-candidate"]);
+  return new Set(members.map((member) => `${member.value.candidateId}\u0000${member.value.claimDigest}`));
 }
 
 export async function loadCurrentGroupCandidateClaims(

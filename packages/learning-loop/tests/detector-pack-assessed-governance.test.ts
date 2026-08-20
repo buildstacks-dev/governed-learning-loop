@@ -27,6 +27,7 @@ import type { EngineContext } from "../src/engine/context.js";
 import { loadIndexedCandidateReviews } from "../src/engine/candidate-review-index.js";
 import { recurrenceReceiptLineage } from "../src/engine/detector-recurrence.js";
 import { runDetectorPackRunQuery } from "../src/engine/detector-pack-query.js";
+import { runPropose } from "../src/engine/propose.js";
 import { assessRecurrenceGroupGovernance } from "../src/engine/recurrence-governance.js";
 import { persistDetectorExecution } from "../src/engine/semantic-persistence.js";
 import { createInMemoryStore } from "../src/testing/index.js";
@@ -315,6 +316,26 @@ async function proposeCandidate(
   });
 }
 
+async function proposePreAdmissionCandidate(
+  facts: AssessmentFixture,
+  id: string,
+  input: {
+    readonly supersedes?: string;
+    readonly proposedRisk?: "T0" | "T1" | "T2" | "T3";
+    readonly derivationId?: string;
+  } = {},
+) {
+  const { detectorOrchestrationPolicy: _policy, ...legacyContext } = facts.harness.context;
+  return runPropose(legacyContext, {
+    id,
+    scope: facts.harness.scope,
+    derivationId: input.derivationId ?? facts.derivationId,
+    proposedRisk: input.proposedRisk ?? "T1",
+    proposedBy: facts.proposer,
+    ...(input.supersedes === undefined ? {} : { supersedes: input.supersedes }),
+  });
+}
+
 async function reviewCandidate(
   facts: AssessmentFixture,
   candidateId: string,
@@ -501,7 +522,7 @@ describe("assessed recurrence governance frontier", () => {
     });
   });
 
-  it("uses append order for the latest exact stored review and never changes proposal admission", async () => {
+  it("uses append order for the latest exact stored review across pre-admission facts", async () => {
     const facts = await fixture({ label: "assessed-latest-review" });
     const proposed = await proposeCandidate(facts, "assessed-latest-review");
     await reviewCandidate(facts, proposed.candidate.id, "reject", "assessed-review-first");
@@ -514,8 +535,8 @@ describe("assessed recurrence governance frontier", () => {
     });
 
     const concurrent = await Promise.all([
-      proposeCandidate(facts, "assessed-concurrent-candidate-a", { proposedRisk: "T2" }),
-      proposeCandidate(facts, "assessed-concurrent-candidate-b", { proposedRisk: "T3" }),
+      proposePreAdmissionCandidate(facts, "assessed-concurrent-candidate-a", { proposedRisk: "T2" }),
+      proposePreAdmissionCandidate(facts, "assessed-concurrent-candidate-b", { proposedRisk: "T3" }),
     ]);
     expect(concurrent.map((outcome) => outcome.candidate.id).sort()).toEqual([
       "assessed-concurrent-candidate-a",
@@ -528,8 +549,8 @@ describe("assessed recurrence governance frontier", () => {
       rejectionSuppression: { mode: "evidence_multiplier", minimumDistinctEpisodeMultiplier: 2 },
     });
     const suppressedFacts = await fixture({ label: "assessed-strictest-rejection", policy: suppressionPolicy });
-    const first = await proposeCandidate(suppressedFacts, "candidate-a", { proposedRisk: "T1" });
-    const second = await proposeCandidate(suppressedFacts, "candidate-z", { proposedRisk: "T2" });
+    const first = await proposePreAdmissionCandidate(suppressedFacts, "candidate-a", { proposedRisk: "T1" });
+    const second = await proposePreAdmissionCandidate(suppressedFacts, "candidate-z", { proposedRisk: "T2" });
     await reviewCandidate(suppressedFacts, first.candidate.id, "reject", "review-a");
     await reviewCandidate(suppressedFacts, second.candidate.id, "reject", "review-z");
     await expect(
@@ -542,8 +563,8 @@ describe("assessed recurrence governance frontier", () => {
     });
 
     const ambiguousFacts = await fixture({ label: "assessed-ambiguous-frontier" });
-    const left = await proposeCandidate(ambiguousFacts, "ambiguous-a", { proposedRisk: "T1" });
-    const right = await proposeCandidate(ambiguousFacts, "ambiguous-z", { proposedRisk: "T2" });
+    const left = await proposePreAdmissionCandidate(ambiguousFacts, "ambiguous-a", { proposedRisk: "T1" });
+    const right = await proposePreAdmissionCandidate(ambiguousFacts, "ambiguous-z", { proposedRisk: "T2" });
     await reviewCandidate(ambiguousFacts, left.candidate.id, "revise", "ambiguous-review-a");
     await reviewCandidate(ambiguousFacts, right.candidate.id, "revise", "ambiguous-review-z");
     await expect(
@@ -722,7 +743,7 @@ describe("assessed recurrence governance frontier", () => {
       episodeCount: 2,
       initialEpisodeCount: 1,
     });
-    const predecessor = await proposeCandidate(facts, "assessed-frontier-predecessor");
+    const predecessor = await proposePreAdmissionCandidate(facts, "assessed-frontier-predecessor");
     const lens = facts.harness.registry.selectedLensRefs[0];
     if (lens === undefined) throw new Error("successor fixture omitted its selected lens");
     const dry = await facts.harness.learning.runDetector({
@@ -741,7 +762,7 @@ describe("assessed recurrence governance frontier", () => {
     const successorDerivation = supersedingDerivation(draftDerivation, facts.derivation);
     const successorExecution = executionForDerivation(draftExecution, successorDerivation);
     await persistDetectorExecution(facts.harness.context, successorExecution, [successorDerivation], PRIVATE_LOCATOR);
-    const successor = await proposeCandidate(facts, "assessed-frontier-successor", {
+    const successor = await proposePreAdmissionCandidate(facts, "assessed-frontier-successor", {
       derivationId: successorDerivation.id,
       supersedes: predecessor.candidate.id,
       proposedRisk: "T2",
@@ -1017,7 +1038,7 @@ describe("Candidate review marker and receipt-last index", () => {
 
   it("keeps pre-marker Candidate review compatibility without backfilling history", async () => {
     const facts = await fixture({ label: "assessed-pre-marker" });
-    const proposed = await proposeCandidate(facts, "assessed-pre-marker");
+    const proposed = await proposePreAdmissionCandidate(facts, "assessed-pre-marker");
     const hidden = forwardingStore(facts.harness.store, {
       get: (key) =>
         key.kind === "candidate-review" && key.id === proposed.candidate.id

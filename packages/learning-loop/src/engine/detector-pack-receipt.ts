@@ -24,6 +24,11 @@ import { loadEpisodeIdentityState } from "./episode-identity.js";
 import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import { buildRegistrySnapshot, persistRegistrySnapshot } from "./semantic-graph.js";
 import { assessRecurrenceGroupGovernance } from "./recurrence-governance.js";
+import type { CandidateAdmissionEligibilityCache } from "./recurrence-admission.js";
+import {
+  candidateAdmissionEligibilityStatus,
+  createCandidateAdmissionEligibilityCache,
+} from "./recurrence-admission.js";
 
 const PACK_RUN_INDEX_KIND = "detector-pack-run-index";
 const MAX_BUILD_ATTEMPTS = 3;
@@ -152,6 +157,7 @@ async function buildReceiptItem(
     Promise<Extract<DetectorPackRunReceipt["items"][number]["recurrence"], { status: "grouped" }>["governance"]>
   >,
   workBudget: { claimRefs: number },
+  admissionEligibility: CandidateAdmissionEligibilityCache,
 ): Promise<Omit<DetectorPackRunReceipt["items"][number], "itemDigest">> {
   const execution = item.result?.execution;
   const registration = context.semanticDetectorsByRef?.get(detectorRefKey(item.detector));
@@ -217,6 +223,8 @@ async function buildReceiptItem(
           policy,
           workBudget,
           groupLineage: lineage,
+          candidateAdmissionStatus: (candidate) =>
+            candidateAdmissionEligibilityStatus(context, candidate, admissionEligibility),
         });
         governanceCache.set(cacheKey, pending);
       }
@@ -331,8 +339,11 @@ async function buildReceiptOnce(
     Promise<Extract<DetectorPackRunReceipt["items"][number]["recurrence"], { status: "grouped" }>["governance"]>
   >();
   const workBudget = { claimRefs: 0 };
+  const admissionEligibility = createCandidateAdmissionEligibilityCache();
   const itemBases: Array<Omit<DetectorPackRunReceipt["items"][number], "itemDigest">> = [];
-  for (const item of result.items) itemBases.push(await buildReceiptItem(context, item, governanceCache, workBudget));
+  for (const item of result.items) {
+    itemBases.push(await buildReceiptItem(context, item, governanceCache, workBudget, admissionEligibility));
+  }
   const items = itemBases.map((item) => ({ ...item, itemDigest: detectorPackRunItemDigest(item) }));
   const governanceSnapshotDigest = detectorPackRunGovernanceSnapshotDigest(items);
   const base = {

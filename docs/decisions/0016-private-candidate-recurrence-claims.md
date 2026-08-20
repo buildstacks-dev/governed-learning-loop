@@ -203,12 +203,13 @@ type CandidateRecurrenceClaim =
 - Orphan claim records and append entries remain for crash audit and exact
   retry. Only exact terminal execution or Candidate receipts make them count.
 - Decision 0017 implements observational Candidate/review frontier assessment
-  and assessed pack receipt views. Enforced group deduplication, rejection
-  suppression and serialized proposal admission remain later work. #30d owns
-  detector contents, #13 provider workflows, and #26 candidate-utility
-  calibration.
+  and assessed pack receipt views. Decision 0018 separately implements
+  stable-snapshot, per-group serialized proposal admission for subject grouped
+  Candidates. #30d owns detector contents, #13 provider workflows, and #26
+  Candidate-utility calibration.
 
 The original rulings above remain the exact claim-only boundary at the time
 0016 landed. Decision 0017 is additive: it reads those claims into immutable
-receipt descriptions but does not turn them into proposal enforcement or
-authority.
+receipt descriptions but does not turn the claim/receipt into authority.
+Decision 0018 is also additive: its separate admission graph may require a
+valid grouped claim, while the claim itself remains observational.

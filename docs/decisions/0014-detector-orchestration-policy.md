@@ -117,10 +117,12 @@ historical-unbound Candidate views. These claims remain observational.
 assessment and observational available/deduplicated/suppressed receipt states,
 including checked evidence-multiplier thresholds.
 
-**Deferred to the Candidate-admission slice:** enforced deduplication,
+**Implemented later by decision 0018:** enforced deduplication,
 decisive-rejection suppression, evidence-multiplier override admission,
-enforced same-group supersession, and concurrent proposal refusal. That slice
-must not infer claims for historical/manual/unbound Candidates.
+enforced same-group supersession, and concurrent proposal refusal live in a
+separate stable-snapshot/per-group-slot admission graph. It never infers claims
+for historical/manual/unbound Candidates, and the policy record itself remains
+non-enforcing.
 
 Reference detector contents remain #30d. Optional semantic/model workflows
 remain #13. Candidate-utility calibration and every quality or improvement
@@ -137,8 +139,8 @@ policy.
 - Configuring or changing the policy creates a new loop-registry revision;
   historical executions and recurrence groups remain bound to their exact
   prior revisions and are never relabeled.
-- Registered rejectionSuppression bytes remain non-enforcing after decision
-  0017 lands observational assessment; a separate decision must land proposal
-  controls.
+- Registered rejectionSuppression bytes remain non-enforcing in the policy and
+  decision-0017 receipt/view layers. Decision 0018 consumes those exact bytes
+  only inside a separate serialized admission snapshot for subject proposals.
 - No public pack receipt, query, writer, Candidate mutation, provider SDK,
   destination, activation path, or efficacy metric is added.

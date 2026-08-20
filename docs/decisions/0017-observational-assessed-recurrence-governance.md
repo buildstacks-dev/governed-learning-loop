@@ -184,6 +184,15 @@ scopes, enter the frontier, or alter returned exact-scope content. A later
 exact-reference evidence-health/source-receipt index must close this before the
 campaign claims fully scope-local analysis work.
 
+Decision 0018 additively extends active-Candidate completeness: a Candidate
+that is subject to serialized admission must retain a recursively exact
+admission graph. Invalid subject admission produces
+`candidate_governance_incomplete`, and an embedded assessed binding whose
+subject admission becomes invalid is itself invalid. Non-subject historical,
+manual, unbound, and policy-unconfigured Candidates retain this decision's
+compatibility behavior. Receipt/view classification remains descriptive; only
+the separate decision-0018 admission snapshot enforces `propose`.
+
 ## Migration and public surface
 
 - New Candidate and review private marker/ref records are additive. Existing
@@ -201,7 +210,10 @@ campaign claims fully scope-local analysis work.
   optional durable receipt/view.
 - No root symbol is added. DetectorPackRunReceipt and DetectorPackRunView evolve
   under existing exports; the public snapshot remains 154.
-- Proposal enforcement, automatic deduplication/suppression, review-based
-  admission, publication, authorization, validation, utility, and efficacy
-  remain later decisions. #30d owns detector packs, #13 semantic-provider
-  workflows, and #26 candidate-utility calibration.
+- Decision 0018 separately implements proposal enforcement, automatic
+  deduplication/suppression and review-based admission by freezing a fresh
+  classifier result into a private snapshot/reservation/per-group-slot graph.
+  This decision's receipt/view bytes remain descriptive and never become an
+  entitlement. Publication, authorization, validation, utility, and efficacy
+  remain outside admission. #30d owns detector packs, #13 semantic-provider
+  workflows, and #26 Candidate-utility calibration.

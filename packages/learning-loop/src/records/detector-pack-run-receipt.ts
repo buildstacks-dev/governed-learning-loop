@@ -77,7 +77,7 @@ type CandidateBinding = {
   } | null;
 };
 
-type GroupGovernance =
+export type DetectorPackRunGroupGovernance =
   | {
       readonly status: "not_assessed";
       readonly reason:
@@ -109,6 +109,7 @@ type GroupGovernance =
     };
 
 type AssessedGovernance = Extract<GroupGovernance, { status: "assessed" }>;
+type GroupGovernance = DetectorPackRunGroupGovernance;
 
 type ReceiptRecurrence =
   | {
@@ -379,6 +380,10 @@ const parseGovernanceAt: Parse<GroupGovernance> = (input, path) => {
     reasonCodes,
   };
 };
+
+export function parseDetectorPackRunGroupGovernance(input: unknown): DetectorPackRunGroupGovernance {
+  return parseGovernanceAt(toJsonValue(input), []);
+}
 
 function candidateBindingRef(binding: CandidateBinding): NonNullable<AssessedGovernance["requiredSupersedes"]> {
   return {

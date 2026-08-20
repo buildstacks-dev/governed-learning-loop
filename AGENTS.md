@@ -127,6 +127,19 @@ between code and contract, open an issue — never silently drift either one.
   inefficiency, preference, utility, or efficacy. Missing/unreadable/unsupported
   coverage remains native source health, not a detector. Calibration and every
   default-quality claim remain #26.
+- **Semantic provider-turn facts are private and inert.** Decision 0021 adds
+  unknown-first workflow definitions, exact request reservations, outbound-only
+  authorization, one create-only dispatch claim, closed result metadata, and a
+  scope-private receipt-last terminal graph. It stores keyed application-content
+  byte digests and lengths, never preview/request/raw-response/provider-error
+  bytes. Authorization is not a disclosure receipt, `created` is not an egress
+  capability, and dispatch without a result is permanently `outcome_unknown`
+  with no automatic retry. #13a has no provider callback, SDK, public export,
+  completed output persistence, Candidate, Review, authority, utility, or
+  efficacy claim. #13b must add a nonforgeable prepared-plan/provider/
+  disclosure-authority capability and recheck the exact current window and
+  expiry at handoff; #13c owns advisory review, while decisive calibrated review
+  remains #26.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports

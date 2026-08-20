@@ -248,6 +248,34 @@ claim remain #26.
 Evidence-health findings stay separate from behavioral derivations, and only
 the verified `propose` path may turn a derivation into an inert Candidate.
 
+#13a adds only the private provider-turn substrate required before an optional
+model workflow can be safe to connect. An immutable workflow definition binds
+provider/model, prompt, renderer, output schema, a deny-all tool policy, exact
+budgets, disclosure policy and producer attribution. A request reservation
+binds one exact scope, semantic target, minimized application-content byte
+length and tenant-keyed digest, and the exact source/content policies. Outbound
+turns additionally require a content-bound authorization before one create-only
+dispatch claim.
+
+The staged durable order is reservation, outbound authorization, dispatch,
+closed noncompleted result, scope-private index, then the scope-private turn
+receipt last. Every acknowledged write is reloaded. A dispatch without a result
+is `outcome_unknown`; an existing claim is never permission to redispatch.
+Authorization is not a disclosure receipt, and `created` is not provider
+authority. No preview, request bytes, raw response, provider error, transcript
+text, Candidate, Review, provider callback, SDK or effect is stored or invoked.
+Completed semantic result/terminal persistence is deliberately refused until
+#13b supplies typed minimized generation output and exact sidecars. Advisory
+review dispatch remains #13c, and no model review becomes decisive before #26
+ratifies calibrated reviewer capabilities.
+
+The exact-byte claim is the content-bearing application payload handed to a
+future registered provider port, not credentials, transport headers, TLS
+framing or unverifiable SDK wire bytes. #13a exposes no `/workflows` entrypoint
+and adds no public symbol. Its validation evidence is L1 contract/goldens plus
+L2 hermetic crash, concurrency, privacy and scope controls; L3 live-provider,
+L4 semantic/model, L5 operations/SLO and L6 longitudinal evidence are empty.
+
 ## The demo: transcript insights
 
 `examples/transcript-insights` is a small local CLI that ingests your own

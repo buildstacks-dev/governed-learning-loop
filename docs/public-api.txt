@@ -51,6 +51,10 @@ root:DetectorExecutionStatus
 root:detectorExecutionKeyDigest
 root:detectorExecutionDigest
 root:parseDetectorExecutionRecord
+root:DetectorExecutionQuery
+root:DetectorExecutionView
+root:InsightDerivationQuery
+root:InsightDerivationView
 root:EvidenceRef
 root:EvidenceRefV1
 root:ObservationEvidenceRef

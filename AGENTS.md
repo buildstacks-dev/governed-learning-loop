@@ -76,6 +76,9 @@ between code and contract, open an issue — never silently drift either one.
   record family, packs grant no authority, and only verified `propose` may
   create a Candidate. #30a records do not imply the deferred detector engine,
   reference packs, semantic-provider workflow, or measured candidate utility.
+  Lens evidence requirements may name observation, measurement, or exact
+  episode-population evidence; episode trust/completeness comes from reloaded
+  digested identity records.
 - **Semantic capability is host-granted and registry-bound.** A
   `SourceSemanticProfile` belongs to one exact configured source registration;
   it is never an adapter claim. Absence grants zero detector capabilities while
@@ -90,9 +93,18 @@ between code and contract, open an issue — never silently drift either one.
   exact sorted capability union. Its key excludes the result and its full
   digest includes it; a different result for the same key is a conflict. Only
   `applied`, `not_applicable`, and `incomplete` exist—never `pass`. Public
-  parsing does not authorize public execution minting; callable pairing,
-  persistence, queries, and Candidate derivation resolution remain kernel
-  work.
+  parsing does not authorize public execution minting. Persistence is a private
+  receipt-last graph whose append-only links precede derivations and whose
+  execution receipt is last; callable pairing and Candidate derivation
+  resolution remain later kernel work.
+- **Semantic audit reads require exact scope.** Public derivation/execution
+  queries and gets never enumerate without a caller-supplied exact scope.
+  Their private pagination/get indexes live in a namespace derived solely from
+  that scope digest; foreign-scope targets and cursors are never consulted.
+  Commit binding, current-registry binding, and current evidence health remain
+  separate. Orphaned, invalid, and historical facts are audit-visible but
+  inert. Composite pages retry boundedly on graph churn and are never treated
+  as frozen calibration or experiment populations.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

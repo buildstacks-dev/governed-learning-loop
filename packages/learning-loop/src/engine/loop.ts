@@ -19,7 +19,7 @@ import type { IdentityPort } from "../records/principal.js";
 import type { MeasurementRecord } from "../records/episode.js";
 import type { Observation } from "../records/observation.js";
 import type { CandidateReview } from "../records/review.js";
-import type { ScopePolicy } from "../records/scope.js";
+import type { Scope, ScopePolicy } from "../records/scope.js";
 import type { SemanticRegistryConfig } from "../records/semantic-registry.js";
 import { parseSemanticRegistryConfig } from "../records/semantic-registry.js";
 import { detectorRefKey, lensRefKey, packRefKey } from "../records/semantic-shared.js";
@@ -56,6 +56,18 @@ import type { LearningReport, LearningReportQuery } from "./report.js";
 import { runReport } from "./report.js";
 import type { CandidateReviewInput } from "./review.js";
 import { runReviewCandidate } from "./review.js";
+import type {
+  DetectorExecutionQuery,
+  DetectorExecutionView,
+  InsightDerivationQuery,
+  InsightDerivationView,
+} from "./semantic-query.js";
+import {
+  runDetectorExecutionQuery,
+  runGetDetectorExecution,
+  runGetInsightDerivation,
+  runInsightDerivationQuery,
+} from "./semantic-query.js";
 import { adapterFor } from "./source-registration.js";
 
 export interface LearningLoopConfig {
@@ -79,7 +91,17 @@ export interface LearningLoop {
   queryEpisodes(input: EpisodeQuery): AsyncIterable<QueryPage<EpisodeView>>;
   querySourcePageReceipts(input: SourcePageReceiptQuery): AsyncIterable<QueryPage<SourcePageReceipt>>;
   queryEvidenceHealthFindings(input: EvidenceHealthQuery): AsyncIterable<QueryPage<EvidenceHealthFinding>>;
+  queryInsightDerivations(input: InsightDerivationQuery): AsyncIterable<QueryPage<InsightDerivationView>>;
+  queryDetectorExecutions(input: DetectorExecutionQuery): AsyncIterable<QueryPage<DetectorExecutionView>>;
   getImportReceipt(input: { readonly importReceiptId: string }): Promise<ImportReceipt | undefined>;
+  getInsightDerivation(input: {
+    readonly derivationId: string;
+    readonly scope: Scope;
+  }): Promise<InsightDerivationView | undefined>;
+  getDetectorExecution(input: {
+    readonly executionId: string;
+    readonly scope: Scope;
+  }): Promise<DetectorExecutionView | undefined>;
   propose(input: CandidateInput): Promise<ProposeOutcome>;
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
@@ -309,7 +331,11 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     queryEpisodes: (input) => runEpisodeQuery(context, input),
     querySourcePageReceipts: (input) => runSourcePageReceiptQuery(context, input),
     queryEvidenceHealthFindings: (input) => runEvidenceHealthQuery(context, input),
+    queryInsightDerivations: (input) => runInsightDerivationQuery(context, input),
+    queryDetectorExecutions: (input) => runDetectorExecutionQuery(context, input),
     getImportReceipt: (input) => runGetImportReceipt(context, input),
+    getInsightDerivation: (input) => runGetInsightDerivation(context, input),
+    getDetectorExecution: (input) => runGetDetectorExecution(context, input),
     propose: (input) => runPropose(context, input),
     reviewCandidate: (input) => runReviewCandidate(context, input),
     getCandidateView: (input) => runGetCandidateView(context, input),

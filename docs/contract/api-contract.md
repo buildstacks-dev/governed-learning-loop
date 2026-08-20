@@ -604,7 +604,7 @@ export interface LearningLensRegistration {
 
   readonly learningClasses: readonly LearningClass[];
   readonly evidenceRequirements: readonly {
-    readonly kind: EvidenceRef["kind"];
+    readonly kind: "observation" | "measurement" | "episode";
     readonly minimumTrust: TrustClass;
     readonly minimumCompleteness: Provenance["completeness"];
   }[];
@@ -884,6 +884,90 @@ export declare function detectorExecutionDigest(
 export declare function parseDetectorExecutionRecord(
   input: unknown,
 ): DetectorExecutionRecord;
+
+export interface InsightDerivationQuery {
+  readonly scope: Scope;
+  readonly derivationIds?: readonly string[];
+  readonly detectorIds?: readonly string[];
+  readonly detectorRegistrationDigests?: readonly string[];
+  readonly packManifestDigests?: readonly string[];
+  readonly lensRegistrationDigests?: readonly string[];
+  readonly learningClasses?: readonly LearningClass[];
+  readonly producerKinds?: readonly (
+    | "deterministic"
+    | "human"
+    | "semantic_judgment"
+  )[];
+  readonly registryStatuses?: readonly (
+    | "configured"
+    | "historical_unconfigured"
+  )[];
+  readonly commitStatuses?: readonly (
+    | "committed"
+    | "orphaned"
+    | "invalid"
+  )[];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface DetectorExecutionQuery {
+  readonly scope: Scope;
+  readonly executionIds?: readonly string[];
+  readonly detectorIds?: readonly string[];
+  readonly detectorRegistrationDigests?: readonly string[];
+  readonly packManifestDigests?: readonly string[];
+  readonly lensRegistrationDigests?: readonly string[];
+  readonly statuses?: readonly DetectorExecutionStatus[];
+  readonly conditionDetected?: boolean;
+  readonly registryStatuses?: readonly (
+    | "configured"
+    | "historical_unconfigured"
+  )[];
+  readonly commitStatuses?: readonly ("committed" | "invalid")[];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+type SemanticRegistryBinding =
+  | { readonly status: "configured" }
+  | {
+      readonly status: "historical_unconfigured";
+      readonly diagnostics: readonly Diagnostic[];
+    };
+
+export interface InsightDerivationView {
+  readonly derivation: InsightDerivation;
+  readonly registryBinding: SemanticRegistryBinding;
+  readonly commitBinding:
+    | {
+        readonly status: "committed";
+        readonly executionRefs: readonly {
+          readonly id: string;
+          readonly executionKeyDigest: string;
+          readonly executionDigest: string;
+          readonly loopRegistryRevision: string;
+          readonly semanticRegistryDigest: string;
+        }[];
+      }
+    | {
+        readonly status: "orphaned" | "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+      };
+  readonly evidenceHealth: EvidenceHealthView;
+}
+
+export interface DetectorExecutionView {
+  readonly execution: DetectorExecutionRecord;
+  readonly registryBinding: SemanticRegistryBinding;
+  readonly commitBinding:
+    | { readonly status: "committed" }
+    | {
+        readonly status: "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+      };
+  readonly evidenceHealth: EvidenceHealthView;
+}
 ```
 
 All ids, versions, capability names, observation kinds, episode classes,
@@ -913,6 +997,13 @@ selectors are nonempty. A required lens allowlist is nonempty, while
 `any_registered` carries an empty list. Threshold content/digest and
 calibration-population content/digest are paired. Every pack contains at least
 one detector; detector and lens refs are sorted and unique by id/version/digest.
+
+Learning-lens evidence requirements use the closed kinds `observation`,
+`measurement`, and `episode`, with at most one requirement per kind. An episode
+requirement is satisfied only by a nonempty exact population whose reloaded,
+digested EpisodeIdentityRecord values meet the declared minimum trust and
+completeness. This is an additive parser widening: existing observation and
+measurement lens bytes and registration digests do not change.
 
 A `SourceSemanticProfile` is an immutable host grant for one exact source
 registration revision, not an adapter assertion. Its capabilities and
@@ -974,8 +1065,9 @@ revision lineage cannot cross a project or isolation boundary.
 `evidenceHealthFindings` embeds complete, unknown-first-parsed
 `EvidenceHealthFinding` records, so id, digest, effect, source, page,
 completeness, and affected-record facts stay cryptographically coherent. The
-#30b2 resolver still must prove each finding's source/page relationship to the
-derivation's exact evidence and scope before permitting downstream use.
+receipt-last semantic validator proves each finding's exact source/page
+relationship to the execution window before persistence and rechecks it for
+public views.
 
 Human and semantic-judgment producers require both `principal` and
 `attestation`. Human producers require `principal.kind === "human"`;
@@ -1061,17 +1153,55 @@ and itself. Therefore the same invocation/window with a different result has
 the same id and a different execution digest. Future create-only persistence
 must reject that collision rather than retain two answers for one invocation.
 
-#30b1 deliberately exposes only the immutable records, parsers, digests,
-registry construction, and profiled-ingest guard. It does not expose a façade
-method that accepts or persists caller-supplied executions. Exact callable
-implementation pairing, kernel-controlled persistence, bounded derivation and
-execution views/queries, and Candidate derivation resolution remain
-#30b2/#30c; arbitrary public execution minting is forbidden. Detector
-eligibility, capability checks, exact population folds, pack selection,
-recurrence, deduplication, suppression, caps, dry-run output, and
-no-provider-on-empty behavior remain #30c. Core/reference/host pack contents
-and reference consumers are #30d. Optional semantic-provider generation,
-disclosure receipts, and independently calibrated qualitative review are #13.
+#30b2a adds engine-private receipt-last persistence, never a public execution
+write. The private graph stores a full SemanticRegistryConfig snapshot under
+the exact loop-registry revision and append-only derivation/execution links
+that bind derivation id/digest/scope, execution id/key/full digest, and exact
+registry provenance. The link stream entry id is
+`execution:${executionId}:${executionDigest}`. After stable validation the
+kernel writes the registry snapshot, result health findings, provenance links,
+derivations plus their exact-scope indexes, the execution scope index, and
+finally the DetectorExecutionRecord receipt, then reloads the graph. Same bytes
+retry idempotently; a same-key/different-result receipt conflicts. Losing and
+crash-interrupted attempts remain auditable rather than being deleted.
+
+The public views keep three dimensions separate. `commitBinding` reports
+committed, orphaned, or invalid derivation lineage and committed or invalid
+execution lineage. `registryBinding` is configured only when an exact committed
+execution uses the current selected registry; otherwise it is
+`historical_unconfigured` and read-only. EvidenceHealthView is recomputed from
+current durable evidence and is never upgraded by historical registry
+integrity. A malformed stored record is corruption, not a typed invalid view.
+
+Commit-time derivation supersession resolves the exact predecessor id, digest,
+scope, and reciprocal committed execution; an asserted but missing predecessor
+is refused. Historical qualified measurement health reloads every ordered
+supporting observation, source-page receipt, episode identity, and current
+outcome membership rather than trusting the embedded support list alone.
+
+Every semantic query and direct get requires an exact Scope. Wrong-scope gets
+return undefined without revealing whether the id exists. A private namespace
+named `learning-semantic-scope-${scopeDigest}` holds fixed
+`insight-derivation-index` and `detector-execution-index` kinds, so pagination
+and direct gets resolve only same-scope target ids and digests. Filters are
+bounded and unknown-first; `conditionDetected` filters
+only applied results. Opaque cursors bind query kind, normalized filters
+including scope, current loop registry, scope-local store cursor, and
+cursor-scope digest. The kernel uses an internal stable composite revision
+tuple covering semantic graph records,
+evidence, episodes and identity/outcome lineage, source receipts and health,
+derivative ownership, and both exact-scope index kinds. A page retries three
+times and then fails with `query.snapshot_changed`. The public semantic page
+`snapshotRevision` instead digests only the exact scope-index page revision and
+canonical returned same-scope views, so an empty page exposes no foreign-scope
+activity. Pages remain append-visible rather than frozen populations.
+
+Candidate derivation resolution remains #30b2b and must require committed,
+configured, evidence-health-ready lineage. Callable detector pairing,
+eligibility, population construction, pack selection, recurrence,
+deduplication, suppression, caps, dry-run output, and no-provider-on-empty
+behavior remain #30c. Core/reference/host pack contents and reference consumers
+are #30d. Optional semantic-provider generation and disclosure are #13.
 Default-quality and candidate-utility claims remain #26 work.
 
 ### Candidate
@@ -2340,7 +2470,17 @@ export interface LearningLoop {
   queryEpisodes(input: EpisodeQuery): AsyncIterable<QueryPage<EpisodeView>>;
   querySourcePageReceipts(input: SourcePageReceiptQuery): AsyncIterable<QueryPage<SourcePageReceipt>>;
   queryEvidenceHealthFindings(input: EvidenceHealthQuery): AsyncIterable<QueryPage<EvidenceHealthFinding>>;
+  queryInsightDerivations(input: InsightDerivationQuery): AsyncIterable<QueryPage<InsightDerivationView>>;
+  queryDetectorExecutions(input: DetectorExecutionQuery): AsyncIterable<QueryPage<DetectorExecutionView>>;
   getImportReceipt(input: { readonly importReceiptId: string }): Promise<ImportReceipt | undefined>;
+  getInsightDerivation(input: {
+    readonly derivationId: string;
+    readonly scope: Scope;
+  }): Promise<InsightDerivationView | undefined>;
+  getDetectorExecution(input: {
+    readonly executionId: string;
+    readonly scope: Scope;
+  }): Promise<DetectorExecutionView | undefined>;
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
 
   preparePublication(input: {
@@ -2397,11 +2537,11 @@ governance is blocked, and the reviewer port is not invoked.
 
 `RegisteredSource<I>` ties each input to its preconfigured adapter, trust ceiling and content policy. `recordOutcomes` accepts only the distinct `RegisteredOutcomeSource<I>` capability. The strict-consumer test must prove the two cannot be substituted or widened, never paper over the distinction with a cast.
 
-The five query methods are read-only, domain-specific views over engine-owned records. `limit` is required and must be an integer from 1 through 500; it bounds each page, not the whole iterable. Items retain deterministic insertion order. Identifier arrays match exact identifiers, values within one array are alternatives, and different populated filters combine by intersection. Unknown query fields are rejected so a misspelled isolation filter cannot broaden a read. Each filter array is capped at 1,000 values, each string value at 4,096 characters (wide enough for framed durable ids), and an encoded cursor at 16,384 characters. `sourceIds`, `trust`, and `completeness` select observation/measurement provenance; `sourceIds` also selects resolved episode identity, whose view exposes its trust ceiling and completeness. `parentEpisodeIds` and `episodeClasses` select exact adapter-declared lineage/applicability values. Parent traversal should pair `parentEpisodeIds` with `sourceIds`; callers can stream repeated parent queries to traverse descendants without a provider-specific graph API. `scope` is validated by the configured `ScopePolicy` and matches the stored episode scope exactly; it does not invent ancestor inheritance. `statuses` excludes episodes with no outcome. Receipt and evidence-health queries use only their closed state/code/effect vocabularies and exact persisted references; they never search diagnostic messages or raw details.
+The typed query methods are read-only, domain-specific views over engine-owned records. `limit` is required and must be an integer from 1 through 500; it bounds each page, not the whole iterable. Items retain deterministic insertion order. Identifier arrays match exact identifiers, values within one array are alternatives, and different populated filters combine by intersection. Unknown query fields are rejected so a misspelled isolation filter cannot broaden a read. Each filter array is capped at 1,000 values, each string value at 4,096 characters (wide enough for framed durable ids), and an encoded cursor at 16,384 characters. `sourceIds`, `trust`, and `completeness` select observation/measurement provenance; `sourceIds` also selects resolved episode identity, whose view exposes its trust ceiling and completeness. `parentEpisodeIds` and `episodeClasses` select exact adapter-declared lineage/applicability values. Parent traversal should pair `parentEpisodeIds` with `sourceIds`; callers can stream repeated parent queries to traverse descendants without a provider-specific graph API. `scope` is validated by the configured `ScopePolicy` and matches the stored episode scope exactly; it does not invent ancestor inheritance. `statuses` excludes episodes with no outcome. Receipt and evidence-health queries use only their closed state/code/effect vocabularies and exact persisted references; they never search diagnostic messages or raw details.
 
 `since` and `until` are inclusive canonical RFC 3339 UTC timestamps with milliseconds. They apply to `Observation.occurredAt`, `MeasurementRecord.measuredAt`, and `EpisodeRecord.openedAt`, respectively; a record without the relevant optional timestamp does not satisfy a time-bounded observation or measurement query. `recordIds` addresses durable `EpisodeRecord.id` values, while `episodeIds` addresses the provider-neutral episode identity shared by projections.
 
-Query cursors are opaque and bind the domain kind, normalized filters, immutable registry revision, and a query-cursor store scope. A cursor used with another query, registry, or store scope is invalid. `LearningLoopConfig.queryCursorScope` lets a host provide a stable, non-secret tenant/store identity of at most 1,000 characters when cursors must resume across loop instances; it must not contain a secret because only its digest travels in the cursor. If omitted, the engine creates a process-local scope and cursors are valid only for that loop instance. Page `limit` is excluded from the binding so a resumed reader may change page size. Each page's `snapshotRevision` is the store revision observed for that page. Episode pages recheck that revision after loading identity claims and fail with `query.snapshot_changed` if the composite view crossed a concurrent write. Appends may become visible on later pages, so the iterable is not a frozen detector, calibration, or experiment population; such workflows must persist and digest their exact eligible record set.
+Query cursors are opaque and bind the domain kind, normalized filters, immutable registry revision, and a query-cursor store scope. A cursor used with another query, registry, or store scope is invalid. `LearningLoopConfig.queryCursorScope` lets a host provide a stable, non-secret tenant/store identity of at most 1,000 characters when cursors must resume across loop instances; it must not contain a secret because only its digest travels in the cursor. If omitted, the engine creates a process-local scope and cursors are valid only for that loop instance. Page `limit` is excluded from the binding so a resumed reader may change page size. Ordinary record pages expose the store revision observed for that page; semantic pages expose the scope-local derived revision specified above. Episode pages recheck their store revision after loading identity claims and fail with `query.snapshot_changed` if the composite view crossed a concurrent write. Appends may become visible on later pages, so the iterable is not a frozen detector, calibration, or experiment population; such workflows must persist and digest their exact eligible record set.
 
 `EpisodeView.identity` comes from an engine-private, append-only sidecar claim stream created during ingestion. Each claim preserves source id, source record id, projected episode id, optional parent and episode class, registry revision, trust ceiling, and episode completeness without changing historical `EpisodeRecord` bytes. One distinct claim resolves; two claims atomically fold to conflict. Re-ingesting an existing episode idempotently backfills a missing claim. Conflicting or unavailable lineage produces `status: "unresolved"` with typed diagnostics and never a fabricated identity.
 
@@ -2903,6 +3043,18 @@ The core suite should prove at least:
 - detector execution results accept only `applied`, `not_applicable`, and
   `incomplete`; enforce output-kind/lens/output-family separation; and never
   turn missing capability or a negative condition into `pass`;
+- episode lens requirements reject empty populations and populations whose
+  exact reloaded identity trust/completeness falls below the registered floor;
+- receipt-last semantic persistence survives a crash or lost acknowledgement
+  at every step, retries exact bytes idempotently, retains competing-result
+  links, and never exposes a public execution-mint method;
+- semantic views distinguish commit, current-registry, and evidence-health
+  status; expose orphaned/invalid derivations for same-scope audit; and never
+  make historical or incomplete records proposal-eligible;
+- semantic queries require exact scope, reject cross-scope direct gets, bind
+  normalized scope/filters/kind/registry/store scope into opaque cursors, page
+  only a scope-derived private index namespace, never touch a foreign target
+  for direct gets, and retry or fail closed on composite snapshot churn;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

@@ -37,7 +37,11 @@ export type RecordKind =
   | "derivative-owner"
   | "candidate"
   | "review"
-  | "candidate-by-digest";
+  | "candidate-by-digest"
+  | "semantic-registry-snapshot"
+  | "insight-derivation"
+  | "derivation-execution"
+  | "detector-execution";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -152,7 +156,12 @@ const parseStreamEntryIdAt: Parse<string> = (input, path) => {
 };
 
 function expectedStoredDigest(kind: RecordKind, value: unknown): string {
-  if (kind === "episode-identity" || kind === "episode-outcome" || kind === "source-revision") {
+  if (
+    kind === "episode-identity" ||
+    kind === "episode-outcome" ||
+    kind === "source-revision" ||
+    kind === "derivation-execution"
+  ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
     return sha256HexOfCanonicalJson(entryIds);
   }

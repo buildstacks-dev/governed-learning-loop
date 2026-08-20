@@ -135,10 +135,12 @@ decisive-rejection suppression, override admission, and proposal refusal for
 subject grouped Candidates through a separate stable-snapshot/per-group-slot
 graph. Pack orchestration and receipts remain non-enforcing.
 
-Reference detector contents and synthetic controls remain #30d. Optional
-semantic/model workflows remain #13. Candidate-utility calibration and every
-default-quality claim remain #26. Scheduling, provider routing, budgets,
-publication, and active-context effects remain host or later lifecycle work.
+Decision 0019 implements #30d's opt-in host-bound core/reference pack contents
+and hermetic synthetic controls through this exact orchestration seam. Optional
+semantic/model workflows remain #13. Detector and Candidate-utility calibration
+and every default-quality claim remain #26. Scheduling, provider routing,
+budgets, publication, and active-context effects remain host or later lifecycle
+work.
 
 ## Migration consequences
 

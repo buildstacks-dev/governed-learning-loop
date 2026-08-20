@@ -159,10 +159,11 @@ ids or asserted effects.
   derivation resolution, eligibility/capability checks, population folds, pack
   selection, recurrence, suppression, caps, dry-run output, and
   no-provider-on-empty execution.
-- **Deferred to #30d:** core structural and opt-in reference pack contents and
-  synthetic host consumers. **#13** owns optional semantic-provider workflows;
-  **#26** owns held-out candidate-utility calibration. None is implied by this
-  record slice.
+- **Implemented by decision 0019 for #30d:** opt-in host-bound core/reference
+  pack contents and synthetic consumers. Their source requirements remain inert
+  and do not change this decision's host-grant boundary. **#13** owns optional
+  semantic-provider workflows; **#26** owns held-out detector and
+  candidate-utility calibration.
 
 ## 2026-08-20 implementation amendment
 

@@ -165,9 +165,11 @@ remain duplicate-free. Scope entries recompute `scopeDigest`.
 - **Deferred to #30c:** eligibility/capability checks, exact population folds,
   pack selection, recurrence, clustering, deduplication, suppression, caps,
   dry-run results, and no-provider-on-empty execution.
-- **Deferred to #30d:** core structural and opt-in reference operational pack
-  contents, normalized vocabulary projections, personal two-project isolation,
-  and Support/Documentation examples.
+- **Implemented by decision 0019 for #30d:** an opt-in host-bound core and
+  reference-operational bundle, normalized structural vocabulary requirements,
+  hermetic controls, personal two-project isolation, and exact
+  Support/Documentation lens examples. Source requirements remain inert rather
+  than capability grants, and calibration remains deferred to #26.
 - **Deferred to #13:** provider-neutral semantic generation, exact outbound
   previews and disclosure receipts, and independent calibrated qualitative
   review.

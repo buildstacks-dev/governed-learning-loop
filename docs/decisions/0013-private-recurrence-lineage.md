@@ -188,10 +188,11 @@ same-group supersession and rejection-override rules for subject proposals.
 The recurrence, policy, receipt, and claim records still do not independently
 refuse or authorize a Candidate.
 
-Reference detector contents and fixtures remain #30d. Optional semantic/model
-workflows remain #13. Candidate-utility calibration and every quality or
-improvement claim remain #26. Scheduling, provider routing, cost/time budgets,
-publication, authorization, exposure, and activation stay outside this slice.
+Decision 0019 implements #30d's reference detector contents and fixtures with
+recurrence disabled. Optional semantic/model workflows remain #13.
+Candidate-utility calibration and every quality or improvement claim remain
+#26. Scheduling, provider routing, cost/time budgets, publication,
+authorization, exposure, and activation stay outside this slice.
 
 ## Migration consequences
 

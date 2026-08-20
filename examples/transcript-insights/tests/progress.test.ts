@@ -53,6 +53,8 @@ import {
   createStructuredContentPolicy,
   createTestIdentityPort,
 } from "@cormidia/learning-loop/testing";
+import type { ReferenceDetectorBundle } from "@cormidia/learning-loop/reference-detectors";
+import { createReferenceDetectorBundle } from "@cormidia/learning-loop/reference-detectors";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -137,6 +139,9 @@ test("report announces its resolved state and remains read-only when state is ab
 });
 
 test("strict consumer can construct and parse host-neutral semantic records from the public root", async () => {
+  const acceptsReferenceDetectorBundle = (bundle: ReferenceDetectorBundle): string => bundle.hostBindingDigest;
+  expect(typeof createReferenceDetectorBundle).toBe("function");
+  expect(typeof acceptsReferenceDetectorBundle).toBe("function");
   const configuration = { detector: "strict-consumer-evidence-coverage", version: 1 };
   const falsePositivePolicy = { policy: "no-behavioral-denominator" };
   const validationCriterion = { criterion: "all selected pages available" };

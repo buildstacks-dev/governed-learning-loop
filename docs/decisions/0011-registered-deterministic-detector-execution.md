@@ -137,9 +137,10 @@ groups, clustering, deduplication, decisive-rejection suppression,
 host-configured digested lower caps, and durable pack-run audit receipts.
 Automatic population discovery and scheduling/routing remain outside c2a.
 
-Reference detector contents remain #30d. Semantic/model-mediated generation
-and calibrated qualitative review remain #13. Candidate-utility measurement
-and any default-quality claim remain #26.
+Decision 0019 implements #30d's opt-in host-bound reference detector contents
+and hermetic controls through this exact capability seam. Semantic/model-
+mediated generation and calibrated qualitative review remain #13. Detector and
+Candidate-utility calibration and any default-quality claim remain #26.
 
 ## Migration consequences
 

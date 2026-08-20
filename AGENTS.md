@@ -83,8 +83,9 @@ between code and contract, open an issue — never silently drift either one.
   keeps direct observation, uncertain interpretation, impact hypothesis,
   intervention, and validation separate. Evidence health remains a separate
   record family, packs grant no authority, and only verified `propose` may
-  create a Candidate. #30a records do not imply the deferred detector engine,
-  reference packs, semantic-provider workflow, or measured candidate utility.
+  create a Candidate. Registered records do not imply an installed detector
+  engine, selected reference bundle, semantic-provider workflow, or measured
+  candidate utility.
   Lens evidence requirements may name observation, measurement, or exact
   episode-population evidence; episode trust/completeness comes from reloaded
   digested identity records.
@@ -115,6 +116,17 @@ between code and contract, open an issue — never silently drift either one.
   exact committed receipt is terminal for either mode and skips evaluation.
   Empty or unusable windows never invoke the callback, and hard ceilings fail
   without truncation.
+- **Reference detectors are opt-in structural examples.** The
+  `/reference-detectors` factory accepts an exact host namespace, scope-policy
+  digest, and sorted purpose lenses, then returns host-bound experimental core
+  and operational registrations, manifests, synchronous implementations, and
+  inert source requirements. It never creates a source profile, registry,
+  selection, loop, recurrence locator, Candidate, Review, provider call, or
+  effect. Every positive result emits at most one fixed structural derivation
+  with null intervention/validation. Counts do not establish harm,
+  inefficiency, preference, utility, or efficacy. Missing/unreadable/unsupported
+  coverage remains native source health, not a detector. Calibration and every
+  default-quality claim remain #26.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports
@@ -214,8 +226,8 @@ between code and contract, open an issue — never silently drift either one.
   separate. Orphaned, invalid, and historical facts are audit-visible but
   inert. Composite pages retry boundedly on graph churn and are never treated
   as frozen calibration or experiment populations.
-- **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
-  with no supported deep imports.
+- **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`,
+  `/reference-detectors`) with no supported deep imports.
 
 ## Non-negotiable kernel invariants
 

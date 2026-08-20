@@ -1,6 +1,6 @@
 // The in-memory store must pass the public LearningStore conformance suite —
 // the suite, not this file, is the contract.
-import { createInMemoryStore } from "../src/testing/in-memory-store.js";
-import { runLearningStoreConformance } from "../src/testing/store-conformance.js";
+import { createInMemoryStore, runLearningStoreConformance } from "@cormidia/learning-loop/testing";
+import { describe, expect, it } from "vitest";
 
-runLearningStoreConformance(() => createInMemoryStore());
+runLearningStoreConformance(() => createInMemoryStore(), { describe, expect, it });

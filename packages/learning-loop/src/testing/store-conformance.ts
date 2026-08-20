@@ -1,8 +1,7 @@
 // LearningStore conformance suite (contract §Storage; AGENTS.md: conformance
-// suites are part of the API). Registers vitest describe/it blocks for a
-// store factory; every store adapter must pass unchanged. A fresh store is
-// created per test.
-import { describe, expect, it } from "vitest";
+// suites are part of the API). Registers caller-supplied describe/it blocks
+// for a store factory; every store adapter must pass unchanged. A fresh store
+// is created per test.
 import type { JsonValue } from "../canonical/json.js";
 import type { LearningStore, RecordKey, StreamEntry } from "../ports/store.js";
 
@@ -16,7 +15,24 @@ function entry(id: string, value: JsonValue): StreamEntry {
   return { id, digest: `digest-${id}`, value };
 }
 
-export function runLearningStoreConformance(makeStore: LearningStoreFactory): void {
+export function runLearningStoreConformance(
+  makeStore: LearningStoreFactory,
+  testApi: {
+    readonly describe: (name: string, suite: () => void) => void;
+    readonly it: (name: string, test: () => void | Promise<void>) => void;
+    readonly expect: (actual: unknown) => {
+      readonly not: {
+        readonly toBe: (expected: unknown) => void;
+      };
+      readonly toBe: (expected: unknown) => void;
+      readonly toBeDefined: () => void;
+      readonly toBeLessThanOrEqual: (expected: number) => void;
+      readonly toBeUndefined: () => void;
+      readonly toEqual: (expected: unknown) => void;
+    };
+  },
+): void {
+  const { describe, expect, it } = testApi;
   describe("LearningStore conformance", () => {
     it("create-only: same key + same digest is an idempotent exists_same", async () => {
       const store = await makeStore();

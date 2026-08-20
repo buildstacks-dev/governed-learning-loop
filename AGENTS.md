@@ -226,6 +226,10 @@ between code and contract, open an issue — never silently drift either one.
   separate. Orphaned, invalid, and historical facts are audit-visible but
   inert. Composite pages retry boundedly on graph churn and are never treated
   as frozen calibration or experiment populations.
+- **Testing utilities are runtime-safe.** Importing `/testing` outside a test
+  worker must not load or register a test framework. Public conformance runners
+  receive the caller's minimal `{ describe, expect, it }` API explicitly, and
+  every store adapter runs the same suite through that injected seam.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`,
   `/reference-detectors`) with no supported deep imports.
 

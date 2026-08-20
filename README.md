@@ -33,7 +33,7 @@ the issue backlog and are orthogonal capabilities, not implied by the first two.
 @cormidia/learning-loop          (working name; final npm identity undecided)
 ├── .          domain records, unknown-first parsers, deterministic engine, ports
 ├── /node      local filesystem (JSON Lines) store adapters
-├── /testing   in-memory stores, deterministic clocks/ids, builders, conformance suites
+├── /testing   runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── /reference-detectors  opt-in host-bound deterministic pack bundle
 └── adapters/  transcript source adapters (Claude Code, Codex) — explicit input only
 ```
@@ -41,6 +41,20 @@ the issue backlog and are orthogonal capabilities, not implied by the first two.
 The kernel is headless and dependency-light: no model-provider SDKs, no agent
 framework, no scheduler, no UI. Hosts own execution, identity, approvals,
 storage deployment, and side effects.
+
+Importing `/testing` in plain Node does not load Vitest or register tests. Store
+adapters run the public suite by supplying their own runner functions:
+
+```ts
+import { runLearningStoreConformance } from "@cormidia/learning-loop/testing";
+import { describe, expect, it } from "vitest";
+
+runLearningStoreConformance(makeStore, { describe, expect, it });
+```
+
+The required second argument replaces the former one-argument call. It keeps
+the deterministic stores, clocks, ids, and builders usable outside a test
+worker without adding a test-framework runtime dependency.
 
 ## Typed reads
 

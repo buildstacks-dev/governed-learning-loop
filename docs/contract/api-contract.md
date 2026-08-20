@@ -965,6 +965,7 @@ export interface DetectorExecutionView {
     | {
         readonly status: "invalid";
         readonly diagnostics: readonly Diagnostic[];
+        readonly derivation?: InsightDerivationView;
       };
   readonly evidenceHealth: EvidenceHealthView;
 }
@@ -1196,8 +1197,9 @@ times and then fails with `query.snapshot_changed`. The public semantic page
 canonical returned same-scope views, so an empty page exposes no foreign-scope
 activity. Pages remain append-visible rather than frozen populations.
 
-Candidate derivation resolution remains #30b2b and must require committed,
-configured, evidence-health-ready lineage. Callable detector pairing,
+#30b2b implements derivation-backed Candidate proposal and requires committed,
+configured, evidence-health-ready lineage plus exact derived content and
+independent review. Callable detector pairing,
 eligibility, population construction, pack selection, recurrence,
 deduplication, suppression, caps, dry-run output, and no-provider-on-empty
 behavior remain #30c. Core/reference/host pack contents and reference consumers
@@ -1400,17 +1402,33 @@ content digests. Cosmetic display metadata, if any, stays outside the binding
 or is clearly classified. A revised candidate receives a new digest and cannot
 reuse a prior review or authorization silently.
 
-`CandidateV2.evidenceRefs` must be nonempty and unique both by
-`referenceDigest` and by `(kind, recordId)`. The parser and `propose` reject an
-empty list or either form of duplicate; a candidate cannot be ungrounded or
-double-count the same durable record. `parseCandidate` and `propose` also
-recompute the candidate scope digest and require it to equal every reference's
-`episode.scopeDigest`.
+`CandidateV2.evidenceRefs` are unique both by `referenceDigest` and by
+`(kind, recordId)`. Manual Candidate v2 requires a nonempty list. An exact
+`derivationRef` permits an empty list only for a store-resolved, committed,
+currently configured, evidence-health-ready derivation with a nonempty exact
+episode population. The parser enforces nonempty evidence or a derivationRef;
+the store-backed resolver enforces the population condition. Combined direct
+and contradictory derivation evidence remains duplicate-free. `parseCandidate`
+and `propose` also recompute the Candidate scope digest and require it to equal
+every reference's `episode.scopeDigest`.
 
 An optional `derivationRef` binds a separately durable derivation artifact by
-exact id and digest. It records how evidence was selected or transformed; it
-does not replace the full evidence references, grant trust, or make a generator
-authoritative.
+exact id and digest; its id is exactly `insight-${digest}`. Ordinarily it
+records how evidence was selected or transformed alongside full evidence
+references. The sole replacement exception is an empty EvidenceRef list backed
+by the exact committed episode population above. It grants no trust and does
+not make a generator authoritative.
+
+The derivation-backed propose branch accepts only candidate id, mandatory exact
+scope locator, derivation id, proposed risk, verified proposer, and optional
+Candidate predecessor. The kernel resolves the scope-partitioned derivation
+index and requires committed, currently configured, evidence-health-ready
+lineage with non-null interpretation, impact hypothesis, intervention, and
+validation. It derives problem from `interpretation.statement`, hypothesis
+from `impactHypothesis.statement`, and EvidenceRefs from direct observation
+followed by contradictory evidence in exact order. Destination id, kind,
+content, and rollback intent map from the Candidate intervention draft and must
+all be concrete. Caller-supplied semantic overrides are refused.
 
 V2 requires `supersedes` and `originalDigest` either both to be present or both
 absent. On explicit re-proposal the caller supplies only `supersedes`; the
@@ -1421,6 +1439,12 @@ ratified policy path; it is never inferred from this field. The successor is
 new governance content, not a record migration, and carries forward no review,
 approval, authorization, or authority. Reads revalidate the predecessor id,
 digest, and scope before treating the lineage as intact.
+
+For a derivation-backed Candidate, Candidate and derivation supersession mirror
+exactly: each is present if and only if the other is present. The Candidate
+predecessor must carry a derivationRef equal to the derivation predecessor id
+and digest. A manual predecessor or mismatched chain is refused rather than
+silently bridging semantic and governance revision history.
 
 `proposedRisk` is advisory. The engine computes effective risk as the monotonic maximum of the proposal, the host-registered destination floor, content classification and policy rules. `T0 < T1 < T2 < T3`; neither an adapter nor a proposer can lower the host result.
 
@@ -1471,20 +1495,26 @@ export interface CandidateReview {
 ```
 
 The engine accepts reviewer identity only from a `VerifiedPrincipal` handle and
-refuses a decisive self-review. Policy may additionally require a different
-attested `independenceDomain`, a human reviewer, multiple reviewers, or a
-calibrated reviewer version. An `accept` with a blocking finding is invalid.
+refuses a decisive self-review. For a derivation-backed Candidate it also
+refuses the derivation producer principal and the same producer implementation
+id/version. The lens's mandatory producer-independence rule always requires a
+different domain from a non-null derivation producer; Candidate-proposer domain
+separation remains gated by host risk policy. Policy may additionally require
+a human reviewer, multiple reviewers, or a calibrated reviewer version. An
+`accept` with a blocking finding is invalid.
 Only a v2 candidate with `ready` evidence reaches the reviewer port; raw or
 legacy evidence ids never resolve at review time. The engine captures reviewer
-attribution once, passes a detached parsed candidate copy, binds the result to
-the captured candidate id/digest, and revalidates candidate, supersession, and
-evidence after the external callback before writing. An occupied review id is
+attribution once, passes detached parsed Candidate and exact
+`InsightDerivation | null` copies, binds the result to the captured Candidate
+id/digest, and revalidates Candidate, mirrored supersession, derivation
+lineage, producer independence, and evidence after the external callback
+before writing. An occupied review id is
 returned only for the same captured binding and reviewer registration;
 otherwise it conflicts before another callback or disclosure.
 Governance reads bind each stored review's inner id to its store key and
-re-run review structural validity, proposer/reviewer independence, and the
-current risk tier's independence-domain rule. A forged or internally invalid
-stored acceptance is typed store corruption, never a decisive review.
+re-run review structural validity, proposer/producer/reviewer independence,
+and the current risk tier's independence-domain rule. A forged or internally
+invalid stored acceptance is typed store corruption, never a decisive review.
 
 ### Publication plan and authorization binding
 
@@ -2099,6 +2129,7 @@ export interface CandidateReviewer {
   review(input: {
     readonly candidate: Candidate;
     readonly evidence: readonly (Observation | MeasurementRecord)[];
+    readonly derivation: InsightDerivation | null;
     readonly policyDigest: string;
   }): Promise<unknown>;
 }
@@ -2212,17 +2243,30 @@ export type EpisodeInput = Omit<
   "schemaVersion" | "sourceRefs" | "fingerprintId" | "exposureIds"
 >;
 
-export interface CandidateInput {
+interface CandidateInputCommon {
   readonly id: string;
-  readonly scope: Scope;
-  readonly problem: string;
-  readonly hypothesis: string;
-  readonly evidenceIds: readonly string[];
-  readonly intervention: CandidateIntervention;
   readonly proposedRisk: RiskTier;
   readonly proposedBy: VerifiedPrincipal;
   readonly supersedes?: string;
 }
+
+export type CandidateInput =
+  | (CandidateInputCommon & {
+      readonly scope: Scope;
+      readonly problem: string;
+      readonly hypothesis: string;
+      readonly evidenceIds: readonly string[];
+      readonly intervention: CandidateIntervention;
+      readonly derivationId?: never;
+    })
+  | (CandidateInputCommon & {
+      readonly scope: Scope;
+      readonly derivationId: string;
+      readonly problem?: never;
+      readonly hypothesis?: never;
+      readonly evidenceIds?: never;
+      readonly intervention?: never;
+    });
 
 export interface CandidateReviewInput {
   readonly id: string;
@@ -2260,6 +2304,16 @@ export interface CandidateView {
   readonly candidate: Candidate;
   readonly governance: GovernanceView;
   readonly evidenceHealth: EvidenceHealthView;
+  readonly derivationLineage:
+    | { readonly status: "not_bound" }
+    | {
+        readonly status: "resolved";
+        readonly derivation: InsightDerivationView;
+      }
+    | {
+        readonly status: "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+      };
 }
 
 export interface ProposeOutcome extends CandidateView {
@@ -2521,14 +2575,17 @@ bound by the durable receipt. The returned derivative id arrays describe
 records newly created by this call, and `diagnostics` is a sanitized transient
 outcome; neither changes the deterministic durable import bytes.
 
-`CandidateInput.evidenceIds` is an ordered resolution request, not candidate
-record content. It must be nonempty and duplicate-free, and each value
-addresses an exact durable observation or qualified measurement id. The verified `propose` transition
-resolves those ids through durable records,
-episode identity and source-page receipts, verifies the candidate's exact scope
-ownership, and persists only `CandidateV2.evidenceRefs`. Callers cannot provide
-preassembled references or `originalDigest`. When `supersedes` is present,
-`propose` loads the predecessor and derives the bound original digest. A
+The manual `CandidateInput.evidenceIds` branch is an ordered resolution request,
+not Candidate record content. It must be nonempty and duplicate-free, and each
+value addresses an exact durable observation or qualified measurement id. The
+derivation branch instead accepts a mandatory scope locator and derivation id;
+it accepts no caller semantic fields or evidence. The verified `propose`
+transition resolves either request through exact records, semantic lineage,
+episode identity, and source-page receipts, verifies exact scope ownership, and
+persists only kernel-derived CandidateV2 content. Callers cannot provide
+preassembled references, a derivation digest, or `originalDigest`. When
+`supersedes` is present, `propose` loads the predecessor and derives the bound
+original digest. A
 missing, legacy-measurement, non-latest measurement, ambiguous, corrupt,
 mismatched, or `blocks_use` request fails without creating a candidate. Evidence constrained by
 `limits_claims`, `blocks_audit`, partial completeness, or unknown completeness
@@ -2562,7 +2619,17 @@ it does not make `succeeded` or an empty measurement list an efficacy pass.
 `getImportReceipt` is an exact, pure read of one durable import receipt and
 returns `undefined` only when that id does not exist. It reparses and verifies
 the stored receipt digest; corruption is a typed error rather than absence.
-`getCandidateView` is a pure read: it validates the stored candidate and folds its reviews into `GovernanceView`. It does not call `propose`, claim a content digest, or mutate the store.
+`getCandidateView` is a pure read: it validates the stored Candidate, resolves
+its exact derivation lineage when present, and folds reviews into
+GovernanceView. `derivationLineage` is `not_bound`, `resolved` with the exact
+InsightDerivationView, or `invalid` with diagnostics and an optional inspectable
+view. Resolved is reserved for a fully eligible exact Candidate/derivation
+mapping. Missing or mismatched mapping, orphaned/invalid execution, historical
+registry, non-ready evidence, or broken mirrored supersession stays visible
+through the invalid branch and blocks review and publication. The Candidate
+EvidenceHealthView combines current Candidate refs and current
+derivation/execution health. The read does not call `propose`, claim a content
+digest, or mutate the store.
 For a v1 candidate the fold also reports its permanent `legacy_unbound`
 constraint and keeps publication blocked regardless of historical review
 disposition. Reading a v1 record never resolves its evidence ids or creates a

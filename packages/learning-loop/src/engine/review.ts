@@ -12,6 +12,8 @@ import type { Parse } from "../parse/toolkit.js";
 import type { Candidate } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
 import type { MeasurementRecord } from "../records/episode.js";
+import type { InsightDerivation } from "../records/insight-derivation.js";
+import { parseInsightDerivation } from "../records/insight-derivation.js";
 import type { Observation } from "../records/observation.js";
 import type { PrincipalRef, VerifiedPrincipal } from "../records/principal.js";
 import type { CandidateReview, ReviewDisposition, ReviewFinding } from "../records/review.js";
@@ -22,6 +24,8 @@ import { candidateLineageDiagnostics } from "./candidate-lineage.js";
 import { revalidateCandidateEvidence } from "./evidence-binding.js";
 import type { CandidateEvidenceResolution } from "./evidence-binding.js";
 import { assertVerifiedPrincipal } from "./identity.js";
+import type { CandidateDerivationBinding } from "./derivation-binding.js";
+import { revalidateCandidateDerivation } from "./derivation-binding.js";
 
 /** Semantic-judgment port for candidate review (contract §Semantic judgment). */
 export interface CandidateReviewer {
@@ -33,6 +37,7 @@ export interface CandidateReviewer {
   review(input: {
     readonly candidate: Candidate;
     readonly evidence: readonly (Observation | MeasurementRecord)[];
+    readonly derivation: InsightDerivation | null;
     readonly policyDigest: string;
   }): Promise<unknown>;
 }
@@ -94,23 +99,66 @@ function assertReviewableEvidence(evidence: CandidateEvidenceResolution): void {
   ]);
 }
 
+function assertReviewableDerivation(binding: CandidateDerivationBinding): void {
+  if (binding.status !== "invalid") return;
+  throw new LearningLoopError("review.derivation_invalid", [
+    { code: "review.derivation_invalid", severity: "error", message: "candidate derivation is not reviewable" },
+    ...binding.diagnostics,
+  ]);
+}
+
 function sameCanonicalValue(left: unknown, right: unknown): boolean {
   return canonicalJsonText(toJsonValue(left)) === canonicalJsonText(toJsonValue(right));
 }
 
-function assertIndependentReviewer(context: EngineContext, candidate: Candidate, reviewerRef: PrincipalRef): void {
+function assertIndependentReviewer(
+  context: EngineContext,
+  candidate: Candidate,
+  reviewerRef: PrincipalRef,
+  reviewerImplementation: { readonly id: string; readonly version: string },
+  derivationBinding: CandidateDerivationBinding,
+): void {
   if (reviewerRef.id === candidate.proposedBy.id) {
     throw refusal(
       "review.not_independent",
       `principal "${reviewerRef.id}" proposed this candidate and cannot review it; generation and review must be independent`,
     );
   }
-  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
-  if (riskRule.independentDomain && reviewerRef.independenceDomain === candidate.proposedBy.independenceDomain) {
+  const producerPrincipal =
+    derivationBinding.status === "resolved"
+      ? derivationBinding.resolved.producerPrincipal
+      : derivationBinding.status === "invalid"
+        ? derivationBinding.producerPrincipal
+        : undefined;
+  const producerImplementation =
+    derivationBinding.status === "resolved"
+      ? derivationBinding.resolved.producerImplementation
+      : derivationBinding.status === "invalid"
+        ? derivationBinding.producerImplementation
+        : undefined;
+  if (producerPrincipal !== null && producerPrincipal !== undefined && reviewerRef.id === producerPrincipal.id) {
+    throw refusal("review.not_independent", "derivation producer principal cannot decisively review its Candidate");
+  }
+  if (
+    producerPrincipal !== null &&
+    producerPrincipal !== undefined &&
+    reviewerRef.independenceDomain === producerPrincipal.independenceDomain
+  ) {
+    throw refusal("review.not_independent", "reviewer shares a prohibited generation independence domain");
+  }
+  if (
+    producerImplementation !== undefined &&
+    reviewerImplementation.id === producerImplementation.id &&
+    reviewerImplementation.version === producerImplementation.version
+  ) {
     throw refusal(
       "review.not_independent",
-      `policy requires a reviewer from a distinct independence domain at effective risk ${effectiveRisk(candidate)}; "${reviewerRef.id}" shares domain "${reviewerRef.independenceDomain}" with the proposer`,
+      "derivation producer implementation cannot decisively review its Candidate",
     );
+  }
+  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  if (riskRule.independentDomain && reviewerRef.independenceDomain === candidate.proposedBy.independenceDomain) {
+    throw refusal("review.not_independent", "reviewer shares a prohibited generation independence domain");
   }
 }
 
@@ -154,6 +202,20 @@ export async function runReviewCandidate(
   }
   const candidateId = candidate.id;
   const candidateDigest = candidate.contentDigest;
+  const derivationBinding = await revalidateCandidateDerivation(context, candidate);
+  assertIndependentReviewer(context, candidate, reviewerRef, reviewerImplementation, derivationBinding);
+  assertReviewableDerivation(derivationBinding);
+  const lineageDiagnostics = await candidateLineageDiagnostics(context, candidate);
+  if (lineageDiagnostics.length > 0) {
+    throw new LearningLoopError("review.lineage_invalid", [
+      {
+        code: "review.lineage_invalid",
+        severity: "error",
+        message: "candidate supersession lineage is invalid",
+      },
+      ...lineageDiagnostics,
+    ]);
+  }
 
   const existingStored = await loadStoredRecord(context, "review", reviewId);
   if (existingStored !== undefined) {
@@ -173,29 +235,20 @@ export async function runReviewCandidate(
     throw refusal("store.conflict", `review "${reviewId}" already belongs to different content`);
   }
 
-  assertIndependentReviewer(context, candidate, reviewerRef);
-
-  const lineageDiagnostics = await candidateLineageDiagnostics(context, candidate);
-  if (lineageDiagnostics.length > 0) {
-    throw new LearningLoopError("review.lineage_invalid", [
-      {
-        code: "review.lineage_invalid",
-        severity: "error",
-        message: "candidate supersession lineage is invalid",
-      },
-      ...lineageDiagnostics,
-    ]);
-  }
-
   const evidence = await revalidateCandidateEvidence(context, candidate);
   assertReviewableEvidence(evidence);
 
   // The callback receives a detached parsed copy. It cannot mutate the
   // candidate instance used for binding, independence, or persistence.
   const candidateForReviewer = Object.freeze(parseCandidate(toJsonValue(candidate)));
+  const derivationForReviewer =
+    derivationBinding.status === "resolved"
+      ? Object.freeze(parseInsightDerivation(toJsonValue(derivationBinding.resolved.derivation)))
+      : null;
   const raw = await reviewFunction.call(reviewerPort, {
     candidate: candidateForReviewer,
     evidence: evidence.records,
+    derivation: derivationForReviewer,
     policyDigest: context.policy.digest,
   });
   const result = parseReviewerResult(raw);
@@ -222,7 +275,10 @@ export async function runReviewCandidate(
   if (currentCandidate.id !== candidateId || !sameCanonicalValue(currentCandidate, candidate)) {
     throw refusal("review.binding_mismatch", "candidate bytes changed while review was running");
   }
-  assertIndependentReviewer(context, currentCandidate, reviewerRef);
+  assertVerifiedPrincipal(context.identity, reviewerPrincipal, "reviewer.principal");
+  const currentDerivationBinding = await revalidateCandidateDerivation(context, currentCandidate);
+  assertIndependentReviewer(context, currentCandidate, reviewerRef, reviewerImplementation, currentDerivationBinding);
+  assertReviewableDerivation(currentDerivationBinding);
   const currentLineageDiagnostics = await candidateLineageDiagnostics(context, currentCandidate);
   if (currentLineageDiagnostics.length > 0) {
     throw new LearningLoopError("review.lineage_invalid", currentLineageDiagnostics);

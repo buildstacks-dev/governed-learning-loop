@@ -101,7 +101,7 @@ export async function runDistillCommand(loop: DemoLoop, out: CliOutput): Promise
       { type: "provider", id: cluster.provider },
       { type: "project", id: cluster.project },
     ];
-    const proposalContent: Omit<CandidateInput, "id" | "proposedBy"> = {
+    const proposalContent = {
       scope,
       problem: cluster.problem,
       hypothesis: cluster.hypothesis,
@@ -112,7 +112,7 @@ export async function runDistillCommand(loop: DemoLoop, out: CliOutput): Promise
         content: { text: `Recurring friction cluster ${cluster.label}: ${cluster.problem}` },
         rollbackIntent: "discard candidate",
       },
-      proposedRisk: "T1",
+      proposedRisk: "T1" as const,
     };
     // This request fingerprint only makes a stable display id. The kernel
     // resolves exact EvidenceRefs and computes the authoritative Candidate v2

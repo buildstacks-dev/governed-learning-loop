@@ -56,8 +56,17 @@ between code and contract, open an issue — never silently drift either one.
   Candidate v1 remains
   byte-stable, `legacy_unbound`, and audit-only, with no automatic migration. A
   successor is an explicit new proposal with exact predecessor lineage.
-  Candidate views expose only the closed evidence-health status; it grants no
-  trust or authority.
+  Candidate views expose closed evidence-health and derivation-lineage states;
+  neither grants trust or authority.
+- **Derivation-backed proposals are resolved, never copied.** Their mandatory
+  scope is a locator for an exact committed/current InsightDerivation. Problem,
+  hypothesis, direct-then-contradictory evidence, intervention, and derivation
+  ref are kernel-derived; caller overrides are refused. Empty Candidate-v2
+  evidence is permitted only for exact committed episode-population lineage.
+  Candidate and derivation supersession mirror, and decisive review is
+  independent from both verified proposer and attributed producer. Producer
+  principal, domain, and implementation separation is unconditional under the
+  lens; proposer-domain separation remains risk-policy gated.
 - **Measurements and outcomes are ownership-bound.** Runtime values exactly
   match their metric value type. Qualified measurement references bind a
   nonempty ordered set of same-source, same-revision, same-episode observation
@@ -95,8 +104,7 @@ between code and contract, open an issue — never silently drift either one.
   `applied`, `not_applicable`, and `incomplete` exist—never `pass`. Public
   parsing does not authorize public execution minting. Persistence is a private
   receipt-last graph whose append-only links precede derivations and whose
-  execution receipt is last; callable pairing and Candidate derivation
-  resolution remain later kernel work.
+  execution receipt is last; callable pairing remains later kernel work.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

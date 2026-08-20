@@ -167,6 +167,6 @@ ids or asserted effects.
 ## 2026-08-20 implementation amendment
 
 Decision 0009 implements the kernel-private receipt-last persistence and
-scope-partitioned typed audit reads previously deferred to #30b2a. Candidate
-derivation resolution remains #30b2b and callable detector execution remains
-#30c.
+scope-partitioned typed audit reads previously deferred to #30b2a. Decision
+0010 implements Candidate derivation resolution and independent review.
+Callable detector execution remains #30c.

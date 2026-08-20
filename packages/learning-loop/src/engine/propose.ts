@@ -12,6 +12,7 @@ import type { Candidate, CandidateIntervention, CandidateV2, RiskTier } from "..
 import { candidateContentDigest, candidateScopeDigest, parseCandidate } from "../records/candidate.js";
 import type { VerifiedPrincipal } from "../records/principal.js";
 import type { Scope } from "../records/scope.js";
+import { parseDurableId } from "../records/semantic-shared.js";
 import type { EngineContext } from "./context.js";
 import {
   createOnly,
@@ -26,19 +27,32 @@ import { assertVerifiedPrincipal } from "./identity.js";
 import type { CandidateView } from "./query.js";
 import { candidateGovernanceStateOf } from "./views.js";
 import { resolveCandidateEvidence } from "./evidence-binding.js";
+import { candidateDerivationSupersessionDiagnostics, resolveDerivedCandidateInput } from "./derivation-binding.js";
 
-export interface CandidateInput {
+interface CandidateInputCommon {
   readonly id: string;
-  readonly scope: Scope;
-  readonly problem: string;
-  readonly hypothesis: string;
-  /** Exact durable observation ids; the kernel resolves and persists EvidenceRefs. */
-  readonly evidenceIds: readonly string[];
-  readonly intervention: CandidateIntervention;
   readonly proposedRisk: RiskTier;
   readonly proposedBy: VerifiedPrincipal;
   readonly supersedes?: string;
 }
+
+export type CandidateInput =
+  | (CandidateInputCommon & {
+      readonly scope: Scope;
+      readonly problem: string;
+      readonly hypothesis: string;
+      readonly evidenceIds: readonly string[];
+      readonly intervention: CandidateIntervention;
+      readonly derivationId?: never;
+    })
+  | (CandidateInputCommon & {
+      readonly scope: Scope;
+      readonly derivationId: string;
+      readonly problem?: never;
+      readonly hypothesis?: never;
+      readonly evidenceIds?: never;
+      readonly intervention?: never;
+    });
 
 export interface ProposeOutcome extends Omit<CandidateView, "candidate"> {
   readonly candidate: CandidateV2;
@@ -70,6 +84,14 @@ function parseDigestIndexEntry(input: unknown): DigestIndexEntry {
   };
 }
 
+function hasOwnField(input: unknown, key: string): boolean {
+  return typeof input === "object" && input !== null && Object.hasOwn(input, key);
+}
+
+function snapshotScope(scope: Scope): Scope {
+  return Object.freeze(scope.map((segment) => Object.freeze({ type: segment.type, id: segment.id })));
+}
+
 async function outcomeFor(
   context: EngineContext,
   candidate: Candidate,
@@ -90,7 +112,12 @@ async function outcomeFor(
       },
     ]);
   }
-  return { candidate, governance, evidenceHealth: state.evidenceHealth };
+  return {
+    candidate,
+    governance,
+    evidenceHealth: state.evidenceHealth,
+    derivationLineage: state.derivationLineage,
+  };
 }
 
 export async function runPropose(context: EngineContext, input: CandidateInput): Promise<ProposeOutcome> {
@@ -101,19 +128,47 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
   assertVerifiedPrincipal(context.identity, proposedBy, "proposedBy");
   const fields = readFields(input, ["candidateInput"]);
   const id = fields.req("id", parseNonEmptyText);
-  const scope = context.scopePolicy.validate(fields.req("scope", parseUnknown));
-  const problem = fields.req("problem", parseNonEmptyText);
-  const hypothesis = fields.req("hypothesis", parseNonEmptyText);
-  const evidenceIds = fields.req("evidenceIds", parseArrayOf(parseNonEmptyText));
-  const intervention = fields.req("intervention", parseInterventionAt);
+  let scope = snapshotScope(context.scopePolicy.validate(fields.req("scope", parseUnknown)));
+  const hasDerivationId = hasOwnField(input, "derivationId");
+  const derivationId = hasDerivationId ? fields.req("derivationId", parseDurableId) : undefined;
   const proposedRisk = fields.req("proposedRisk", parseOneOf(RISK_TIERS));
   const supersedes = fields.opt("supersedes", parseNonEmptyText);
   const proposerRef = Object.freeze({ ...proposedBy.ref });
   const proposerAttestationDigest = proposedBy.attestationDigest;
-
-  const evidence = await resolveCandidateEvidence(context, evidenceIds, scope);
-  if (evidence.health.status === "invalid" || evidence.refs.length !== evidenceIds.length) {
-    throw new LearningLoopError("candidate.evidence_invalid", evidence.health.diagnostics);
+  let problem: string;
+  let hypothesis: string;
+  let evidenceRefs: CandidateV2["evidenceRefs"];
+  let intervention: CandidateIntervention;
+  let derivationRef: CandidateV2["derivationRef"];
+  if (derivationId === undefined) {
+    problem = fields.req("problem", parseNonEmptyText);
+    hypothesis = fields.req("hypothesis", parseNonEmptyText);
+    const evidenceIds = fields.req("evidenceIds", parseArrayOf(parseNonEmptyText));
+    intervention = fields.req("intervention", parseInterventionAt);
+    const evidence = await resolveCandidateEvidence(context, evidenceIds, scope);
+    if (evidence.health.status === "invalid" || evidence.refs.length !== evidenceIds.length) {
+      throw new LearningLoopError("candidate.evidence_invalid", evidence.health.diagnostics);
+    }
+    evidenceRefs = evidence.refs;
+  } else {
+    for (const override of ["problem", "hypothesis", "evidenceIds", "intervention"]) {
+      if (hasOwnField(input, override)) {
+        throw new LearningLoopError("candidate.derivation_override", [
+          {
+            code: "candidate.derivation_override",
+            severity: "error",
+            message: "derivation-backed proposal cannot override kernel-derived semantic fields",
+          },
+        ]);
+      }
+    }
+    const resolved = await resolveDerivedCandidateInput(context, derivationId, scope);
+    scope = resolved.derivation.scope;
+    problem = resolved.problem;
+    hypothesis = resolved.hypothesis;
+    evidenceRefs = resolved.evidenceRefs;
+    intervention = resolved.intervention;
+    derivationRef = { id: resolved.derivation.id, digest: resolved.derivation.derivationDigest };
   }
 
   let originalDigest: string | undefined;
@@ -154,9 +209,10 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
     scope,
     problem,
     hypothesis,
-    evidenceRefs: evidence.refs,
+    evidenceRefs,
     intervention,
     proposedRisk,
+    ...(derivationRef === undefined ? {} : { derivationRef }),
   };
   const contentDigest =
     supersedes === undefined || originalDigest === undefined
@@ -168,9 +224,10 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
     scope,
     problem,
     hypothesis,
-    evidenceRefs: evidence.refs,
+    evidenceRefs,
     intervention,
     proposedRisk,
+    ...(derivationRef === undefined ? {} : { derivationRef }),
     proposedBy: proposerRef,
     proposerAttestationDigest,
     proposedAt: context.clock.now(),
@@ -181,6 +238,10 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
       ? assembledBase
       : { ...assembledBase, supersedes, originalDigest };
   const candidate = parseCandidate(assembled);
+  const derivationSupersession = await candidateDerivationSupersessionDiagnostics(context, candidate);
+  if (derivationSupersession.length > 0) {
+    throw new LearningLoopError("candidate.derivation_supersedes_mismatch", derivationSupersession);
+  }
   const operationId = `propose/${candidate.id}/${contentDigest}`;
 
   // Atomic content claim: the digest-index record is create-only, so exactly

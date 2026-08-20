@@ -1,4 +1,5 @@
 import type {
+  CandidateInput,
   DetectorExecutionQuery,
   DetectorExecutionRecord,
   DetectorExecutionView,
@@ -318,4 +319,45 @@ test("strict consumer can construct and parse host-neutral semantic records from
       scope: executionScope,
     }),
   ).resolves.toBeUndefined();
+
+  const proposalIdentity = createTestIdentityPort();
+  const proposalPrincipal = await proposalIdentity.verify({
+    principalId: "strict-derived-proposer",
+    kind: "agent",
+    independenceDomain: "strict-derived-domain",
+  });
+  const manualCandidateInput: CandidateInput = {
+    id: "strict-manual-candidate",
+    scope: executionScope,
+    problem: "A manual problem.",
+    hypothesis: "A manual hypothesis.",
+    evidenceIds: ["strict-consumer-source/observation"],
+    intervention: {
+      destinationId: "strict/report",
+      kind: "report-note",
+      content: { text: "manual" },
+      rollbackIntent: "Remove the note.",
+    },
+    proposedRisk: "T1",
+    proposedBy: proposalPrincipal,
+  };
+  const derivedCandidateInput: CandidateInput = {
+    id: "strict-derived-candidate",
+    scope: executionScope,
+    derivationId: `insight-${"0".repeat(64)}`,
+    proposedRisk: "T1",
+    proposedBy: proposalPrincipal,
+  };
+  type ManualCandidateInput = Extract<CandidateInput, { readonly problem: string }>;
+  type DerivedCandidateInput = Extract<CandidateInput, { readonly derivationId: string }>;
+  const branchesAreDisjoint: [
+    DerivedCandidateInput extends { readonly problem: string } ? false : true,
+    ManualCandidateInput extends { readonly derivationId: string } ? false : true,
+  ] = [true, true];
+  expect([manualCandidateInput.id, derivedCandidateInput.id, ...branchesAreDisjoint]).toEqual([
+    "strict-manual-candidate",
+    "strict-derived-candidate",
+    true,
+    true,
+  ]);
 });

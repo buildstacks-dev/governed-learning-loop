@@ -136,10 +136,18 @@ These private identities add no public canonicalization API.
   are additive private store records.
 - Existing externally parsed #30a/#30b1 records are not auto-committed or
   migrated. Only the private receipt-last path creates an eligible graph.
-- A derivation is not Candidate-eligible merely because it is readable. #30b2b
-  must require committed, configured, evidence-health-ready lineage and bind
-  the exact derivation ref through verified `propose`.
+- A derivation is not Candidate-eligible merely because it is readable.
+  Decision 0010 implements verified `propose` resolution requiring committed,
+  configured, evidence-health-ready lineage and exact derived Candidate
+  content.
 - #30c owns callable detector pairing, windows, eligibility, caps,
   deduplication, suppression, dry-run execution, and no-provider-on-empty
   behavior. #13 owns optional semantic-provider generation. #26 owns
   candidate-utility calibration and any quality claim.
+
+## 2026-08-20 Candidate amendment
+
+Decision 0010 makes the existing derivationRef executable through the verified
+propose path, adds the narrow episode-population evidence exception, and keeps
+review independent from both Candidate proposer and attributed derivation
+producer. No public execution writer is added.

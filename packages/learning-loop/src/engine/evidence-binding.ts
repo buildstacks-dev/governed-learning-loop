@@ -951,6 +951,9 @@ export async function revalidateCandidateEvidence(
       },
     };
   }
+  if (candidate.evidenceRefs.length === 0 && candidate.derivationRef !== undefined) {
+    return { refs: [], records: [], health: { status: "ready", diagnostics: [] } };
+  }
 
   const resolved = await resolveCandidateEvidence(
     context,

@@ -6,6 +6,7 @@ import type { Diagnostic } from "../diagnostics.js";
 import { LearningLoopError } from "../diagnostics.js";
 import { invalid, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Scope } from "../records/scope.js";
+import type { DetectorPackRunReceipt } from "../records/detector-pack-run-receipt.js";
 import {
   assertSortedUnique,
   detectorRefKey,
@@ -21,6 +22,7 @@ import { detectorRunFailureCallbackInvoked, runDetector } from "./detector-run.j
 import { semanticGraphSnapshotRevision } from "./semantic-graph.js";
 import { persistDetectorExecution } from "./semantic-persistence.js";
 import { recurrenceForExecution, recurrenceLocatorOf } from "./detector-recurrence.js";
+import { buildStableDetectorPackRunReceipt, persistDetectorPackRunReceipt } from "./detector-pack-receipt.js";
 
 const MAX_EPISODE_IDS = 500;
 const MAX_CONSIDERED_SELECTIONS = 5_000;
@@ -57,6 +59,7 @@ export interface DetectorPackRunResult {
     readonly result?: DetectorRunResult;
     readonly diagnostics: readonly Diagnostic[];
   }[];
+  readonly receipt?: DetectorPackRunReceipt;
   readonly diagnostics: readonly Diagnostic[];
 }
 
@@ -461,5 +464,10 @@ export async function runDetectorPack(
     }
     applyRecurrencePolicy(context, items);
   }
-  return resultWithStatus(input, items);
+  const packResult = resultWithStatus(input, items);
+  if (input.mode !== "commit" || context.detectorOrchestrationPolicy === undefined) return packResult;
+  const plannedReceipt = await buildStableDetectorPackRunReceipt(context, input, packResult);
+  if (plannedReceipt === undefined) return packResult;
+  const receipt = await persistDetectorPackRunReceipt(context, plannedReceipt);
+  return { ...packResult, receipt };
 }

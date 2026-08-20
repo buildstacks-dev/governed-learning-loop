@@ -79,6 +79,10 @@ export type { DetectorRecurrenceLocator } from "./records/detector-recurrence.js
 export type { DetectorOrchestrationPolicy } from "./records/detector-orchestration-policy.js";
 export { detectorOrchestrationPolicyDigest } from "./records/detector-orchestration-policy.js";
 export { parseDetectorOrchestrationPolicy } from "./records/detector-orchestration-policy.js";
+export type { DetectorPackRunReceipt } from "./records/detector-pack-run-receipt.js";
+export { parseDetectorPackRunReceipt } from "./records/detector-pack-run-receipt.js";
+export type { DetectorPackRunQuery } from "./engine/detector-pack-query.js";
+export type { DetectorPackRunView } from "./engine/detector-pack-query.js";
 export type { DetectorOrchestrationDisposition } from "./engine/detector-pack-run.js";
 export type { DetectorPackRunInput } from "./engine/detector-pack-run.js";
 export type { DetectorPackRunResult } from "./engine/detector-pack-run.js";

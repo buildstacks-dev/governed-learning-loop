@@ -6,8 +6,11 @@ import type {
   DetectorOrchestrationPolicy,
   DetectorOrchestrationDisposition,
   DetectorPackManifest,
+  DetectorPackRunQuery,
+  DetectorPackRunReceipt,
   DetectorPackRunInput,
   DetectorPackRunResult,
+  DetectorPackRunView,
   DetectorRecurrenceLocator,
   DetectorRegistration,
   DetectorResultDraft,
@@ -35,6 +38,7 @@ import {
   parseDetectorExecutionRecord,
   parseDetectorOrchestrationPolicy,
   parseDetectorPackManifest,
+  parseDetectorPackRunReceipt,
   parseDetectorRegistration,
   parseSemanticRegistryConfig,
   parseSourceSemanticProfile,
@@ -419,6 +423,19 @@ test("strict consumer can construct and parse host-neutral semantic records from
   };
   const acceptsPackRunResult = (result: DetectorPackRunResult): readonly DetectorOrchestrationDisposition[] =>
     result.items.map((item) => item.disposition);
+  const strictPackRunQuery: DetectorPackRunQuery = {
+    scope: executionScope,
+    statuses: ["completed", "partial"],
+    recurrenceStatuses: ["absent", "grouped"],
+    governanceStatuses: ["not_assessed", "assessed"],
+    registryStatuses: ["configured", "historical_unconfigured"],
+    commitStatuses: ["committed", "invalid"],
+    limit: 10,
+  };
+  const acceptsPackRunReceipt = (receipt: DetectorPackRunReceipt): DetectorPackRunReceipt =>
+    parseDetectorPackRunReceipt(receipt);
+  const acceptsPackRunView = (view: DetectorPackRunView): string =>
+    `${view.registryBinding.status}/${view.commitBinding.status}`;
   expect(strictImplementation).toMatchObject({
     detector: detectorRef,
     implementationDigest: registration.implementationDigest,
@@ -432,8 +449,21 @@ test("strict consumer can construct and parse host-neutral semantic records from
   });
   expect(typeof acceptsRunResult).toBe("function");
   expect(typeof acceptsPackRunResult).toBe("function");
+  expect(typeof acceptsPackRunReceipt).toBe("function");
+  expect(typeof acceptsPackRunView).toBe("function");
   expect(typeof semanticLearning.runDetectorPack).toBe("function");
   await expect(semanticLearning.runDetectorPack(strictPackRunInput)).rejects.toMatchObject({
     code: "detector.input_invalid",
   });
+  const strictPackViews: DetectorPackRunView[] = [];
+  for await (const page of semanticLearning.queryDetectorPackRuns(strictPackRunQuery)) {
+    strictPackViews.push(...page.items);
+  }
+  expect(strictPackViews).toEqual([]);
+  await expect(
+    semanticLearning.getDetectorPackRun({
+      packRunReceiptId: `detector-pack-run-${"0".repeat(64)}`,
+      scope: executionScope,
+    }),
+  ).resolves.toBeUndefined();
 });

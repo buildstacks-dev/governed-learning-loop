@@ -500,7 +500,7 @@ describe("detector pack selection, planning, and explicit dispositions", () => {
   it("selects every exact detector/compatible-lens pair in stable order", async () => {
     const fixture = await packFixture({ detectorCount: 2, lensCount: 2, label: "selection" });
     const input: DetectorPackRunInput = {
-      mode: "dry_run",
+      mode: "commit",
       pack: packRef(fixture.pack),
       scope: fixture.harness.scope,
       episodeRecordIds: [fixture.episodeRecordId],
@@ -1060,7 +1060,7 @@ describe("configured detector orchestration policy", () => {
     expect(Reflect.set(configuredPolicy.caps, "maximumInvocationsPerRun", 100)).toBe(true);
     expect(Reflect.set(configuredPolicy, "policyDigest", "0".repeat(64))).toBe(true);
     const result = await fixture.learning.runDetectorPack({
-      mode: "dry_run",
+      mode: "commit",
       pack: packRef(fixture.pack),
       scope: fixture.harness.scope,
       episodeRecordIds: [fixture.episodeRecordId],
@@ -1071,6 +1071,14 @@ describe("configured detector orchestration policy", () => {
       true,
     );
     expect([...fixture.calls.values()].reduce((sum, count) => sum + count, 0)).toBe(1);
+    expect(result.receipt).toMatchObject({
+      status: "partial",
+      items: [
+        { executionDisposition: "executed" },
+        { executionDisposition: "capped", reasonCodes: ["detector.pack_invocation_capped"] },
+        { executionDisposition: "capped", reasonCodes: ["detector.pack_invocation_capped"] },
+      ],
+    });
   });
 
   it("caps distinct insight and evidence-health groups with separate denominators", async () => {
@@ -1098,7 +1106,7 @@ describe("configured detector orchestration policy", () => {
             },
     });
     const result = await fixture.learning.runDetectorPack({
-      mode: "dry_run",
+      mode: "commit",
       pack: packRef(fixture.pack),
       scope: fixture.harness.scope,
       episodeRecordIds: [fixture.episodeRecordId],
@@ -1115,6 +1123,15 @@ describe("configured detector orchestration policy", () => {
       const capDiagnostics = item.diagnostics.filter((diagnostic) => diagnostic.code === "detector.pack_group_capped");
       expect(capDiagnostics).toHaveLength(item.recurrenceDisposition === "capped" ? 1 : 0);
     }
+    expect(result.receipt).toMatchObject({
+      status: "partial",
+      items: [
+        { recurrence: { governance: { groupDisposition: "unassessed" } } },
+        { recurrence: { governance: { groupDisposition: "capped" } }, reasonCodes: ["detector.pack_group_capped"] },
+        { recurrence: { governance: { groupDisposition: "unassessed" } } },
+        { recurrence: { governance: { groupDisposition: "capped" } }, reasonCodes: ["detector.pack_group_capped"] },
+      ],
+    });
   });
 
   it("counts an existing exact group once and keeps rejection-suppression registration inert", async () => {

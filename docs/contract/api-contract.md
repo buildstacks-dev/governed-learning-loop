@@ -1166,7 +1166,190 @@ export interface DetectorPackRunResult {
     readonly result?: DetectorRunResult;
     readonly diagnostics: readonly Diagnostic[];
   }[];
+  readonly receipt?: DetectorPackRunReceipt;
   readonly diagnostics: readonly Diagnostic[];
+}
+
+export interface DetectorPackRunReceipt {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly loopRegistryRevision: string;
+  readonly semanticRegistryDigest: string;
+  readonly policy: DetectorOrchestrationPolicy;
+  readonly pack: DetectorPackRunInput["pack"];
+  readonly scope: Scope;
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly population: {
+    readonly requestedEpisodeRecordIds: readonly string[];
+    readonly resolvedEpisodes: readonly {
+      readonly episodeRecordId: string;
+      readonly episodeRecordDigest: string;
+      readonly episodeIdentityDigest: string;
+      readonly outcomeClaimDigest: string | null;
+      readonly episodeViewDigest: string;
+      readonly scopeDigest: string;
+    }[];
+    readonly populationDigest: string;
+  };
+  readonly governanceSnapshotDigest: string;
+  readonly items: readonly {
+    readonly detector: {
+      readonly id: string;
+      readonly version: string;
+      readonly registrationDigest: string;
+      readonly configurationDigest: string;
+      readonly implementationDigest: string;
+    };
+    readonly lens: DetectorRunInput["lens"];
+    readonly outputKind: DetectorOutputKind;
+    readonly executionDisposition:
+      | "executed"
+      | "not_applicable"
+      | "incomplete"
+      | "capped"
+      | "refused";
+    readonly executionRef: {
+      readonly id: string;
+      readonly executionKeyDigest: string;
+      readonly executionDigest: string;
+    } | null;
+    readonly recurrence:
+      | {
+          readonly status: "absent";
+          readonly reason:
+            | "execution_not_materialized"
+            | "execution_not_applied"
+            | "condition_not_detected"
+            | "locator_unavailable"
+            | "result_not_retained";
+          readonly decisionBindingDigest: string | null;
+        }
+      | {
+          readonly status: "grouped";
+          readonly groupKeyDigest: string;
+          readonly locator: DetectorRecurrenceLocator;
+          readonly decisionBindingDigest: string;
+          readonly executionCount: number;
+          readonly distinctEpisodeCount: number;
+          readonly episodeIdentityDigests: readonly string[];
+          readonly episodeIdentitySetDigest: string;
+          readonly governance:
+            | {
+                readonly status: "not_assessed";
+                readonly reason: "candidate_claims_deferred";
+                readonly groupDisposition: "unassessed" | "capped";
+              }
+            | {
+                readonly status: "assessed";
+                readonly candidateBindings: readonly {
+                  readonly candidateId: string;
+                  readonly candidateDigest: string;
+                  readonly claimDigest: string;
+                  readonly derivationId: string;
+                  readonly derivationDigest: string;
+                  readonly episodeIdentitySetDigest: string;
+                  readonly distinctEpisodeCount: number;
+                  readonly supersedes: {
+                    readonly candidateId: string;
+                    readonly candidateDigest: string;
+                    readonly claimDigest: string;
+                  } | null;
+                  readonly latestReview: {
+                    readonly id: string;
+                    readonly recordDigest: string;
+                    readonly disposition: ReviewDisposition;
+                    readonly reviewedAt: string;
+                  } | null;
+                }[];
+                readonly groupDisposition:
+                  | "available"
+                  | "deduplicated"
+                  | "suppressed"
+                  | "capped";
+                readonly requiredSupersedes: {
+                  readonly candidateId: string;
+                  readonly candidateDigest: string;
+                  readonly claimDigest: string;
+                } | null;
+                readonly requiredOverrideCount: number | null;
+                readonly governingRejection: {
+                  readonly candidateId: string;
+                  readonly candidateDigest: string;
+                  readonly claimDigest: string;
+                  readonly reviewId: string;
+                  readonly reviewRecordDigest: string;
+                } | null;
+                readonly reasonCodes: readonly string[];
+              };
+        };
+    readonly reasonCodes: readonly string[];
+    readonly itemDigest: string;
+  }[];
+  readonly status: "completed" | "partial";
+  readonly packRunKeyDigest: string;
+  readonly receiptDigest: string;
+}
+
+export declare function parseDetectorPackRunReceipt(
+  input: unknown,
+): DetectorPackRunReceipt;
+
+export interface DetectorPackRunQuery {
+  readonly scope: Scope;
+  readonly receiptIds?: readonly string[];
+  readonly packIds?: readonly string[];
+  readonly packVersions?: readonly string[];
+  readonly packManifestDigests?: readonly string[];
+  readonly policyDigests?: readonly string[];
+  readonly detectorIds?: readonly string[];
+  readonly detectorRegistrationDigests?: readonly string[];
+  readonly lensRegistrationDigests?: readonly string[];
+  readonly executionDispositions?: readonly (
+    | "executed"
+    | "not_applicable"
+    | "incomplete"
+    | "capped"
+    | "refused"
+  )[];
+  readonly groupDispositions?: readonly (
+    | "unassessed"
+    | "available"
+    | "deduplicated"
+    | "suppressed"
+    | "capped"
+  )[];
+  readonly recurrenceStatuses?: readonly ("absent" | "grouped")[];
+  readonly governanceStatuses?: readonly ("not_assessed" | "assessed")[];
+  readonly statuses?: readonly ("completed" | "partial")[];
+  readonly registryStatuses?: readonly ("configured" | "historical_unconfigured")[];
+  readonly commitStatuses?: readonly ("committed" | "invalid")[];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface DetectorPackRunView {
+  readonly receipt: DetectorPackRunReceipt;
+  readonly registryBinding:
+    | { readonly status: "configured" }
+    | { readonly status: "historical_unconfigured"; readonly diagnostics: readonly Diagnostic[] };
+  readonly policyBinding:
+    | { readonly status: "configured" }
+    | { readonly status: "historical_unconfigured"; readonly diagnostics: readonly Diagnostic[] };
+  readonly commitBinding:
+    | { readonly status: "committed" }
+    | { readonly status: "invalid"; readonly diagnostics: readonly Diagnostic[] };
+  readonly childBindings: readonly {
+    readonly executionId: string;
+    readonly status: "committed" | "invalid";
+    readonly diagnostics: readonly Diagnostic[];
+  }[];
+  readonly governanceBinding:
+    | { readonly status: "not_assessed" }
+    | { readonly status: "current" }
+    | { readonly status: "historical"; readonly diagnostics: readonly Diagnostic[] }
+    | { readonly status: "invalid"; readonly diagnostics: readonly Diagnostic[] };
+  readonly evidenceHealth: EvidenceHealthView;
 }
 
 export declare function defineDetectorImplementation(input: {
@@ -1296,6 +1479,11 @@ Digest inclusion is exact:
 | `DetectorOrchestrationPolicy` | Id, version, exact invocation/insight-group/evidence-health-group caps, and complete rejection-suppression configuration | `schemaVersion`, `policyDigest` |
 | `DetectorExecutionRecord.executionKeyDigest` | Loop-registry revision, detector plus configuration/implementation digests, required pack, output-dependent lens, scope and policy, output kind, and the complete immutable window | `schemaVersion`, `id`, `result`, `executionKeyDigest`, `executionDigest` |
 | `DetectorExecutionRecord.executionDigest` | The complete invocation/window, closed result, and `executionKeyDigest` | `schemaVersion`, `id`, `executionDigest` |
+| `DetectorPackRunReceipt.populationDigest` | Exact requested episode ids and one-to-one resolved episode record/identity/outcome/view/scope lineage | `populationDigest` |
+| `DetectorPackRunReceipt.items[].itemDigest` | Complete retry-normalized item: detector/lens/output kind, execution disposition/ref, recurrence/governance, reason codes | `itemDigest` |
+| `DetectorPackRunReceipt.governanceSnapshotDigest` | Sorted unique group key, execution/distinct-episode counts, episode-set digest and full governance branch | `governanceSnapshotDigest` |
+| `DetectorPackRunReceipt.packRunKeyDigest` | Domain; loop/semantic registry; policy ref; pack; scope/policy; population digest; governance snapshot; sorted detector/lens/output-kind selection, child execution key or null, and recurrence group key or null | `schemaVersion`, `id`, execution disposition, reason/absent codes, callback/persistence activity, child full execution digests, direct recurrence count/set fields, item/full receipt digests, `packRunKeyDigest`, `receiptDigest` |
+| `DetectorPackRunReceipt.receiptDigest` | Complete receipt content including full policy, population, items, governance snapshot and `packRunKeyDigest` | `schemaVersion`, `id`, `receiptDigest` |
 
 Changing implementation, configuration, thresholds, capabilities,
 applicability, normalization, comparability, fixtures, false-positive policy,
@@ -1611,14 +1799,80 @@ reserved for a retained result whose exact recurrence state is not grouped.
 rejectionSuppression is registered and digested but deliberately
 non-enforcing. This slice does not read Candidate/review state, create a
 Candidate-to-group claim, classify a group available/deduplicated/suppressed,
-refuse or revise a proposal, or authorize an override. Durable pack-run
-receipts and scoped queries remain the next receipt slice. Exact
-Candidate/review claims, deduplication, rejection suppression, same-group
-supersession and concurrent proposal admission remain a separate governance
-slice. Automatic population discovery and scheduling/routing remain outside
-this policy slice. Core/reference/host pack contents and reference consumers
-are #30d. Optional semantic-provider generation and disclosure are #13.
-Default-quality and candidate-utility claims remain #26.
+refuse or revise a proposal, or authorize an override.
+
+#30c2b2-receipts adds a kernel-created DetectorPackRunReceipt only for commit
+mode with a configured orchestration policy and a population proven one-to-one
+in the requested exact scope. Dry runs, policy omission, repeated snapshot
+churn and nonempty missing/wrong-scope ids keep receipt absent and create no
+receipt/index. This prevents arbitrary caller ids or privacy canaries from
+entering a same-scope audit record. Empty input may bind an exact empty
+population.
+
+The receipt embeds the complete policy, pack, loop/semantic registry, exact
+scope/policy, population, governance snapshot, normalized items and status.
+Durable items omit callback activity and normalize persistence-dependent
+`existing` to executed or the exact non-applied status. They retain only sorted
+retry-stable reason codes. An absent recurrence records one closed reason and a
+nullable decision binding; grouped recurrence records treated locator,
+binding, committed counts, exact sorted identity set/digest and governance.
+
+The runtime mints only not_assessed governance with the explicit
+candidate_claims_deferred reason and exact unassessed/capped policy
+classification. The parser reserves the assessed branch with exact Candidate,
+derivation, claim, supersession, review, rejection and override references, but
+this runtime reports such bytes historical rather than current. It creates no
+Candidate claim and enforces no rejectionSuppression rule.
+
+populationDigest binds requested ids plus one-to-one resolved episode lineage.
+itemDigest binds each complete item. governanceSnapshotDigest binds sorted
+group key/count/identity-set/governance projections, so group growth creates a
+new snapshot. packRunKeyDigest binds registry/policy/pack/scope,
+population/governance digests and sorted detector/lens/output-kind selection
+plus child execution and recurrence-group keys. It excludes result-dependent execution disposition,
+reasons, absent status, callback/persistence activity, child full result
+digests and direct recurrence results/counts. The id is exact
+`detector-pack-run-${packRunKeyDigest}`. receiptDigest binds the complete
+receipt and key. Same key/different full bytes conflicts; nothing overwrites.
+
+Child execution/recurrence graphs commit first. The kernel resolves one stable
+receipt snapshot, ensures the exact semantic registry snapshot, creates an
+exact-scope receipt index, and writes DetectorPackRunReceipt last. An orphan
+index is invisible; retry forward-completes. Child facts may remain when a
+later receipt step fails, so the receipt is not a transaction across children.
+Because its identity includes post-plan group/governance facts, resolving an
+existing receipt may still evaluate uncached/capped callbacks; exact child
+receipts retain their own callback-skip guarantee.
+
+queryDetectorPackRuns and getDetectorPackRun require exact scope and consult
+only the corresponding private scope index before any receipt target. Queries
+support bounded exact receipt/pack/policy/detector/lens/execution-disposition,
+group-disposition, recurrence-status, governance-status, receipt-status and
+binding-status filters plus opaque cursors; page limit is excluded from cursor
+identity. There is no locator, keyed-digest, group-key, free-text or
+diagnostic-message search.
+Views separate receipt commit integrity, current/historical registry and policy,
+each child commit, governance assessment and current aggregate evidence health.
+Complete child detector/pack/lens/output/registry/scope/recurrence provenance is
+revalidated together with selected detector/lens fan-out and exact
+invocation/aggregate-cap ordering under the embedded policy; historical group
+growth may be a superset, never a mutation of the receipt snapshot.
+
+Receipts fail closed above 64 MiB canonical bytes, 5,000 items, 500 population
+episodes, the embedded policy's 100-or-lower committed-execution and
+grouped-item bounds, 50,000 total identity references, 50,000 future Candidate
+bindings, 5,000 identities per group or 1,000 reason codes. A query page
+additionally caps aggregate receipt bytes at 64 MiB, receipt items, child refs
+and population episodes at 5,000 each, and unique group folds at 100. No digest
+helper or receipt writer is public.
+
+Exact Candidate/review claims, current assessed governance, deduplication,
+rejection suppression, same-group supersession and concurrent proposal
+admission remain a separate governance slice. Automatic population discovery
+and scheduling/routing remain outside this receipt. Core/reference/host pack
+contents and reference consumers are #30d. Optional semantic-provider
+generation and disclosure are #13. Default-quality and candidate-utility
+claims remain #26.
 
 ### Candidate
 
@@ -2945,6 +3199,7 @@ export interface LearningLoop {
   queryEvidenceHealthFindings(input: EvidenceHealthQuery): AsyncIterable<QueryPage<EvidenceHealthFinding>>;
   queryInsightDerivations(input: InsightDerivationQuery): AsyncIterable<QueryPage<InsightDerivationView>>;
   queryDetectorExecutions(input: DetectorExecutionQuery): AsyncIterable<QueryPage<DetectorExecutionView>>;
+  queryDetectorPackRuns(input: DetectorPackRunQuery): AsyncIterable<QueryPage<DetectorPackRunView>>;
   getImportReceipt(input: { readonly importReceiptId: string }): Promise<ImportReceipt | undefined>;
   getInsightDerivation(input: {
     readonly derivationId: string;
@@ -2954,6 +3209,10 @@ export interface LearningLoop {
     readonly executionId: string;
     readonly scope: Scope;
   }): Promise<DetectorExecutionView | undefined>;
+  getDetectorPackRun(input: {
+    readonly packRunReceiptId: string;
+    readonly scope: Scope;
+  }): Promise<DetectorPackRunView | undefined>;
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
 
   preparePublication(input: {
@@ -3592,6 +3851,25 @@ The core suite should prove at least:
 - both rejection-suppression modes remain non-enforcing: no Candidate/review
   read, group claim, proposal refusal, override, durable pack receipt or
   efficacy implication occurs in the policy-only slice;
+- durable pack receipt items normalize away callback/`existing` retry state,
+  bind stable reason codes, and reject inconsistent execution disposition,
+  reference, output/lens and absent/grouped recurrence combinations;
+- receipt population persists only one-to-one exact-scope requested/resolved
+  episodes; missing, wrong-scope and canary ids leave no receipt or scope index;
+- governance snapshot/key/full digests change for exact group growth,
+  population, policy and stable disposition changes while same-key/different
+  full bytes conflict; embedded full policy remains historically inspectable;
+- receipt persistence writes child graphs and exact registry snapshot before a
+  scope result lock and receipt-last record, recovers every index/receipt crash,
+  and documents surviving child facts rather than claiming batch atomicity;
+- receipt views revalidate exact child detector/pack/lens/output/registry/scope
+  and recurrence provenance, keep registry/policy/commit/governance/evidence
+  dimensions separate, and never treat reserved assessed governance as current;
+- receipt queries/gets require exact scope, never touch a wrong-scope target,
+  bind normalized filters except page limit into opaque cursors, expose a
+  scope-local public revision, and provide no locator/group-key/content search;
+- receipt byte/item/population/group-identity/Candidate-binding/reason ceilings
+  fail closed without truncation;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

@@ -46,7 +46,8 @@ export type RecordKind =
   | "derivation-execution"
   | "detector-execution"
   | "detector-recurrence-binding"
-  | "detector-recurrence-group";
+  | "detector-recurrence-group"
+  | "detector-pack-run-receipt";
 
 export interface EngineContext {
   readonly store: LearningStore;

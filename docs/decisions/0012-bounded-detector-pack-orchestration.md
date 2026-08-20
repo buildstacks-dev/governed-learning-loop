@@ -118,10 +118,13 @@ dry-run group previews. Counts remain descriptive and grant no authority.
 invocation/group caps and transient `not_grouped | unassessed | capped`
 classification. Rejection-suppression configuration remains non-enforcing.
 
-**Still deferred:** durable pack-run/disposition receipts and exact-scope
-reads, Candidate-to-group claims, assessed availability, deduplication,
-decisive-rejection suppression and override evidence, and proposal admission.
-No later slice may expose a public receipt writer.
+**Implemented next by decision 0015:** durable normalized pack-run receipts,
+receipt-last exact-scope audit reads and immutable not-assessed governance
+snapshots. No public receipt writer is exposed.
+
+**Still deferred:** Candidate-to-group claims, assessed availability,
+deduplication, decisive-rejection suppression and override evidence, and
+proposal admission.
 
 Reference detector contents and synthetic controls remain #30d. Optional
 semantic/model workflows remain #13. Candidate-utility calibration and every

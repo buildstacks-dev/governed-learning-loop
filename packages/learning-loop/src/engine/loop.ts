@@ -77,6 +77,8 @@ import type { DetectorRunInput, DetectorRunResult } from "./detector-run.js";
 import { runDetector } from "./detector-run.js";
 import type { DetectorPackRunInput, DetectorPackRunResult } from "./detector-pack-run.js";
 import { runDetectorPack } from "./detector-pack-run.js";
+import type { DetectorPackRunQuery, DetectorPackRunView } from "./detector-pack-query.js";
+import { runDetectorPackRunQuery, runGetDetectorPackRun } from "./detector-pack-query.js";
 
 export interface LearningLoopConfig {
   readonly store: LearningStore;
@@ -118,6 +120,11 @@ export interface LearningLoop {
   report(input: LearningReportQuery): Promise<LearningReport>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
   runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
+  queryDetectorPackRuns(input: DetectorPackRunQuery): AsyncIterable<QueryPage<DetectorPackRunView>>;
+  getDetectorPackRun(input: {
+    readonly packRunReceiptId: string;
+    readonly scope: Scope;
+  }): Promise<DetectorPackRunView | undefined>;
 }
 
 const systemClock: Clock = { now: () => new Date().toISOString() };
@@ -401,5 +408,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     report: (input) => runReport(context, input),
     runDetector: (input) => runDetector(context, input),
     runDetectorPack: (input) => runDetectorPack(context, input),
+    queryDetectorPackRuns: (input) => runDetectorPackRunQuery(context, input),
+    getDetectorPackRun: (input) => runGetDetectorPackRun(context, input),
   };
 }

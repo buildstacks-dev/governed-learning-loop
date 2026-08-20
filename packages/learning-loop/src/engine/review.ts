@@ -111,7 +111,7 @@ export async function runReviewCandidate(
   context: EngineContext,
   input: CandidateReviewInput,
 ): Promise<CandidateReview> {
-  assertVerifiedPrincipal(input.reviewer.principal, "reviewer.principal");
+  assertVerifiedPrincipal(context.identity, input.reviewer.principal, "reviewer.principal");
   const candidate = await loadCandidate(context, input.candidateId);
   if (candidate === undefined) {
     throw refusal("review.candidate_not_found", `candidate "${input.candidateId}" does not exist`);

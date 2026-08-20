@@ -4,13 +4,20 @@ import type {
   CandidateReviewer,
   EvidencePage,
   EvidenceSource,
+  IdentityPort,
   LearningLoop,
   LearningStore,
   RegisteredSource,
   Scope,
   VerifiedPrincipal,
 } from "../src/index.js";
-import { conservativePolicy, createLearningLoop, defineSourceRegistration } from "../src/index.js";
+import {
+  conservativePolicy,
+  createIdentityPort,
+  createLearningLoop,
+  defineSourceRegistration,
+  sha256HexOfCanonicalJson,
+} from "../src/index.js";
 import type { ManualEvidenceInput } from "../src/testing/index.js";
 import {
   createExactScopePolicy,
@@ -32,6 +39,7 @@ export const CONTENT_POLICY_ID = "structured-v1";
 export interface Harness {
   readonly store: LearningStore;
   readonly learning: LearningLoop;
+  readonly identities: IdentityPort;
   readonly manual: RegisteredSource<ManualEvidenceInput>;
   readonly proposer: VerifiedPrincipal;
   /** Different principal id AND different independence domain from the proposer. */
@@ -42,14 +50,51 @@ export interface Harness {
 
 export interface HarnessOptions {
   readonly store?: LearningStore;
+  readonly identity?: IdentityPort;
   readonly queryCursorScope?: string;
+}
+
+function isUnknownRecord(input: unknown): input is { readonly [key: string]: unknown } {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
+}
+
+/** Host-style identity port used to exercise the public production factory in engine tests. */
+export function createHarnessIdentityPort(
+  options: { readonly id?: string; readonly version?: string; readonly configurationDigest?: string } = {},
+): IdentityPort {
+  return createIdentityPort({
+    id: options.id ?? "identity.harness",
+    version: options.version ?? "1.0.0",
+    configurationDigest: options.configurationDigest ?? "1".repeat(64),
+    verify: (evidence: unknown): Promise<unknown> => {
+      if (!isUnknownRecord(evidence)) throw new Error("harness identity evidence must be an object");
+      const principalId = evidence.principalId;
+      const kind = evidence.kind;
+      const independenceDomain = evidence.independenceDomain;
+      if (typeof principalId !== "string" || principalId.length === 0) {
+        throw new Error("harness identity evidence requires principalId");
+      }
+      if (kind !== "human" && kind !== "agent" && kind !== "service") {
+        throw new Error("harness identity evidence requires a principal kind");
+      }
+      if (typeof independenceDomain !== "string" || independenceDomain.length === 0) {
+        throw new Error("harness identity evidence requires independenceDomain");
+      }
+      const attestationDigest = sha256HexOfCanonicalJson({ principalId, kind, independenceDomain });
+      return Promise.resolve({
+        ref: { id: principalId, kind, independenceDomain },
+        attestationId: `harness-attestation-${attestationDigest.slice(0, 16)}`,
+        attestationDigest,
+      });
+    },
+  });
 }
 
 export async function createHarness(
   extraSources: readonly RegisteredSource<unknown>[] = [],
   options: HarnessOptions = {},
 ): Promise<Harness> {
-  const identities = createTestIdentityPort();
+  const identities = options.identity ?? createTestIdentityPort();
   const proposer = await identities.verify({
     principalId: "distiller-a",
     kind: "agent",
@@ -82,7 +127,7 @@ export async function createHarness(
     clock: createFixedClock("2026-08-16T10:00:00.000Z"),
     ids: createSequentialIds("t"),
   });
-  return { store, learning, manual, proposer, reviewerB, reviewerSameDomain };
+  return { store, learning, identities, manual, proposer, reviewerB, reviewerSameDomain };
 }
 
 export function journeyEvidence(): ManualEvidenceInput {

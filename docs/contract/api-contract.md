@@ -234,6 +234,7 @@ export interface PrincipalRef {
 }
 
 declare const verifiedPrincipalBrand: unique symbol;
+declare const identityPortBrand: unique symbol;
 
 export interface VerifiedPrincipal {
   readonly ref: PrincipalRef;
@@ -243,11 +244,28 @@ export interface VerifiedPrincipal {
 }
 
 export interface IdentityPort {
+  readonly id: string;
+  readonly version: string;
+  readonly configurationDigest: string;
+  readonly registrationDigest: string;
+  readonly [identityPortBrand]: true;
+
   verify(evidence: unknown): Promise<VerifiedPrincipal>;
 }
+
+export declare function createIdentityPort(input: {
+  readonly id: string;
+  readonly version: string;
+  readonly configurationDigest: string;
+  readonly verify: (evidence: unknown) => Promise<unknown>;
+}): IdentityPort;
 ```
 
-`PrincipalRef` is the serializable projection, not authentication evidence. Only the host-owned `IdentityPort` can mint a branded `VerifiedPrincipal`. Candidate and review requests accept the verified handle; the engine records its projection and attestation digest. Model output or ordinary caller data cannot choose an identity or independence domain. The kernel proves verified-handle non-equality; provider family, model, process and organizational independence remain stronger host policies.
+`PrincipalRef` is the serializable projection, not authentication evidence. A host implements the authentication boundary passed to `createIdentityPort`; the kernel parses its opaque result into a fresh `{ ref, attestationId, attestationDigest }` value, freezes the parsed fields, and alone attaches the private `VerifiedPrincipal` brand. Identity-port `id` and `version` values are non-empty, control-free, and at most 200 characters. Factory-minted principal ids, independence domains, and attestation ids are non-empty, control-free, and at most 1,000 characters. `configurationDigest` and every returned `attestationDigest` are 64-character lower-case hexadecimal digests. The host computes `configurationDigest` over its exact verification policy and configuration; the kernel never receives or hashes raw private identity configuration. Low-entropy private configuration requires a tenant-scoped keyed digest rather than a portable unsalted digest.
+
+The identity registration digest is the protocol SHA-256 digest of canonical JSON containing exactly `{ id, version, configurationDigest }`. The `id`, `version`, and `configurationDigest` fields are included; `registrationDigest`, the verifier function, and private runtime tokens are excluded. Equal registration inputs therefore have equal registration digests, but equality of those public bytes is not an authority capability. Each factory call creates a distinct process-local runtime token retained in a private weak association. A verified handle is accepted only by a loop configured with the exact `IdentityPort` instance that minted it; a handle from another instance is foreign even when both instances declare identical registration bytes. JavaScript-shaped lookalikes and handles from `/testing` or another loop are rejected. Handles are process-local and must be re-verified after restart; neither the brand nor the private binding is serializable.
+
+Candidate and review requests accept the loop-bound verified handle; the engine records its `PrincipalRef` projection and attestation digest. Model output or ordinary caller data cannot choose an identity or independence domain. The kernel proves verified-handle non-equality; provider family, model, process and organizational independence remain stronger host policies.
 
 ### Source provenance and trust
 
@@ -962,7 +980,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. A configuration change creates a new registry revision.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while the exact-instance runtime token remains private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects a structurally similar identity object that was not created by `createIdentityPort` (or the `/testing` wrapper around it), retains the configured port in engine context, and checks its exact runtime binding before every propose or review transition.
 
 ```ts
 export interface LearningPolicy {

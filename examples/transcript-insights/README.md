@@ -5,7 +5,8 @@ at a time, into a governed learning store — and reports recurring friction
 plus inert candidates. It is the library's proving ground as a true second
 consumer: everything goes through the public package surfaces
 (`@cormidia/learning-loop`, `@cormidia/learning-loop/node`,
-`@cormidia/learning-loop/testing`, `@cormidia/learning-loop-transcript-sources`).
+`@cormidia/learning-loop-transcript-sources`; test fixtures additionally use
+`@cormidia/learning-loop/testing`).
 
 ## Privacy posture
 
@@ -108,6 +109,6 @@ never claims measured outcomes.
 `node src/cli.ts` works because the entry registers a scoped `node:module`
 resolve hook first: the workspace's dev-mode exports point at TypeScript
 sources with `.js` specifiers, which Node's native type stripping does not
-remap, and the kernel's `/testing` entrypoint eagerly imports vitest (stubbed
-for the CLI process). A published dist would need neither shim; see the PR
-notes for the upstream feedback.
+remap. The runtime now mints demo identities through the root
+`createIdentityPort` factory and does not import the `/testing` entrypoint. A
+published dist would not need the source-resolution shim.

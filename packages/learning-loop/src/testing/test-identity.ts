@@ -1,19 +1,26 @@
 // Deterministic IdentityPort for tests and examples. Verification evidence is
 // parsed from `unknown` — `{ principalId, kind, independenceDomain }` — and
 // the attestation id/digest are pure functions of that input, so the same
-// evidence always mints the same VerifiedPrincipal. Only this module (via the
-// package-private brand symbol) can attach the brand; ordinary caller data
-// cannot choose an identity.
+// evidence always mints the same VerifiedPrincipal. Minting delegates to the
+// root createIdentityPort factory; ordinary caller data cannot attach a brand
+// or choose an identity outside the parsed test evidence.
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
+import { createIdentityPort } from "../engine/identity.js";
 import { parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
-import { verifiedPrincipalBrand } from "../records/brands.js";
-import type { IdentityPort, VerifiedPrincipal } from "../records/principal.js";
+import type { IdentityPort } from "../records/principal.js";
 
 const PRINCIPAL_KINDS = ["human", "agent", "service"] as const;
+const TEST_IDENTITY_CONFIGURATION_DIGEST = sha256HexOfCanonicalJson({
+  kind: "deterministic-test-identity",
+  schemaVersion: 1,
+});
 
 export function createTestIdentityPort(): IdentityPort {
-  return {
-    verify: (evidence: unknown): Promise<VerifiedPrincipal> => {
+  return createIdentityPort({
+    id: "testing/deterministic-identity",
+    version: "1.0.0",
+    configurationDigest: TEST_IDENTITY_CONFIGURATION_DIGEST,
+    verify: (evidence: unknown): Promise<unknown> => {
       const fields = readFields(evidence, ["evidence"]);
       const ref = {
         id: fields.req("principalId", parseNonEmptyText),
@@ -25,13 +32,11 @@ export function createTestIdentityPort(): IdentityPort {
         kind: ref.kind,
         independenceDomain: ref.independenceDomain,
       });
-      const principal: VerifiedPrincipal = {
+      return Promise.resolve({
         ref,
         attestationId: `test-attestation-${attestationDigest.slice(0, 16)}`,
         attestationDigest,
-        [verifiedPrincipalBrand]: true,
-      };
-      return Promise.resolve(principal);
+      });
     },
-  };
+  });
 }

@@ -173,10 +173,15 @@ Suppression configuration is content-bound but non-enforcing.
 receipt-last exact-scope indexes/query/view, immutable not-assessed governance
 snapshots and historical/current audit separation.
 
+**Implemented next by decision 0016:** private content-addressed
+derivation-to-group claims, one exact nullable recurrence decision for every
+new Candidate, claim-before-receipt recovery, and inline CandidateView
+recurrence lineage.
+
 **Still deferred:** Candidate/review assessment, deduplication,
-decisive-rejection suppression and override evidence, Candidate-to-group
-claims and proposal admission. C2b1, policy and receipt slices do not create or
-refuse a Candidate.
+decisive-rejection suppression and override evidence, assessed pack receipts,
+and proposal admission. The recurrence, policy, receipt, and claim slices do
+not refuse a Candidate because another claim exists.
 
 Reference detector contents and fixtures remain #30d. Optional semantic/model
 workflows remain #13. Candidate-utility calibration and every quality or
@@ -198,4 +203,5 @@ publication, authorization, exposure, and activation stay outside this slice.
 - C2b1 adds no Candidate authority, provider dependency, destination,
   activation path, or efficacy metric. Decision 0014 adds only non-enforcing
   policy registration/transient caps; decision 0015 adds audit receipts/reads
-  without Candidate governance.
+  without Candidate governance; decision 0016 adds only private observational
+  Candidate/group claims.

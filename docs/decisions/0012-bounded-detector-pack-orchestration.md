@@ -122,9 +122,12 @@ classification. Rejection-suppression configuration remains non-enforcing.
 receipt-last exact-scope audit reads and immutable not-assessed governance
 snapshots. No public receipt writer is exposed.
 
-**Still deferred:** Candidate-to-group claims, assessed availability,
-deduplication, decisive-rejection suppression and override evidence, and
-proposal admission.
+**Implemented next by decision 0016:** private derivation/Candidate recurrence
+claims, exact frozen proposal baselines and observational CandidateView
+lineage.
+
+**Still deferred:** assessed availability, deduplication,
+decisive-rejection suppression and override evidence, and proposal admission.
 
 Reference detector contents and synthetic controls remain #30d. Optional
 semantic/model workflows remain #13. Candidate-utility calibration and every

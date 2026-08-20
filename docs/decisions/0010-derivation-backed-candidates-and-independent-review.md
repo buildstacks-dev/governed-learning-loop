@@ -134,3 +134,13 @@ derivation digest.
   #30c1; pack orchestration and scheduling remain #30c2. #13 owns
   semantic-provider and reviewer calibration workflows. #26 owns
   candidate-utility measurement and any quality claim.
+
+### Amendment — decision 0016
+
+Every new Candidate-v2 proposal now freezes its complete parsed Candidate bytes
+inside one private nullable recurrence decision before the Candidate receipt.
+CandidateView adds an inline `recurrenceLineage` dimension without another root
+symbol. Historical Candidate bytes are unchanged and never gain a claim on
+read. The exact mapping, proposer/producer separation, review independence and
+inert Candidate rulings above remain unchanged; recurrence claims do not yet
+alter proposal or review disposition.

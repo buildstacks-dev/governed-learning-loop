@@ -163,12 +163,12 @@ DetectorPackRunView contains:
 
 ## Deferred governance
 
-This slice does not implement CandidateRecurrenceClaim, group-to-Candidate
-indexes, current Candidate/review assessment, deduplication, suppression,
-override or proposal admission. The later Candidate slice must create exact
-claims receipt-last, derive them only from qualified derivation lineage,
-serialize concurrent proposals, require exact same-group predecessor lineage,
-and never auto-migrate historical/manual/unbound Candidates.
+Decision 0016 subsequently implements private derivation/Candidate recurrence
+claims and group-Candidate append lineage, derived only from exact qualified
+execution/derivation facts. Receipt minting in the current runtime still does
+not read those claims. Current Candidate/review assessment, deduplication,
+suppression, override, assessed receipt minting and proposal admission remain
+deferred. Historical/manual/unbound Candidates are never auto-migrated.
 
 Reference detector contents remain #30d. Semantic/model workflows remain #13.
 Candidate-utility calibration and every quality/improvement claim remain #26.

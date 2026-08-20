@@ -109,11 +109,15 @@ key/full digests, receipt-last exact-scope persistence/query/view, immutable
 not-assessed governance-snapshot lineage, and historical/current view
 separation.
 
-**Deferred to the Candidate-governance slice:** kernel-derived
-Candidate-to-group claims, exact Candidate/review snapshot semantics,
-deduplication, decisive-rejection suppression, evidence-multiplier overrides,
-same-group supersession, and concurrent proposal admission. That slice must
-not infer claims for historical/manual/unbound Candidates.
+**Implemented next by decision 0016:** kernel-derived private
+derivation/Candidate recurrence claims, exact frozen proposal populations and
+historical-unbound Candidate views. These claims remain observational.
+
+**Deferred to the Candidate-governance slice:** exact Candidate/review
+assessment, deduplication, decisive-rejection suppression,
+evidence-multiplier overrides, enforced same-group supersession, and concurrent
+proposal admission. That slice must not infer claims for
+historical/manual/unbound Candidates.
 
 Reference detector contents remain #30d. Optional semantic/model workflows
 remain #13. Candidate-utility calibration and every quality or improvement
@@ -130,7 +134,8 @@ policy.
 - Configuring or changing the policy creates a new loop-registry revision;
   historical executions and recurrence groups remain bound to their exact
   prior revisions and are never relabeled.
-- Registered rejectionSuppression bytes are non-enforcing until an explicit
-  later decision lands durable claims and proposal controls.
+- Registered rejectionSuppression bytes remain non-enforcing after decision
+  0016 lands durable observational claims; a separate decision must land
+  assessment and proposal controls.
 - No public pack receipt, query, writer, Candidate mutation, provider SDK,
   destination, activation path, or efficacy metric is added.

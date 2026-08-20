@@ -114,6 +114,25 @@ function mapEligibleDerivation(view: InsightDerivationView): ResolvedCandidateDe
       ...view.evidenceHealth.diagnostics,
     ]);
   }
+  const mapped = mapCandidateDerivationContent(derivation);
+  return {
+    derivation,
+    view,
+    ...mapped,
+    producerPrincipal: derivation.producer.principal,
+    producerImplementation: {
+      id: derivation.producer.implementationId,
+      version: derivation.producer.implementationVersion,
+    },
+  };
+}
+
+export function mapCandidateDerivationContent(derivation: InsightDerivation): {
+  readonly problem: string;
+  readonly hypothesis: string;
+  readonly evidenceRefs: readonly EvidenceRef[];
+  readonly intervention: CandidateIntervention;
+} {
   const interpretation = derivation.interpretation;
   const impact = derivation.impactHypothesis;
   const candidateIntervention = derivation.candidateIntervention;
@@ -131,8 +150,6 @@ function mapEligibleDerivation(view: InsightDerivationView): ResolvedCandidateDe
     ]);
   }
   return {
-    derivation,
-    view,
     problem: interpretation.statement,
     hypothesis: impact.statement,
     evidenceRefs: mappedEvidence(derivation),
@@ -141,11 +158,6 @@ function mapEligibleDerivation(view: InsightDerivationView): ResolvedCandidateDe
       kind: candidateIntervention.proposedDestinationKind,
       content: candidateIntervention.contentDraft,
       rollbackIntent: candidateIntervention.rollbackIntent,
-    },
-    producerPrincipal: derivation.producer.principal,
-    producerImplementation: {
-      id: derivation.producer.implementationId,
-      version: derivation.producer.implementationVersion,
     },
   };
 }

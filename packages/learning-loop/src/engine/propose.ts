@@ -6,10 +6,12 @@
 import { toJsonValue } from "../canonical/to-json-value.js";
 import type { Diagnostic } from "../diagnostics.js";
 import { LearningLoopError } from "../diagnostics.js";
-import { parseNonEmptyText, readFields } from "../parse/toolkit.js";
-import type { Candidate } from "../records/candidate.js";
-import { candidateContentDigest, parseCandidate } from "../records/candidate.js";
+import { parseArrayOf, parseJson, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
+import type { Parse } from "../parse/toolkit.js";
+import type { Candidate, CandidateIntervention, CandidateV2, RiskTier } from "../records/candidate.js";
+import { candidateContentDigest, candidateScopeDigest, parseCandidate } from "../records/candidate.js";
 import type { VerifiedPrincipal } from "../records/principal.js";
+import type { Scope } from "../records/scope.js";
 import type { EngineContext } from "./context.js";
 import {
   createOnly,
@@ -22,16 +24,38 @@ import {
 } from "./context.js";
 import { assertVerifiedPrincipal } from "./identity.js";
 import type { CandidateView } from "./query.js";
-import { governanceViewOf } from "./views.js";
+import { candidateGovernanceStateOf } from "./views.js";
+import { resolveCandidateEvidence } from "./evidence-binding.js";
 
-export type CandidateInput = Omit<
-  Candidate,
-  "schemaVersion" | "proposedBy" | "proposerAttestationDigest" | "proposedAt" | "contentDigest"
-> & {
+export interface CandidateInput {
+  readonly id: string;
+  readonly scope: Scope;
+  readonly problem: string;
+  readonly hypothesis: string;
+  /** Exact durable observation ids; the kernel resolves and persists EvidenceRefs. */
+  readonly evidenceIds: readonly string[];
+  readonly intervention: CandidateIntervention;
+  readonly proposedRisk: RiskTier;
   readonly proposedBy: VerifiedPrincipal;
-};
+  readonly supersedes?: string;
+}
 
-export interface ProposeOutcome extends CandidateView {}
+export interface ProposeOutcome extends Omit<CandidateView, "candidate"> {
+  readonly candidate: CandidateV2;
+}
+
+const RISK_TIERS = ["T0", "T1", "T2", "T3"] as const;
+const parseUnknown: Parse<unknown> = (value) => value;
+
+const parseInterventionAt: Parse<CandidateIntervention> = (value, path) => {
+  const fields = readFields(value, path);
+  return {
+    destinationId: fields.req("destinationId", parseNonEmptyText),
+    kind: fields.req("kind", parseNonEmptyText),
+    content: fields.req("content", parseJson),
+    rollbackIntent: fields.req("rollbackIntent", parseNonEmptyText),
+  };
+};
 
 interface DigestIndexEntry {
   readonly candidateId: string;
@@ -52,38 +76,110 @@ async function outcomeFor(
   extraReasons: readonly Diagnostic[],
 ): Promise<ProposeOutcome> {
   const requiresIndependentReview = context.policyRules.risks[effectiveRisk(candidate)].independentReview;
-  const view = await governanceViewOf(context, candidate, requiresIndependentReview);
-  const governance = extraReasons.length === 0 ? view : { ...view, reasons: [...extraReasons, ...view.reasons] };
-  return { candidate, governance };
+  const state = await candidateGovernanceStateOf(context, candidate, requiresIndependentReview);
+  const governance =
+    extraReasons.length === 0
+      ? state.governance
+      : { ...state.governance, reasons: [...extraReasons, ...state.governance.reasons] };
+  if (candidate.schemaVersion !== 2) {
+    throw new LearningLoopError("store.corrupt", [
+      {
+        code: "store.corrupt",
+        severity: "error",
+        message: "the schema-v2 propose path resolved a legacy candidate",
+      },
+    ]);
+  }
+  return { candidate, governance, evidenceHealth: state.evidenceHealth };
 }
 
 export async function runPropose(context: EngineContext, input: CandidateInput): Promise<ProposeOutcome> {
-  assertVerifiedPrincipal(context.identity, input.proposedBy, "proposedBy");
-  const scope = context.scopePolicy.validate(input.scope);
-  const contentDigest = candidateContentDigest({
+  // Capture every caller-owned property exactly once before the first await.
+  // The verified handle is a runtime capability; later getter reads must not
+  // be able to swap its durable attribution projection.
+  const proposedBy = input.proposedBy;
+  assertVerifiedPrincipal(context.identity, proposedBy, "proposedBy");
+  const fields = readFields(input, ["candidateInput"]);
+  const id = fields.req("id", parseNonEmptyText);
+  const scope = context.scopePolicy.validate(fields.req("scope", parseUnknown));
+  const problem = fields.req("problem", parseNonEmptyText);
+  const hypothesis = fields.req("hypothesis", parseNonEmptyText);
+  const evidenceIds = fields.req("evidenceIds", parseArrayOf(parseNonEmptyText));
+  const intervention = fields.req("intervention", parseInterventionAt);
+  const proposedRisk = fields.req("proposedRisk", parseOneOf(RISK_TIERS));
+  const supersedes = fields.opt("supersedes", parseNonEmptyText);
+  const proposerRef = Object.freeze({ ...proposedBy.ref });
+  const proposerAttestationDigest = proposedBy.attestationDigest;
+
+  const evidence = await resolveCandidateEvidence(context, evidenceIds, scope);
+  if (evidence.health.status === "invalid" || evidence.refs.length !== evidenceIds.length) {
+    throw new LearningLoopError("candidate.evidence_invalid", evidence.health.diagnostics);
+  }
+
+  let originalDigest: string | undefined;
+  if (supersedes !== undefined) {
+    if (supersedes === id) {
+      throw new LearningLoopError("candidate.supersedes_invalid", [
+        {
+          code: "candidate.supersedes_invalid",
+          severity: "error",
+          message: "a candidate cannot supersede itself",
+        },
+      ]);
+    }
+    const predecessor = await loadCandidate(context, supersedes);
+    if (predecessor === undefined) {
+      throw new LearningLoopError("candidate.supersedes_not_found", [
+        {
+          code: "candidate.supersedes_not_found",
+          severity: "error",
+          message: "the candidate named by supersedes does not exist",
+        },
+      ]);
+    }
+    if (candidateScopeDigest(predecessor.scope) !== candidateScopeDigest(scope)) {
+      throw new LearningLoopError("candidate.supersedes_scope_mismatch", [
+        {
+          code: "candidate.supersedes_scope_mismatch",
+          severity: "error",
+          message: "a candidate may supersede only a predecessor with the exact same scope",
+        },
+      ]);
+    }
+    originalDigest = predecessor.contentDigest;
+  }
+
+  const digestBase = {
+    schemaVersion: 2 as const,
     scope,
-    problem: input.problem,
-    hypothesis: input.hypothesis,
-    evidenceIds: input.evidenceIds,
-    intervention: input.intervention,
-    proposedRisk: input.proposedRisk,
-    ...(input.supersedes !== undefined ? { supersedes: input.supersedes } : {}),
-  });
-  const assembled: Candidate = {
-    schemaVersion: 1,
-    id: input.id,
+    problem,
+    hypothesis,
+    evidenceRefs: evidence.refs,
+    intervention,
+    proposedRisk,
+  };
+  const contentDigest =
+    supersedes === undefined || originalDigest === undefined
+      ? candidateContentDigest(digestBase)
+      : candidateContentDigest({ ...digestBase, supersedes, originalDigest });
+  const assembledBase = {
+    schemaVersion: 2 as const,
+    id,
     scope,
-    problem: input.problem,
-    hypothesis: input.hypothesis,
-    evidenceIds: input.evidenceIds,
-    intervention: input.intervention,
-    proposedRisk: input.proposedRisk,
-    proposedBy: input.proposedBy.ref,
-    proposerAttestationDigest: input.proposedBy.attestationDigest,
+    problem,
+    hypothesis,
+    evidenceRefs: evidence.refs,
+    intervention,
+    proposedRisk,
+    proposedBy: proposerRef,
+    proposerAttestationDigest,
     proposedAt: context.clock.now(),
     contentDigest,
-    ...(input.supersedes !== undefined ? { supersedes: input.supersedes } : {}),
   };
+  const assembled: CandidateV2 =
+    supersedes === undefined || originalDigest === undefined
+      ? assembledBase
+      : { ...assembledBase, supersedes, originalDigest };
   const candidate = parseCandidate(assembled);
   const operationId = `propose/${candidate.id}/${contentDigest}`;
 

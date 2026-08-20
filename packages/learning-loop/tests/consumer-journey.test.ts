@@ -96,7 +96,7 @@ test("the contract's opening consumer journey runs end to end", async () => {
     ],
     problem: "TypeScript changes are reported complete before type checking.",
     hypothesis: "A completion preflight will catch unresolved type errors.",
-    evidenceIds: ["obs-42-typecheck"],
+    evidenceIds: ["manual-evidence/obs-42-typecheck"],
     intervention: {
       destinationId: "agent-instructions",
       kind: "procedure",

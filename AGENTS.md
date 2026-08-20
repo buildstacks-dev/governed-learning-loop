@@ -46,6 +46,15 @@ between code and contract, open an issue — never silently drift either one.
   Missing, unreadable, unsupported, corrupt, partial, or revision-changed
   evidence produces closed evidence-health records; it is never silently an
   empty successful page or a behavioral candidate.
+- **Candidate evidence is kernel-resolved and content-bound.** Callers request
+  exact durable observation ids; only `propose` may resolve records, episode
+  identity, scope, and source-page receipts into ordered, nonempty,
+  duplicate-free Candidate-v2 `EvidenceRef` values. Candidate v1 remains
+  byte-stable, `legacy_unbound`, and audit-only, with no automatic migration. A
+  successor is an explicit new proposal with exact predecessor lineage.
+  Candidate views expose only the closed evidence-health status; it grants no
+  trust or authority. Measurement references stay refused until issue #31c
+  lands their ownership rules.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

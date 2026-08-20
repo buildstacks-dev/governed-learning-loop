@@ -20,6 +20,7 @@ import type { Scope } from "../records/scope.js";
 import type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "../records/source-health.js";
 import { parseEvidenceHealthFinding, parseImportReceipt, parseSourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
+import type { EvidenceHealthView } from "./evidence-binding.js";
 import {
   effectiveRisk,
   iterateRecordPages,
@@ -30,7 +31,7 @@ import {
 import { loadEpisodeIdentityState } from "./episode-identity.js";
 import type { GovernanceView } from "./governance.js";
 import type { LearningReportQuery } from "./report.js";
-import { governanceViewOf } from "./views.js";
+import { candidateGovernanceStateOf } from "./views.js";
 
 const MAX_QUERY_LIMIT = 500;
 const MAX_FILTER_VALUES = 1_000;
@@ -144,6 +145,7 @@ export interface EpisodeView {
 export interface CandidateView {
   readonly candidate: Candidate;
   readonly governance: GovernanceView;
+  readonly evidenceHealth: EvidenceHealthView;
 }
 
 interface ParsedPageQuery {
@@ -944,6 +946,6 @@ export async function runGetCandidateView(
   const candidate = await loadCandidate(context, candidateId);
   if (candidate === undefined) return undefined;
   const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
-  const governance = await governanceViewOf(context, candidate, riskRule.independentReview);
-  return { candidate, governance };
+  const state = await candidateGovernanceStateOf(context, candidate, riskRule.independentReview);
+  return { candidate, governance: state.governance, evidenceHealth: state.evidenceHealth };
 }

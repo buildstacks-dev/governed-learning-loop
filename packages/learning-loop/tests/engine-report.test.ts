@@ -1,30 +1,52 @@
 // learning.report: scope, episode, and time-window filtering over stored
 // records; activation-tier id lists are structurally empty with a diagnostic.
 import { describe, expect, it } from "vitest";
-import { SCOPE, candidateInput, createHarness, journeyEvidence } from "./engine-harness.js";
+import type { Scope } from "../src/index.js";
+import { SCOPE, candidateInput, createCandidateHarness, createHarness, journeyEvidence } from "./engine-harness.js";
 
 describe("learning.report", () => {
   it("filters candidates by exact scope", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, manual, proposer } = await createCandidateHarness();
+    const otherScope: Scope = [{ type: "project", id: "other-project" }];
+    await learning.ingest(manual, {
+      observations: [
+        {
+          id: "obs-other-project",
+          episodeId: "other-project-episode",
+          kind: "agent.turn.completed",
+          data: { project: "other" },
+        },
+      ],
+      episodes: [
+        {
+          id: "other-project-episode",
+          scope: otherScope,
+          openedAt: "2026-08-12T17:00:00.000Z",
+          closedAt: "2026-08-12T17:01:00.000Z",
+          outcome: { status: "succeeded", measurementIds: [] },
+        },
+      ],
+    });
     await learning.propose(candidateInput(proposer));
     await learning.propose(
       candidateInput(proposer, {
         id: "cand-other-scope",
-        scope: [{ type: "project", id: "other-project" }],
+        scope: otherScope,
+        evidenceIds: ["manual-evidence/obs-other-project"],
         problem: "A different project has a different problem.",
       }),
     );
 
     const scoped = await learning.report({ scope: SCOPE });
     expect(scoped.candidateIds).toEqual(["cand-1"]);
-    const other = await learning.report({ scope: [{ type: "project", id: "other-project" }] });
+    const other = await learning.report({ scope: otherScope });
     expect(other.candidateIds).toEqual(["cand-other-scope"]);
     const all = await learning.report({});
     expect(all.candidateIds).toEqual(["cand-1", "cand-other-scope"]);
   });
 
   it("filters by since/until on proposedAt (fixed clock: 2026-08-16T10:00:00Z)", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     await learning.propose(candidateInput(proposer));
     const before = await learning.report({ until: "2026-08-16T09:59:59.000Z" });
     expect(before.candidateIds).toEqual([]);
@@ -46,11 +68,30 @@ describe("learning.report", () => {
   it("filters by episode through the candidates' evidence", async () => {
     const { learning, manual, proposer } = await createHarness();
     await learning.ingest(manual, journeyEvidence());
+    await learning.ingest(manual, {
+      observations: [
+        {
+          id: "obs-from-somewhere-else",
+          episodeId: "unrelated-episode",
+          kind: "agent.turn.completed",
+          data: { unrelated: true },
+        },
+      ],
+      episodes: [
+        {
+          id: "unrelated-episode",
+          scope: SCOPE,
+          openedAt: "2026-08-12T18:00:00.000Z",
+          closedAt: "2026-08-12T18:01:00.000Z",
+          outcome: { status: "succeeded", measurementIds: [] },
+        },
+      ],
+    });
     await learning.propose(candidateInput(proposer));
     await learning.propose(
       candidateInput(proposer, {
         id: "cand-unrelated",
-        evidenceIds: ["obs-from-somewhere-else"],
+        evidenceIds: ["manual-evidence/obs-from-somewhere-else"],
         problem: "Something unrelated to episode change-42.",
       }),
     );
@@ -63,7 +104,7 @@ describe("learning.report", () => {
   });
 
   it("reports empty intervention and evaluation ids with an explanatory diagnostic", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     await learning.propose(candidateInput(proposer));
     const report = await learning.report({});
     expect(report.interventionIds).toEqual([]);

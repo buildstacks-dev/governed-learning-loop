@@ -4,17 +4,23 @@
 // digest, a self-review, a same-independence-domain review where policy
 // demands a distinct domain, or an `accept` carrying a blocking finding.
 // Generation and review stay attributed and independent (kernel invariant 2).
+import { canonicalJsonText } from "../canonical/canonical-json.js";
+import { toJsonValue } from "../canonical/to-json-value.js";
 import { LearningLoopError } from "../diagnostics.js";
 import { parseArrayOf, parseNonEmptyText, parseOneOf, parseText, readFields } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
 import type { Candidate } from "../records/candidate.js";
+import { parseCandidate } from "../records/candidate.js";
+import type { MeasurementRecord } from "../records/episode.js";
 import type { Observation } from "../records/observation.js";
-import { parseObservation } from "../records/observation.js";
-import type { VerifiedPrincipal } from "../records/principal.js";
+import type { PrincipalRef, VerifiedPrincipal } from "../records/principal.js";
 import type { CandidateReview, ReviewDisposition, ReviewFinding } from "../records/review.js";
 import { parseCandidateReview, reviewInvalidReasons } from "../records/review.js";
 import type { EngineContext } from "./context.js";
-import { createOnly, effectiveRisk, iterateRecordPages, loadCandidate } from "./context.js";
+import { createOnly, effectiveRisk, loadStoredRecord } from "./context.js";
+import { candidateLineageDiagnostics } from "./candidate-lineage.js";
+import { revalidateCandidateEvidence } from "./evidence-binding.js";
+import type { CandidateEvidenceResolution } from "./evidence-binding.js";
 import { assertVerifiedPrincipal } from "./identity.js";
 
 /** Semantic-judgment port for candidate review (contract §Semantic judgment). */
@@ -26,7 +32,7 @@ export interface CandidateReviewer {
 
   review(input: {
     readonly candidate: Candidate;
-    readonly evidence: readonly Observation[];
+    readonly evidence: readonly (Observation | MeasurementRecord)[];
     readonly policyDigest: string;
   }): Promise<unknown>;
 }
@@ -70,65 +76,29 @@ function refusal(code: string, message: string): LearningLoopError {
   return new LearningLoopError(code, [{ code, severity: "error", message }]);
 }
 
-/** Observations referenced by the candidate, matched by durable id or source recordRef. */
-async function loadEvidence(context: EngineContext, candidate: Candidate): Promise<readonly Observation[]> {
-  const wanted = new Set(candidate.evidenceIds);
-  const exact = new Map<string, Observation>();
-  const raw = new Map<string, Observation[]>();
-  for await (const page of iterateRecordPages(context.store, "observation", { limit: 100 })) {
-    for (const record of page.records) {
-      const observation = parseObservation(record.value);
-      if (wanted.has(observation.id)) exact.set(observation.id, observation);
-      if (observation.provenance.recordRef !== undefined && wanted.has(observation.provenance.recordRef)) {
-        const matches = raw.get(observation.provenance.recordRef) ?? [];
-        matches.push(observation);
-        raw.set(observation.provenance.recordRef, matches);
-      }
-    }
-  }
-  const evidence: Observation[] = [];
-  for (const evidenceId of candidate.evidenceIds) {
-    const exactMatch = exact.get(evidenceId);
-    if (exactMatch !== undefined) {
-      evidence.push(exactMatch);
-      continue;
-    }
-    const rawMatches = raw.get(evidenceId) ?? [];
-    const sourceIds = new Set(rawMatches.map((observation) => observation.provenance.sourceId));
-    if (sourceIds.size > 1 || rawMatches.length > 1) {
-      throw refusal(
-        "review.evidence_ambiguous",
-        "candidate evidence id matches more than one stored observation; use a durable source-qualified id",
-      );
-    }
-    const rawMatch = rawMatches[0];
-    if (rawMatch !== undefined) evidence.push(rawMatch);
-  }
-  return evidence;
+function assertReviewableEvidence(evidence: CandidateEvidenceResolution): void {
+  if (evidence.health.status === "ready") return;
+  const code =
+    evidence.health.status === "legacy_unbound"
+      ? "review.evidence_unbound"
+      : evidence.health.status === "incomplete"
+        ? "review.evidence_incomplete"
+        : "review.evidence_invalid";
+  throw new LearningLoopError(code, [
+    {
+      code,
+      severity: "error",
+      message: "candidate evidence is not eligible for decisive review",
+    },
+    ...evidence.health.diagnostics,
+  ]);
 }
 
-export async function runReviewCandidate(
-  context: EngineContext,
-  input: CandidateReviewInput,
-): Promise<CandidateReview> {
-  assertVerifiedPrincipal(context.identity, input.reviewer.principal, "reviewer.principal");
-  const candidate = await loadCandidate(context, input.candidateId);
-  if (candidate === undefined) {
-    throw refusal("review.candidate_not_found", `candidate "${input.candidateId}" does not exist`);
-  }
+function sameCanonicalValue(left: unknown, right: unknown): boolean {
+  return canonicalJsonText(toJsonValue(left)) === canonicalJsonText(toJsonValue(right));
+}
 
-  const evidence = await loadEvidence(context, candidate);
-  const raw = await input.reviewer.review({ candidate, evidence, policyDigest: context.policy.digest });
-  const result = parseReviewerResult(raw);
-
-  if (result.candidateId !== candidate.id || result.candidateDigest !== candidate.contentDigest) {
-    throw refusal(
-      "review.binding_mismatch",
-      `review binds candidate "${result.candidateId}" digest ${result.candidateDigest}, but the stored candidate is "${candidate.id}" digest ${candidate.contentDigest}; a review of stale or foreign content is void`,
-    );
-  }
-
-  const reviewerRef = input.reviewer.principal.ref;
+function assertIndependentReviewer(context: EngineContext, candidate: Candidate, reviewerRef: PrincipalRef): void {
   if (reviewerRef.id === candidate.proposedBy.id) {
     throw refusal(
       "review.not_independent",
@@ -142,21 +112,131 @@ export async function runReviewCandidate(
       `policy requires a reviewer from a distinct independence domain at effective risk ${effectiveRisk(candidate)}; "${reviewerRef.id}" shares domain "${reviewerRef.independenceDomain}" with the proposer`,
     );
   }
+}
+
+export async function runReviewCandidate(
+  context: EngineContext,
+  input: CandidateReviewInput,
+): Promise<CandidateReview> {
+  // Capture all caller-owned reviewer and request properties exactly once.
+  const reviewerPort = input.reviewer;
+  const reviewerPrincipal = reviewerPort.principal;
+  assertVerifiedPrincipal(context.identity, reviewerPrincipal, "reviewer.principal");
+  const inputFields = readFields(input, ["candidateReviewInput"]);
+  const reviewId = inputFields.req("id", parseNonEmptyText);
+  const requestedCandidateId = inputFields.req("candidateId", parseNonEmptyText);
+  const reviewerId = parseNonEmptyText(reviewerPort.id, ["reviewer", "id"]);
+  const reviewerVersion = parseNonEmptyText(reviewerPort.version, ["reviewer", "version"]);
+  const configuredCalibrationDigest = reviewerPort.calibrationDigest;
+  const calibrationDigest =
+    configuredCalibrationDigest === undefined
+      ? undefined
+      : parseNonEmptyText(configuredCalibrationDigest, ["reviewer", "calibrationDigest"]);
+  const reviewFunction = reviewerPort.review;
+  if (typeof reviewFunction !== "function") {
+    throw refusal("schema.invalid", "candidate reviewer must provide a review function");
+  }
+  const reviewerRef = Object.freeze({ ...reviewerPrincipal.ref });
+  const reviewerAttestationDigest = reviewerPrincipal.attestationDigest;
+  const reviewerImplementation = Object.freeze({
+    id: reviewerId,
+    version: reviewerVersion,
+    ...(calibrationDigest !== undefined ? { calibrationDigest } : {}),
+  });
+
+  const candidateStored = await loadStoredRecord(context, "candidate", requestedCandidateId);
+  if (candidateStored === undefined) {
+    throw refusal("review.candidate_not_found", `candidate "${requestedCandidateId}" does not exist`);
+  }
+  const candidate = parseCandidate(candidateStored.value);
+  if (candidate.id !== requestedCandidateId) {
+    throw refusal("store.corrupt", "stored candidate id does not match its record key");
+  }
+  const candidateId = candidate.id;
+  const candidateDigest = candidate.contentDigest;
+
+  const existingStored = await loadStoredRecord(context, "review", reviewId);
+  if (existingStored !== undefined) {
+    const existing = parseCandidateReview(existingStored.value);
+    if (existing.id !== reviewId) {
+      throw refusal("store.corrupt", "stored review id does not match its record key");
+    }
+    if (
+      existing.candidateId === candidateId &&
+      existing.candidateDigest === candidateDigest &&
+      existing.reviewerAttestationDigest === reviewerAttestationDigest &&
+      sameCanonicalValue(existing.reviewer, reviewerRef) &&
+      sameCanonicalValue(existing.reviewerImplementation, reviewerImplementation)
+    ) {
+      return existing;
+    }
+    throw refusal("store.conflict", `review "${reviewId}" already belongs to different content`);
+  }
+
+  assertIndependentReviewer(context, candidate, reviewerRef);
+
+  const lineageDiagnostics = await candidateLineageDiagnostics(context, candidate);
+  if (lineageDiagnostics.length > 0) {
+    throw new LearningLoopError("review.lineage_invalid", [
+      {
+        code: "review.lineage_invalid",
+        severity: "error",
+        message: "candidate supersession lineage is invalid",
+      },
+      ...lineageDiagnostics,
+    ]);
+  }
+
+  const evidence = await revalidateCandidateEvidence(context, candidate);
+  assertReviewableEvidence(evidence);
+
+  // The callback receives a detached parsed copy. It cannot mutate the
+  // candidate instance used for binding, independence, or persistence.
+  const candidateForReviewer = Object.freeze(parseCandidate(toJsonValue(candidate)));
+  const raw = await reviewFunction.call(reviewerPort, {
+    candidate: candidateForReviewer,
+    evidence: evidence.records,
+    policyDigest: context.policy.digest,
+  });
+  const result = parseReviewerResult(raw);
+
+  if (result.candidateId !== candidateId || result.candidateDigest !== candidateDigest) {
+    throw refusal(
+      "review.binding_mismatch",
+      `review binds candidate "${result.candidateId}" digest ${result.candidateDigest}, but the stored candidate is "${candidateId}" digest ${candidateDigest}; a review of stale or foreign content is void`,
+    );
+  }
+
+  // The reviewer is an external, potentially long-running port. Revalidate
+  // after it returns so evidence invalidated during review cannot acquire a
+  // decisive persisted disposition. Later invalidation still blocks views.
+  const currentStored = await loadStoredRecord(context, "candidate", candidateId);
+  if (
+    currentStored === undefined ||
+    currentStored.revision !== candidateStored.revision ||
+    currentStored.digest !== candidateStored.digest
+  ) {
+    throw refusal("review.binding_mismatch", "candidate changed or disappeared while review was running");
+  }
+  const currentCandidate = parseCandidate(currentStored.value);
+  if (currentCandidate.id !== candidateId || !sameCanonicalValue(currentCandidate, candidate)) {
+    throw refusal("review.binding_mismatch", "candidate bytes changed while review was running");
+  }
+  assertIndependentReviewer(context, currentCandidate, reviewerRef);
+  const currentLineageDiagnostics = await candidateLineageDiagnostics(context, currentCandidate);
+  if (currentLineageDiagnostics.length > 0) {
+    throw new LearningLoopError("review.lineage_invalid", currentLineageDiagnostics);
+  }
+  assertReviewableEvidence(await revalidateCandidateEvidence(context, currentCandidate));
 
   const record: CandidateReview = {
     schemaVersion: 1,
-    id: input.id,
-    candidateId: candidate.id,
-    candidateDigest: candidate.contentDigest,
+    id: reviewId,
+    candidateId,
+    candidateDigest,
     reviewer: reviewerRef,
-    reviewerAttestationDigest: input.reviewer.principal.attestationDigest,
-    reviewerImplementation: {
-      id: input.reviewer.id,
-      version: input.reviewer.version,
-      ...(input.reviewer.calibrationDigest !== undefined
-        ? { calibrationDigest: input.reviewer.calibrationDigest }
-        : {}),
-    },
+    reviewerAttestationDigest,
+    reviewerImplementation,
     disposition: result.disposition,
     findings: result.findings,
     reviewedAt: context.clock.now(),

@@ -20,7 +20,7 @@ here says a learned intervention has been shown to improve later agent work.
 | Level | You integrate | You get |
 | --- | --- | --- |
 | Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account plus bounded typed episode and evidence views |
-| Govern | Candidates, independent review, policy, rejection | Proposed lessons that are scoped, deduplicated, and kept **inert** until reviewed |
+| Govern | Receipt-bound candidates, independent review, policy, rejection | Proposed lessons with exact evidence/episode lineage that stay **inert** until independently reviewed |
 | Activate *(planned)* | Content-bound authorization, deterministic publication, rollback | Exact versions introduced under host authority, disable/rollback explicit |
 | Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
 
@@ -49,6 +49,12 @@ pages with opaque cursors; engine namespaces and record kinds are private and
 unsupported integration points. A page revision records the append-visible
 store state observed for that page. It is not a frozen detector, calibration,
 or experiment population—those workflows must bind an exact eligible set.
+
+New proposals persist Candidate v2 records with kernel-minted `EvidenceRef`
+bindings to exact records, source-page receipts, episode identity, scope, and
+evidence health. Historical Candidate v1 records remain byte-stable audit
+history, permanently `legacy_unbound`; later receipts never auto-migrate or
+make them review-eligible.
 
 ## The demo: transcript insights
 

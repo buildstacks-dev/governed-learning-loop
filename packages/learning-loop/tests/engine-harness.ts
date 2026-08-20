@@ -130,6 +130,16 @@ export async function createHarness(
   return { store, learning, identities, manual, proposer, reviewerB, reviewerSameDomain };
 }
 
+/** Harness with one committed, receipt-bound observation/episode ready for candidate tests. */
+export async function createCandidateHarness(
+  extraSources: readonly RegisteredSource<unknown>[] = [],
+  options: HarnessOptions = {},
+): Promise<Harness> {
+  const harness = await createHarness(extraSources, options);
+  await harness.learning.ingest(harness.manual, journeyEvidence());
+  return harness;
+}
+
 export function journeyEvidence(): ManualEvidenceInput {
   return {
     observations: [
@@ -171,7 +181,7 @@ export function candidateInput(
     scope: SCOPE,
     problem: "TypeScript changes are reported complete before type checking.",
     hypothesis: "A completion preflight will catch unresolved type errors.",
-    evidenceIds: ["obs-42-typecheck"],
+    evidenceIds: ["manual-evidence/obs-42-typecheck"],
     intervention: {
       destinationId: "agent-instructions",
       kind: "procedure",

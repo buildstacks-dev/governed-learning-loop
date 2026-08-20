@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { LearningLoop } from "../src/index.js";
 import { createTestIdentityPort } from "../src/testing/index.js";
-import { candidateInput, createHarness, createHarnessIdentityPort } from "./engine-harness.js";
+import { candidateInput, createCandidateHarness, createHarnessIdentityPort } from "./engine-harness.js";
 
 function proposeFromUnknown(learning: LearningLoop, input: unknown): unknown {
   return Reflect.apply(learning.propose, learning, [input]);
@@ -11,9 +11,16 @@ function proposeFromUnknown(learning: LearningLoop, input: unknown): unknown {
 
 describe("learning.propose", () => {
   it("records an inert candidate whose governance requires review and blocks publication", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     const outcome = await learning.propose(candidateInput(proposer));
-    expect(outcome.candidate.schemaVersion).toBe(1);
+    expect(outcome.candidate.schemaVersion).toBe(2);
+    expect(outcome.candidate.evidenceRefs).toHaveLength(1);
+    expect(outcome.candidate.evidenceRefs[0]).toMatchObject({
+      kind: "observation",
+      recordId: "manual-evidence/obs-42-typecheck",
+      sourceId: "manual-evidence",
+    });
+    expect(outcome.evidenceHealth.status).toBe("ready");
     expect(outcome.candidate.proposedAt).toBe("2026-08-16T10:00:00.000Z");
     expect(outcome.candidate.proposerAttestationDigest).toBe(proposer.attestationDigest);
     expect(outcome.governance).toMatchObject({
@@ -24,7 +31,7 @@ describe("learning.propose", () => {
   });
 
   it("refuses the same candidate id with different bytes: create-only, no overwrite", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     await learning.propose(candidateInput(proposer));
     await expect(
       learning.propose(candidateInput(proposer, { problem: "A different problem statement entirely." })),
@@ -38,7 +45,7 @@ describe("learning.propose", () => {
   });
 
   it("deduplicates identical content under a different id: same candidate, no twin", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     const first = await learning.propose(candidateInput(proposer));
     const second = await learning.propose(candidateInput(proposer, { id: "cand-1-twin" }));
     expect(second.candidate.id).toBe(first.candidate.id);
@@ -47,7 +54,7 @@ describe("learning.propose", () => {
   });
 
   it("an identical re-propose (same id, same content) returns the existing candidate", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     const first = await learning.propose(candidateInput(proposer));
     const replay = await learning.propose(candidateInput(proposer));
     expect(replay.candidate).toEqual(first.candidate);
@@ -55,7 +62,7 @@ describe("learning.propose", () => {
   });
 
   it("validates scope through the configured scope policy", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     await expect(learning.propose(candidateInput(proposer, { scope: [] }))).rejects.toMatchObject({
       name: "LearningLoopError",
       code: "schema.invalid",
@@ -67,8 +74,8 @@ describe("learning.propose", () => {
     const identityB = createHarnessIdentityPort();
     expect(identityA.registrationDigest).toBe(identityB.registrationDigest);
 
-    const loopA = await createHarness([], { identity: identityA });
-    const loopB = await createHarness([], { identity: identityB });
+    const loopA = await createCandidateHarness([], { identity: identityA });
+    const loopB = await createCandidateHarness([], { identity: identityB });
     expect(loopA.proposer.ref).toEqual(loopB.proposer.ref);
     expect(loopA.proposer.attestationDigest).toBe(loopB.proposer.attestationDigest);
 
@@ -93,7 +100,7 @@ describe("learning.propose", () => {
   });
 
   it("rejects a test-port handle when a production identity port is configured", async () => {
-    const { learning, proposer } = await createHarness([], { identity: createHarnessIdentityPort() });
+    const { learning, proposer } = await createCandidateHarness([], { identity: createHarnessIdentityPort() });
     const testIdentity = createTestIdentityPort();
     const foreign = await testIdentity.verify({
       principalId: proposer.ref.id,
@@ -112,7 +119,7 @@ describe("learning.propose", () => {
   });
 
   it("rejects unminted, cloned, spread, and serialized principal shapes", async () => {
-    const { learning, proposer } = await createHarness([], { identity: createHarnessIdentityPort() });
+    const { learning, proposer } = await createCandidateHarness([], { identity: createHarnessIdentityPort() });
     const plainLookalike: unknown = {
       ref: proposer.ref,
       attestationId: proposer.attestationId,

@@ -2,11 +2,17 @@
 // the accept-with-blocking-finding refusal. Generation and review must be
 // attributed and independent (kernel invariant 2).
 import { describe, expect, it } from "vitest";
-import { candidateInput, createHarness, createHarnessIdentityPort, reviewerFor } from "./engine-harness.js";
+import {
+  candidateInput,
+  createCandidateHarness,
+  createHarness,
+  createHarnessIdentityPort,
+  reviewerFor,
+} from "./engine-harness.js";
 
 describe("learning.reviewCandidate", () => {
   it("refuses a self-review: the proposer cannot provide the decisive review", async () => {
-    const { learning, proposer } = await createHarness();
+    const { learning, proposer } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer));
     await expect(
       learning.reviewCandidate({ id: "rev-1", candidateId: candidate.id, reviewer: reviewerFor(proposer) }),
@@ -14,7 +20,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("refuses a same-independence-domain review at effective risk T2", async () => {
-    const { learning, proposer, reviewerSameDomain } = await createHarness();
+    const { learning, proposer, reviewerSameDomain } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer, { proposedRisk: "T2" }));
     await expect(
       learning.reviewCandidate({ id: "rev-1", candidateId: candidate.id, reviewer: reviewerFor(reviewerSameDomain) }),
@@ -22,7 +28,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("permits a same-domain (different principal) review below T2 under the conservative policy", async () => {
-    const { learning, proposer, reviewerSameDomain } = await createHarness();
+    const { learning, proposer, reviewerSameDomain } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer, { proposedRisk: "T1" }));
     const review = await learning.reviewCandidate({
       id: "rev-1",
@@ -34,7 +40,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("refuses a review whose binding carries a stale digest after the content changed", async () => {
-    const { learning, proposer, reviewerB } = await createHarness();
+    const { learning, proposer, reviewerB } = await createCandidateHarness();
     const v1 = await learning.propose(candidateInput(proposer));
     const v2 = await learning.propose(
       candidateInput(proposer, {
@@ -57,7 +63,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("refuses an accept that carries a blocking finding", async () => {
-    const { learning, proposer, reviewerB } = await createHarness();
+    const { learning, proposer, reviewerB } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer));
     const contradictory = reviewerFor(reviewerB, (input) => ({
       candidateId: input.candidate.id,
@@ -71,7 +77,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("refuses a malformed reviewer result at the unknown boundary", async () => {
-    const { learning, proposer, reviewerB } = await createHarness();
+    const { learning, proposer, reviewerB } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer));
     const malformed = reviewerFor(reviewerB, () => ({ verdict: "looks good" }));
     await expect(
@@ -80,7 +86,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("persists an accepted review with attribution and flips governance to accepted (publication still blocked)", async () => {
-    const { learning, proposer, reviewerB } = await createHarness();
+    const { learning, proposer, reviewerB } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer));
     const review = await learning.reviewCandidate({
       id: "rev-1",
@@ -100,7 +106,7 @@ describe("learning.reviewCandidate", () => {
   });
 
   it("a reject review blocks the candidate with reasons", async () => {
-    const { learning, proposer, reviewerB } = await createHarness();
+    const { learning, proposer, reviewerB } = await createCandidateHarness();
     const { candidate } = await learning.propose(candidateInput(proposer));
     const rejecting = reviewerFor(reviewerB, (input) => ({
       candidateId: input.candidate.id,
@@ -127,7 +133,7 @@ describe("learning.reviewCandidate", () => {
     const foreignIdentity = createHarnessIdentityPort();
     expect(foreignIdentity.registrationDigest).toBe(configuredIdentity.registrationDigest);
 
-    const { learning, store, proposer, reviewerB } = await createHarness([], { identity: configuredIdentity });
+    const { learning, store, proposer, reviewerB } = await createCandidateHarness([], { identity: configuredIdentity });
     const { candidate } = await learning.propose(candidateInput(proposer));
     const foreignReviewer = await foreignIdentity.verify({
       principalId: reviewerB.ref.id,

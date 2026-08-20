@@ -4,8 +4,7 @@
 // silent absence.
 import type { Diagnostic } from "../diagnostics.js";
 import { invalid } from "../parse/toolkit.js";
-import { parseCandidate } from "../records/candidate.js";
-import { parseObservation } from "../records/observation.js";
+import { candidateScopeDigest, parseCandidate } from "../records/candidate.js";
 import type { Scope } from "../records/scope.js";
 import type { EngineContext } from "./context.js";
 import { iterateRecordPages } from "./context.js";
@@ -34,45 +33,19 @@ const TIERS_NOT_IMPLEMENTED: Diagnostic = {
     "intervention and evaluation records cannot exist yet: the activation and validation tiers are not part of the Observe+Govern milestone",
 };
 
-/**
- * Evidence ids referenced by candidates may use either the durable observation
- * id or the source-record id (kept in provenance.recordRef); collect both for
- * every observation belonging to the queried episodes.
- */
-async function episodeEvidenceKeys(
-  context: EngineContext,
+function candidateMatchesEvidence(
+  candidate: ReturnType<typeof parseCandidate>,
   sourceIds: readonly string[],
   episodeIds?: readonly string[],
-): Promise<ReadonlySet<string>> {
+): boolean {
+  if (candidate.schemaVersion === 1) return false;
   const wantedSources = new Set(sourceIds);
   const wantedEpisodes = episodeIds === undefined ? undefined : new Set(episodeIds);
-  const keys = new Set<string>();
-  const allDurableIds = new Set<string>();
-  const rawSources = new Map<string, Set<string>>();
-  const matchingRawRefs = new Set<string>();
-  for await (const page of iterateRecordPages(context.store, "observation", { limit: 100 })) {
-    for (const record of page.records) {
-      const observation = parseObservation(record.value);
-      allDurableIds.add(observation.id);
-      if (observation.provenance.recordRef !== undefined) {
-        const sources = rawSources.get(observation.provenance.recordRef) ?? new Set<string>();
-        sources.add(observation.provenance.sourceId);
-        rawSources.set(observation.provenance.recordRef, sources);
-      }
-      if (
-        !wantedSources.has(observation.provenance.sourceId) ||
-        (wantedEpisodes !== undefined && !wantedEpisodes.has(observation.episodeId))
-      ) {
-        continue;
-      }
-      keys.add(observation.id);
-      if (observation.provenance.recordRef !== undefined) matchingRawRefs.add(observation.provenance.recordRef);
-    }
-  }
-  for (const rawRef of matchingRawRefs) {
-    if (!allDurableIds.has(rawRef) && rawSources.get(rawRef)?.size === 1) keys.add(rawRef);
-  }
-  return keys;
+  return candidate.evidenceRefs.some(
+    (reference) =>
+      wantedSources.has(reference.sourceId) &&
+      (wantedEpisodes === undefined || wantedEpisodes.has(reference.episode.episodeId)),
+  );
 }
 
 function candidateInsideWindow(candidateTimestamp: string, query: LearningReportQuery): boolean {
@@ -89,16 +62,19 @@ function candidateInsideWindow(candidateTimestamp: string, query: LearningReport
 export async function runReport(context: EngineContext, input: LearningReportQuery): Promise<LearningReport> {
   const query = parseLearningReportQuery(context, input);
   const scope = query.scope;
-  const evidenceKeys =
-    query.sourceIds === undefined ? undefined : await episodeEvidenceKeys(context, query.sourceIds, query.episodeIds);
 
   const candidateIds: string[] = [];
   for await (const page of iterateRecordPages(context.store, "candidate", { limit: 100 })) {
     for (const record of page.records) {
       const candidate = parseCandidate(record.value);
-      if (scope !== undefined && context.scopePolicy.comparePrecedence(scope, candidate.scope) !== 0) continue;
+      if (candidate.id !== record.key.id) {
+        throw invalid("store.corrupt", "stored candidate id does not match its record key", ["id"]);
+      }
+      if (scope !== undefined && candidateScopeDigest(scope) !== candidateScopeDigest(candidate.scope)) continue;
       if (!candidateInsideWindow(candidate.proposedAt, query)) continue;
-      if (evidenceKeys !== undefined && !candidate.evidenceIds.some((id) => evidenceKeys.has(id))) continue;
+      if (query.sourceIds !== undefined && !candidateMatchesEvidence(candidate, query.sourceIds, query.episodeIds)) {
+        continue;
+      }
       candidateIds.push(candidate.id);
     }
   }

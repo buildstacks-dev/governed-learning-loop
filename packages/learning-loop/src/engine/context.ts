@@ -218,7 +218,12 @@ export async function loadRecordValue(
 
 export async function loadCandidate(context: EngineContext, candidateId: string): Promise<Candidate | undefined> {
   const value = await loadRecordValue(context, "candidate", candidateId);
-  return value === undefined ? undefined : parseCandidate(value);
+  if (value === undefined) return undefined;
+  const candidate = parseCandidate(value);
+  if (candidate.id !== candidateId) {
+    throw invalid("store.corrupt", "stored candidate id does not match its record key", ["id"]);
+  }
+  return candidate;
 }
 
 /**

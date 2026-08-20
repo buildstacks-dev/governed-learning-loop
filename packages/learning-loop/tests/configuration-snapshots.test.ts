@@ -47,6 +47,11 @@ describe("createLearningLoop configuration snapshots", () => {
       kind: "agent",
       independenceDomain: "shared-domain",
     });
+    const independentReviewer = await identities.verify({
+      principalId: "policy-independent-reviewer",
+      kind: "agent",
+      independenceDomain: "independent-domain",
+    });
     const manual = defineSourceRegistration({
       source: createManualEvidenceSource(),
       trustCeiling: "observed",
@@ -97,6 +102,12 @@ describe("createLearningLoop configuration snapshots", () => {
         reviewer,
       }),
     ).rejects.toMatchObject({ code: "review.not_independent" });
+
+    await learning.reviewCandidate({
+      id: "policy-snapshot-independent-review",
+      candidateId: proposal.candidate.id,
+      reviewer: { ...reviewer, principal: independentReviewer },
+    });
     expect(reviewerPolicyDigest).toBe(configuredPolicyDigest);
     expect(afterMutation.registryRevision).toBe(beforeMutation.registryRevision);
   });
@@ -174,7 +185,7 @@ describe("createLearningLoop configuration snapshots", () => {
       candidateInput(proposer, {
         id: "scope-snapshot-candidate",
         scope: projectA,
-        evidenceIds: ["scope-observation"],
+        evidenceIds: ["manual-evidence/scope-observation"],
       }),
     );
 

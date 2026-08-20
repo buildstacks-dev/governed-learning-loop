@@ -9,6 +9,7 @@ import {
   CONTENT_POLICY_ID,
   SCOPE,
   candidateInput,
+  createCandidateHarness,
   createHarness,
   journeyEvidence,
   reviewerFor,
@@ -551,7 +552,7 @@ describe("episode identity views", () => {
       trustCeiling: "advisory",
       contentPolicyId: CONTENT_POLICY_ID,
     });
-    const { learning, proposer, reviewerB, store } = await createHarness([sourceA, sourceB]);
+    const { learning, proposer, store } = await createHarness([sourceA, sourceB]);
     await learning.ingest(sourceA, null);
     await learning.ingest(sourceB, null);
 
@@ -627,13 +628,15 @@ describe("episode identity views", () => {
         problem: "Source B observed a different scoped problem.",
       }),
     );
-    const ambiguous = await learning.propose(
-      candidateInput(proposer, {
-        id: "candidate-ambiguous-raw",
-        evidenceIds: ["shared-raw"],
-        problem: "An unqualified evidence id cannot identify its source.",
-      }),
-    );
+    await expect(
+      learning.propose(
+        candidateInput(proposer, {
+          id: "candidate-ambiguous-raw",
+          evidenceIds: ["shared-raw"],
+          problem: "An unqualified evidence id cannot identify its source.",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "candidate.evidence_invalid" });
     const reportA = await learning.report({
       sourceIds: ["source-a"],
       episodeIds: ["shared-native-session"],
@@ -641,13 +644,6 @@ describe("episode identity views", () => {
     expect(reportA.candidateIds).toEqual(["candidate-source-a"]);
     const allSourceA = await learning.report({ sourceIds: ["source-a"] });
     expect(allSourceA.candidateIds).toEqual(["candidate-source-a"]);
-    await expect(
-      learning.reviewCandidate({
-        id: "review-ambiguous-raw",
-        candidateId: ambiguous.candidate.id,
-        reviewer: reviewerFor(reviewerB),
-      }),
-    ).rejects.toMatchObject({ code: "review.evidence_ambiguous" });
   });
 
   it("returns a diagnostic unresolved identity for a legacy episode without a sidecar", async () => {
@@ -890,7 +886,7 @@ describe("episode identity views", () => {
 
 describe("candidate views", () => {
   it("folds current governance without creating or mutating durable records", async () => {
-    const { learning, store, proposer, reviewerB } = await createHarness();
+    const { learning, store, proposer, reviewerB } = await createCandidateHarness();
     const proposed = await learning.propose(candidateInput(proposer));
 
     const initial = await learning.getCandidateView({ candidateId: proposed.candidate.id });

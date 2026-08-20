@@ -2,7 +2,7 @@
 # Public Contract for a TypeScript Learning Loop
 
 **Date:** 2026-08-12  
-**Status:** ratified public contract; schema version 1
+**Status:** ratified public contract; record schema version 1 plus Candidate schema version 2
 **Working import:** `@cormidia/learning-loop` — provisional
 
 ## The developer experience to optimize
@@ -102,7 +102,7 @@ const proposal = await learning.propose({
   ],
   problem: "TypeScript changes are reported complete before type checking.",
   hypothesis: "A completion preflight will catch unresolved type errors.",
-  evidenceIds: ["obs-42-typecheck"],
+  evidenceIds: ["manual-evidence/obs-42-typecheck"],
   intervention: {
     destinationId: "agent-instructions",
     kind: "procedure",
@@ -179,9 +179,21 @@ Numbers must be finite. Objects with prototypes, functions, symbols, binary buff
 
 ### Canonical bytes and digests
 
-Schema version 1 should use JSON Canonicalization Scheme semantics—deterministic object-key ordering and ECMAScript JSON number serialization—encoded as UTF-8 without a byte-order mark, followed by SHA-256 and lower-case hexadecimal rendering. The protocol must pin the exact standard/version and ship cross-runtime golden vectors before implementation is accepted.
+Protocol canonicalization uses JSON Canonicalization Scheme
+semantics—deterministic object-key ordering and ECMAScript JSON number
+serialization—encoded as UTF-8 without a byte-order mark, followed by SHA-256
+and lower-case hexadecimal rendering. Every record schema that binds content
+must pin its field set and ship cross-runtime golden vectors before
+implementation is accepted.
 
-Each bound record has a field-inclusion table. Unknown or display-only fields never enter a digest accidentally. A migration stores `originalDigest` as lineage and computes a new digest for the migrated bytes; an old digest never authenticates changed content. Raw transcript text, secrets and other low-entropy sensitive bytes do not enter a public digest. Private source correlation uses a tenant-scoped keyed locator and remains outside portable authorization bindings.
+Each bound record has a field-inclusion table. Unknown or display-only fields
+never enter a digest accidentally. Where an explicit record-family decision
+allows migration, it preserves the original digest as lineage and computes a
+new digest for changed canonical bytes; an old digest never authenticates
+changed content. Raw transcript text, secrets and other low-entropy sensitive
+bytes do not enter a public digest. Private source correlation uses a
+tenant-scoped keyed locator and remains outside portable authorization
+bindings.
 
 ### Scope
 
@@ -401,7 +413,42 @@ export interface CandidateIntervention {
   readonly rollbackIntent: string;
 }
 
-export interface Candidate {
+export interface EvidenceRef {
+  readonly schemaVersion: 1;
+  readonly kind: "observation" | "measurement";
+  readonly recordId: string;
+  readonly recordDigest: string;
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly sourceRef: string;
+  readonly sourceRevision: string;
+  readonly sourceRecordId: string;
+  readonly pageRef: string;
+  readonly pageReceiptId: string;
+  readonly pageReceiptDigest: string;
+  readonly loopRegistryRevision: string;
+  readonly trust: TrustClass;
+  readonly completeness: Provenance["completeness"];
+  readonly episode: {
+    readonly sourceId: string;
+    readonly episodeId: string;
+    readonly episodeRecordId: string;
+    readonly episodeRecordDigest: string;
+    readonly episodeIdentityDigest: string;
+    readonly scopeDigest: string;
+    readonly pageReceiptId: string;
+    readonly pageReceiptDigest: string;
+  };
+  readonly referenceDigest: string;
+}
+
+export declare function evidenceRefDigest(
+  input: Omit<EvidenceRef, "schemaVersion" | "referenceDigest">,
+): string;
+
+export declare function parseEvidenceRef(input: unknown): EvidenceRef;
+
+export interface CandidateV1 {
   readonly schemaVersion: 1;
   readonly id: string;
   readonly scope: Scope;
@@ -416,17 +463,145 @@ export interface Candidate {
   readonly contentDigest: string;
   readonly supersedes?: string;
 }
+
+export type CandidateV2 = {
+  readonly schemaVersion: 2;
+  readonly id: string;
+  readonly scope: Scope;
+  readonly problem: string;
+  readonly hypothesis: string;
+  readonly evidenceRefs: readonly EvidenceRef[];
+  readonly derivationRef?: {
+    readonly id: string;
+    readonly digest: string;
+  };
+  readonly intervention: CandidateIntervention;
+  readonly proposedRisk: RiskTier;
+  readonly proposedBy: PrincipalRef;
+  readonly proposerAttestationDigest: string;
+  readonly proposedAt: string;
+  readonly contentDigest: string;
+} & (
+  | {
+      readonly supersedes?: never;
+      readonly originalDigest?: never;
+    }
+  | {
+      readonly supersedes: string;
+      readonly originalDigest: string;
+    }
+);
+
+export type Candidate = CandidateV1 | CandidateV2;
+
+export type CandidateDigestInput =
+  | {
+      readonly scope: Scope;
+      readonly problem: string;
+      readonly hypothesis: string;
+      readonly evidenceIds: readonly string[];
+      readonly intervention: CandidateIntervention;
+      readonly proposedRisk: RiskTier;
+      readonly supersedes?: string;
+    }
+  | ({
+      readonly schemaVersion: 2;
+      readonly scope: Scope;
+      readonly problem: string;
+      readonly hypothesis: string;
+      readonly evidenceRefs: readonly EvidenceRef[];
+      readonly derivationRef?: {
+        readonly id: string;
+        readonly digest: string;
+      };
+      readonly intervention: CandidateIntervention;
+      readonly proposedRisk: RiskTier;
+    } & (
+      | {
+          readonly supersedes?: never;
+          readonly originalDigest?: never;
+        }
+      | {
+          readonly supersedes: string;
+          readonly originalDigest: string;
+        }
+    ));
+
+export declare function candidateContentDigest(input: CandidateDigestInput): string;
+export declare function parseCandidate(input: unknown): Candidate;
 ```
 
-The core digest binds all governance-relevant fields. Cosmetic display metadata, if any, must be kept outside the binding or be clearly classified. A revised candidate receives a new digest and cannot reuse a prior review or authorization silently.
+`EvidenceRef.referenceDigest` binds every field except the schema marker and
+the digest itself. It is not a caller assertion: `propose` constructs it after
+loading and parsing the exact evidence record, same-source episode record and
+identity claim, and both source-page receipts. The evidence record and episode
+may have different page receipts. `recordId` must be exactly
+`${sourceId}/${sourceRecordId}`; the episode record must belong to that source;
+`pageReceiptId` must equal `source-page-${pageReceiptDigest}`; and
+`episode.pageReceiptId` must equal
+`source-page-${episode.pageReceiptDigest}`. The reference is refused if any
+derivative tuple, digest, registration or loop revision, source/page/revision
+identity, episode identity, or scope binding is missing, corrupt, ambiguous,
+or inconsistent. The composite resolver compares record, receipt, episode,
+identity, source-revision, and evidence-health namespace revisions before and
+after the fold and retries on change; an append-visible mixture is never
+reported as one stable evidence result.
+
+Every digest in an `EvidenceRef` is a 64-character lower-case SHA-256 value.
+`episode.scopeDigest` is the digest of protocol-canonical JSON for the exact
+ordered candidate scope segments `{ type, id }`. Source, revision, record and
+page references retain decision 0004's bounded, control-free, already
+privacy-treated rules; a reference is lineage, not a new trust grant.
+
+Candidate v1 canonical bytes and digest semantics remain unchanged. They bind
+the existing scope, problem, hypothesis, ordered `evidenceIds`, intervention,
+risk, and optional `supersedes` fields. Candidate v2 is domain-separated: its
+digest includes `schemaVersion: 2`, scope, problem, hypothesis, every complete
+`EvidenceRef` in order, optional `derivationRef`, intervention, risk, and the
+optional `supersedes`/`originalDigest` pair. Candidate identity, proposer
+attribution, proposal time, and the digest field itself remain outside both
+content digests. Cosmetic display metadata, if any, stays outside the binding
+or is clearly classified. A revised candidate receives a new digest and cannot
+reuse a prior review or authorization silently.
+
+`CandidateV2.evidenceRefs` must be nonempty and unique both by
+`referenceDigest` and by `(kind, recordId)`. The parser and `propose` reject an
+empty list or either form of duplicate; a candidate cannot be ungrounded or
+double-count the same durable record. `parseCandidate` and `propose` also
+recompute the candidate scope digest and require it to equal every reference's
+`episode.scopeDigest`.
+
+An optional `derivationRef` binds a separately durable derivation artifact by
+exact id and digest. It records how evidence was selected or transformed; it
+does not replace the full evidence references, grant trust, or make a generator
+authoritative.
+
+V2 requires `supersedes` and `originalDigest` either both to be present or both
+absent. On explicit re-proposal the caller supplies only `supersedes`; the
+kernel loads the exact predecessor and derives `originalDigest`. Re-proposal
+uses a new candidate id and requires the predecessor to have the exact same
+scope. Cross-project or cross-isolation supersession needs a separately
+ratified policy path; it is never inferred from this field. The successor is
+new governance content, not a record migration, and carries forward no review,
+approval, authorization, or authority. Reads revalidate the predecessor id,
+digest, and scope before treating the lineage as intact.
 
 `proposedRisk` is advisory. The engine computes effective risk as the monotonic maximum of the proposal, the host-registered destination floor, content classification and policy rules. `T0 < T1 < T2 < T3`; neither an adapter nor a proposer can lower the host result.
 
-The issue #31a receipt substrate does not reinterpret schema-version-1
-`evidenceIds`. Collision-safe, source-registration- and record-digest-bound
-evidence references require an explicit Candidate schema v2 and migration
-decision in #31b. Existing v1 candidates and reviews are not silently upgraded
-or made stronger by the presence of source receipts.
+Schema-version-1 candidates are permanently classified `legacy_unbound` and
+are audit-only. Their bare `evidenceIds` are never reinterpreted through later
+receipts, and reads, re-ingestion, startup, or package upgrades never rewrite
+or auto-migrate them. They cannot become publication-eligible, active context,
+or evidence-backed behavioral claims. Existing v1 reviews remain historical
+audit records only.
+
+`EvidenceRef.kind` reserves both observations and measurements, but #31b
+proposal resolution accepts observations only. Measurements remain blocked
+until #31c adds metric value-type validation and exact measurement-to-evidence,
+measurement-to-episode, and episode-outcome ownership. A receipt alone never
+makes a measurement eligible. A referenced `blocks_use` evidence-health
+finding refuses proposal resolution; `limits_claims` and `blocks_audit` remain
+explicit review and claim constraints rather than silently becoming evidence.
 
 ### Review
 
@@ -459,7 +634,21 @@ export interface CandidateReview {
 }
 ```
 
-The engine accepts reviewer identity only from a `VerifiedPrincipal` handle and refuses a decisive self-review. Policy may additionally require a different attested `independenceDomain`, a human reviewer, multiple reviewers, or a calibrated reviewer version. An `accept` with a blocking finding is invalid. A candidate evidence id that is not a durable source-qualified observation id may resolve only when it matches exactly one stored observation from one source; ambiguous raw source-record references fail review.
+The engine accepts reviewer identity only from a `VerifiedPrincipal` handle and
+refuses a decisive self-review. Policy may additionally require a different
+attested `independenceDomain`, a human reviewer, multiple reviewers, or a
+calibrated reviewer version. An `accept` with a blocking finding is invalid.
+Only a v2 candidate with `ready` evidence reaches the reviewer port; raw or
+legacy evidence ids never resolve at review time. The engine captures reviewer
+attribution once, passes a detached parsed candidate copy, binds the result to
+the captured candidate id/digest, and revalidates candidate, supersession, and
+evidence after the external callback before writing. An occupied review id is
+returned only for the same captured binding and reviewer registration;
+otherwise it conflicts before another callback or disclosure.
+Governance reads bind each stored review's inner id to its store key and
+re-run review structural validity, proposer/reviewer independence, and the
+current risk tier's independence-domain rule. A forged or internally invalid
+stored acceptance is typed store corruption, never a decisive review.
 
 ### Publication plan and authorization binding
 
@@ -1055,7 +1244,7 @@ export interface CandidateReviewer {
 
   review(input: {
     readonly candidate: Candidate;
-    readonly evidence: readonly Observation[];
+    readonly evidence: readonly (Observation | MeasurementRecord)[];
     readonly policyDigest: string;
   }): Promise<unknown>;
 }
@@ -1168,16 +1357,17 @@ export type EpisodeInput = Omit<
   "schemaVersion" | "sourceRefs" | "fingerprintId" | "exposureIds"
 >;
 
-export type CandidateInput = Omit<
-  Candidate,
-  | "schemaVersion"
-  | "proposedBy"
-  | "proposerAttestationDigest"
-  | "proposedAt"
-  | "contentDigest"
-> & {
+export interface CandidateInput {
+  readonly id: string;
+  readonly scope: Scope;
+  readonly problem: string;
+  readonly hypothesis: string;
+  readonly evidenceIds: readonly string[];
+  readonly intervention: CandidateIntervention;
+  readonly proposedRisk: RiskTier;
   readonly proposedBy: VerifiedPrincipal;
-};
+  readonly supersedes?: string;
+}
 
 export interface CandidateReviewInput {
   readonly id: string;
@@ -1206,12 +1396,20 @@ export interface GovernanceView {
   readonly reasons: readonly Diagnostic[];
 }
 
+export interface EvidenceHealthView {
+  readonly status: "ready" | "incomplete" | "invalid" | "legacy_unbound";
+  readonly diagnostics: readonly Diagnostic[];
+}
+
 export interface CandidateView {
   readonly candidate: Candidate;
   readonly governance: GovernanceView;
+  readonly evidenceHealth: EvidenceHealthView;
 }
 
-export interface ProposeOutcome extends CandidateView {}
+export interface ProposeOutcome extends CandidateView {
+  readonly candidate: CandidateV2;
+}
 
 export interface PreparedPublication {
   readonly plan: PublicationPlan;
@@ -1443,6 +1641,20 @@ bound by the durable receipt. The returned derivative id arrays describe
 records newly created by this call, and `diagnostics` is a sanitized transient
 outcome; neither changes the deterministic durable import bytes.
 
+`CandidateInput.evidenceIds` is an ordered resolution request, not candidate
+record content. It must be nonempty and duplicate-free, and each value
+addresses an exact durable observation id. The verified `propose` transition
+resolves those ids through durable records,
+episode identity and source-page receipts, verifies the candidate's exact scope
+ownership, and persists only `CandidateV2.evidenceRefs`. Callers cannot provide
+preassembled references or `originalDigest`. When `supersedes` is present,
+`propose` loads the predecessor and derives the bound original digest. A
+missing, measurement-kind, ambiguous, corrupt, mismatched, or `blocks_use`
+request fails without creating a candidate. Evidence constrained by
+`limits_claims`, `blocks_audit`, partial completeness, or unknown completeness
+may create an inert v2 candidate, but its `EvidenceHealthView` is `incomplete`,
+governance is blocked, and the reviewer port is not invoked.
+
 `RegisteredSource<I>` ties each input to its preconfigured adapter, trust ceiling and content policy. `recordOutcomes` accepts only the distinct `RegisteredOutcomeSource<I>` capability. The strict-consumer test must prove the two cannot be substituted or widened, never paper over the distinction with a cast.
 
 The five query methods are read-only, domain-specific views over engine-owned records. `limit` is required and must be an integer from 1 through 500; it bounds each page, not the whole iterable. Items retain deterministic insertion order. Identifier arrays match exact identifiers, values within one array are alternatives, and different populated filters combine by intersection. Unknown query fields are rejected so a misspelled isolation filter cannot broaden a read. Each filter array is capped at 1,000 values, each string value at 4,096 characters (wide enough for framed durable ids), and an encoded cursor at 16,384 characters. `sourceIds`, `trust`, and `completeness` select observation/measurement provenance; `sourceIds` also selects resolved episode identity, whose view exposes its trust ceiling and completeness. `parentEpisodeIds` and `episodeClasses` select exact adapter-declared lineage/applicability values. Parent traversal should pair `parentEpisodeIds` with `sourceIds`; callers can stream repeated parent queries to traverse descendants without a provider-specific graph API. `scope` is validated by the configured `ScopePolicy` and matches the stored episode scope exactly; it does not invent ancestor inheritance. `statuses` excludes episodes with no outcome. Receipt and evidence-health queries use only their closed state/code/effect vocabularies and exact persisted references; they never search diagnostic messages or raw details.
@@ -1457,8 +1669,22 @@ Query cursors are opaque and bind the domain kind, normalized filters, immutable
 returns `undefined` only when that id does not exist. It reparses and verifies
 the stored receipt digest; corruption is a typed error rather than absence.
 `getCandidateView` is a pure read: it validates the stored candidate and folds its reviews into `GovernanceView`. It does not call `propose`, claim a content digest, or mutate the store.
+For a v1 candidate the fold also reports its permanent `legacy_unbound`
+constraint and keeps publication blocked regardless of historical review
+disposition. Reading a v1 record never resolves its evidence ids or creates a
+v2 successor. `CandidateView.evidenceHealth` makes that constraint, incomplete
+lineage, and invalid lineage inspectable through the closed `ready`,
+`incomplete`, `invalid`, and `legacy_unbound` statuses; it is descriptive and
+grants no authority.
 
-`LearningReportQuery` uses the same closed-key, bounded-string/array, exact-scope, and canonical-time rules as typed queries. `sourceIds` alone filters candidates to evidence from those sources. `episodeIds` addresses logical projected episode ids and therefore requires `sourceIds`; the pair is the collision-safe identity. Raw source-record references are included only when globally unambiguous and do not collide with a durable observation id. An unscoped or ambiguous logical episode-id report is rejected or excluded rather than merging evidence from two sources.
+`LearningReportQuery` uses the same closed-key, bounded-string/array,
+exact-scope, and canonical-time rules as typed queries. `sourceIds` filters v2
+candidates through `EvidenceRef.sourceId`; legacy-unbound v1 candidates are
+audit-only and do not satisfy an evidence-backed report filter. `episodeIds`
+addresses `EvidenceRef.episode.episodeId` and therefore requires `sourceIds`;
+the pair is the collision-safe identity. An unscoped or ambiguous logical
+episode-id report is rejected or excluded rather than merging evidence from
+two sources.
 
 The façade should not expose “force approve,” “mark validated,” or “write active memory” operations. Status is derived from accepted evidence and legal transitions.
 
@@ -1856,8 +2082,15 @@ Three versions must remain distinct:
 Rules:
 
 - every durable record has an integer schema version;
-- parsers accept `unknown`, report unsupported versions, and expose pure migrations where allowed;
-- migrations retain original digests as lineage, compute new digests for changed canonical bytes, and preserve provenance; an original digest never authenticates migrated content, and migration does not relabel an invalid or inconclusive historical evaluation;
+- parsers accept `unknown`, report unsupported versions, and expose pure
+  migrations only where a record-family decision explicitly allows one;
+- schema-version-1 candidates have no migration: they remain
+  `legacy_unbound` audit records, while an explicit new v2 proposal may bind a
+  predecessor's exact digest through `supersedes` and `originalDigest`;
+- where another record family permits migration, it retains original digests
+  as lineage, computes new digests for changed canonical bytes, and preserves
+  provenance; an original digest never authenticates migrated content, and
+  migration does not relabel an invalid or inconclusive historical evaluation;
 - content bindings use the protocol's pinned canonical JSON, UTF-8 framing and SHA-256 algorithm plus an explicit field-inclusion table;
 - a new evaluator version creates new evidence, not a retrospective rewrite;
 - package minor versions may add optional fields only when old readers safely ignore them; semantic changes require a new schema or major package boundary;
@@ -1870,6 +2103,14 @@ Every third-party store, destination, authority adapter, transcript source, and 
 The core suite should prove at least:
 
 - candidate records never resolve into active context;
+- schema-version-1 candidates remain byte-stable, `legacy_unbound`, and
+  audit-only; reads and upgrades never auto-migrate them;
+- candidate v2 proposal refuses cross-source id collisions, stale or corrupt
+  records and receipts, unresolved episode identity, scope mismatch,
+  empty or duplicate evidence, `blocks_use` evidence health, and measurement
+  references pending #31c;
+- reordering or changing any full v2 evidence reference, derivation binding,
+  predecessor id, or predecessor digest changes the candidate digest;
 - a proposer cannot provide the decisive review;
 - content mutation voids review and authorization bindings;
 - a pending, denied, expired, or wrong-base authorization produces no destination write;
@@ -1891,7 +2132,8 @@ Adapter suites add format drift, cursor idempotency, out-of-order and duplicate 
 The first release should expose no more than:
 
 - one `createLearningLoop` factory and one `LearningLoop` interface;
-- record types and parsers for the eight core record families;
+- the explicitly ratified core record and evidence-reference types with their
+  unknown-first parsers;
 - the small port interfaces above;
 - one policy builder with conservative defaults;
 - one structured error and diagnostic model;

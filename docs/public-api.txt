@@ -24,6 +24,9 @@ root:TrustClass
 root:parseProvenance
 root:Observation
 root:parseObservation
+root:EvidenceRef
+root:evidenceRefDigest
+root:parseEvidenceRef
 root:EpisodeOutcome
 root:EpisodeRecord
 root:MeasurementRecord
@@ -32,6 +35,8 @@ root:parseEpisodeRecord
 root:parseMeasurementRecord
 root:parseMetricDefinition
 root:Candidate
+root:CandidateV1
+root:CandidateV2
 root:CandidateDigestInput
 root:CandidateIntervention
 root:RiskTier
@@ -66,6 +71,7 @@ root:IdGenerator
 root:LearningPolicy
 root:conservativePolicy
 root:GovernanceView
+root:EvidenceHealthView
 root:IngestReceipt
 root:CandidateInput
 root:ProposeOutcome

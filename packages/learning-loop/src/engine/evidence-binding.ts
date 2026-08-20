@@ -1,0 +1,829 @@
+// Read-only candidate-evidence resolution. Exact durable record ids are
+// re-bound through committed source-page receipts, configured registrations,
+// resolved episode identity, exact scope, and current evidence-health facts.
+// This module performs no provider calls and no writes.
+import { canonicalJsonText } from "../canonical/canonical-json.js";
+import { toJsonValue } from "../canonical/to-json-value.js";
+import type { Diagnostic } from "../diagnostics.js";
+import { LearningLoopError } from "../diagnostics.js";
+import { invalid } from "../parse/toolkit.js";
+import type { RegisteredSource } from "../ports/evidence.js";
+import type { Candidate } from "../records/candidate.js";
+import { candidateScopeDigest } from "../records/candidate.js";
+import type { EvidenceRef } from "../records/evidence-ref.js";
+import { evidenceRefDigest, parseEvidenceRef } from "../records/evidence-ref.js";
+import type { EpisodeRecord, MeasurementRecord } from "../records/episode.js";
+import { parseEpisodeRecord, parseMeasurementRecord } from "../records/episode.js";
+import type { Observation } from "../records/observation.js";
+import { parseObservation } from "../records/observation.js";
+import type { Scope } from "../records/scope.js";
+import type { EvidenceHealthFinding, SourcePageReceipt } from "../records/source-health.js";
+import { parseEvidenceHealthFinding, parseSourcePageReceipt } from "../records/source-health.js";
+import type { EngineContext } from "./context.js";
+import type { RecordKind } from "./context.js";
+import {
+  derivedRecordId,
+  iterateRecordPages,
+  loadStoredRecord,
+  readRecordKindRevision,
+  recordDigest,
+} from "./context.js";
+import type { EpisodeIdentityRecord } from "./episode-identity.js";
+import { loadEpisodeIdentityState } from "./episode-identity.js";
+import { adapterFor } from "./source-registration.js";
+
+const MAX_EVIDENCE_IDS = 1_000;
+const MAX_DURABLE_ID_LENGTH = 4_096;
+const SCAN_PAGE_LIMIT = 100;
+const MAX_SNAPSHOT_ATTEMPTS = 3;
+const EVIDENCE_SNAPSHOT_KINDS: readonly RecordKind[] = [
+  "observation",
+  "measurement",
+  "episode",
+  "episode-identity",
+  "source-revision",
+  "source-page-receipt",
+  "evidence-health",
+];
+
+type EvidenceRecord = Observation | MeasurementRecord;
+type EvidenceKind = EvidenceRef["kind"];
+
+export interface EvidenceHealthView {
+  readonly status: "ready" | "incomplete" | "invalid" | "legacy_unbound";
+  readonly diagnostics: readonly Diagnostic[];
+}
+
+export interface CandidateEvidenceResolution {
+  readonly refs: readonly EvidenceRef[];
+  readonly records: readonly EvidenceRecord[];
+  readonly health: EvidenceHealthView;
+}
+
+interface MutableHealth {
+  status: "ready" | "incomplete" | "invalid";
+  readonly diagnostics: Diagnostic[];
+}
+
+interface LoadedEvidence {
+  readonly kind: EvidenceKind;
+  readonly record: EvidenceRecord;
+  readonly digest: string;
+}
+
+interface ReceiptBoundEvidence extends LoadedEvidence {
+  readonly receipt: SourcePageReceipt;
+  readonly registration: RegisteredSource<unknown>;
+}
+
+interface ResolvedEpisode {
+  readonly episode: EpisodeRecord;
+  readonly episodeDigest: string;
+  readonly identity: EpisodeIdentityRecord;
+  readonly identityDigest: string;
+}
+
+interface FullyBoundEvidence extends ReceiptBoundEvidence {
+  readonly episode: ResolvedEpisode;
+  readonly episodeReceipt: SourcePageReceipt;
+}
+
+function evidenceDiagnostic(
+  code: string,
+  severity: Diagnostic["severity"],
+  message: string,
+  path?: readonly (string | number)[],
+): Diagnostic {
+  return { code, severity, message, ...(path === undefined ? {} : { path }) };
+}
+
+function markHealth(health: MutableHealth, status: "incomplete" | "invalid", diagnostic: Diagnostic): void {
+  if (status === "invalid" || health.status === "ready") health.status = status;
+  health.diagnostics.push(diagnostic);
+}
+
+function result(
+  refs: readonly EvidenceRef[],
+  records: readonly EvidenceRecord[],
+  health: MutableHealth,
+): CandidateEvidenceResolution {
+  return {
+    refs,
+    records,
+    health: { status: health.status, diagnostics: health.diagnostics },
+  };
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function validateExactIds(input: readonly string[], health: MutableHealth): readonly string[] | undefined {
+  if (!Array.isArray(input) || input.length === 0) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic("evidence.ids_invalid", "error", "candidate evidence requires at least one exact durable id"),
+    );
+    return undefined;
+  }
+  if (input.length > MAX_EVIDENCE_IDS) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ids_invalid",
+        "error",
+        `candidate evidence exceeds the ${MAX_EVIDENCE_IDS}-record ceiling`,
+      ),
+    );
+    return undefined;
+  }
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, id] of input.entries()) {
+    const separator = typeof id === "string" ? id.indexOf("/") : -1;
+    if (
+      typeof id !== "string" ||
+      id.length === 0 ||
+      id.length > MAX_DURABLE_ID_LENGTH ||
+      containsControlCharacter(id) ||
+      separator <= 0 ||
+      separator === id.length - 1
+    ) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.id_invalid",
+          "error",
+          "candidate evidence id is not an exact bounded source-qualified durable id",
+          ["evidenceIds", index],
+        ),
+      );
+      continue;
+    }
+    if (seen.has(id)) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic("evidence.id_duplicate", "error", "candidate evidence ids must be unique", [
+          "evidenceIds",
+          index,
+        ]),
+      );
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return health.status === "invalid" ? undefined : ids;
+}
+
+async function loadEvidenceRecord(
+  context: EngineContext,
+  id: string,
+  index: number,
+  health: MutableHealth,
+): Promise<LoadedEvidence | undefined> {
+  const observationStored = await loadStoredRecord(context, "observation", id);
+  const measurementStored = await loadStoredRecord(context, "measurement", id);
+  if (observationStored !== undefined && measurementStored !== undefined) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.kind_ambiguous",
+        "error",
+        "durable evidence id exists in both observation and measurement namespaces",
+        ["evidenceIds", index],
+      ),
+    );
+    return undefined;
+  }
+  if (observationStored !== undefined) {
+    const record = parseObservation(observationStored.value);
+    if (record.id !== id) throw invalid("store.corrupt", "stored observation id does not match its key", ["id"]);
+    return { kind: "observation", record, digest: observationStored.digest };
+  }
+  if (measurementStored !== undefined) {
+    const record = parseMeasurementRecord(measurementStored.value);
+    if (record.id !== id) throw invalid("store.corrupt", "stored measurement id does not match its key", ["id"]);
+    return { kind: "measurement", record, digest: measurementStored.digest };
+  }
+  markHealth(
+    health,
+    "invalid",
+    evidenceDiagnostic("evidence.not_found", "error", "exact durable evidence id was not found", [
+      "evidenceIds",
+      index,
+    ]),
+  );
+  return undefined;
+}
+
+function derivativeKey(kind: "observation" | "measurement" | "episode", id: string, digest: string): string {
+  return canonicalJsonText([kind, id, digest]);
+}
+
+async function findDerivativeReceipts(
+  context: EngineContext,
+  keys: ReadonlySet<string>,
+): Promise<ReadonlyMap<string, readonly SourcePageReceipt[]>> {
+  const matches = new Map<string, SourcePageReceipt[]>();
+  for await (const page of iterateRecordPages(context.store, "source-page-receipt", { limit: SCAN_PAGE_LIMIT })) {
+    for (const stored of page.records) {
+      const receipt = parseSourcePageReceipt(stored.value);
+      if (receipt.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored source page receipt id does not match its key", ["id"]);
+      }
+      for (const derivative of receipt.derivatives) {
+        const key = derivativeKey(derivative.kind, derivative.id, derivative.digest);
+        if (!keys.has(key)) continue;
+        const values = matches.get(key) ?? [];
+        if (!values.some((value) => value.id === receipt.id)) values.push(receipt);
+        matches.set(key, values);
+      }
+    }
+  }
+  return matches;
+}
+
+function configuredSource(
+  context: EngineContext,
+  loaded: LoadedEvidence,
+  receipt: SourcePageReceipt,
+  index: number,
+  health: MutableHealth,
+): RegisteredSource<unknown> | undefined {
+  const provenance = loaded.record.provenance;
+  const registration = [...context.sources].find((source) => source.id === receipt.sourceId);
+  if (registration === undefined || registration.registryRevision !== receipt.sourceRegistrationRevision) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.source_registration_mismatch",
+        "error",
+        "evidence receipt is not bound to the configured source registration",
+        ["evidenceIds", index],
+      ),
+    );
+    return undefined;
+  }
+  const adapter = adapterFor(registration);
+  const contentPolicy = context.contentPoliciesById.get(registration.contentPolicyId);
+  if (
+    adapter === undefined ||
+    contentPolicy === undefined ||
+    adapter.descriptor.adapterVersion !== receipt.adapterVersion ||
+    registration.contentPolicyId !== receipt.contentPolicyId ||
+    contentPolicy.digest !== receipt.contentPolicyDigest
+  ) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.configuration_mismatch",
+        "error",
+        "evidence receipt adapter or content-policy binding does not match configured components",
+        ["evidenceIds", index],
+      ),
+    );
+    return undefined;
+  }
+  if (
+    receipt.state.status !== "available" ||
+    provenance.sourceId !== receipt.sourceId ||
+    provenance.sourceRef !== receipt.sourceRef ||
+    provenance.sourceRevision !== receipt.state.sourceRevision ||
+    provenance.adapterVersion !== receipt.adapterVersion ||
+    provenance.trust !== registration.trustCeiling ||
+    provenance.recordRef === undefined ||
+    derivedRecordId(provenance.sourceId, provenance.recordRef) !== loaded.record.id
+  ) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.receipt_mismatch",
+        "error",
+        "durable evidence provenance does not match its committed source page receipt",
+        ["evidenceIds", index],
+      ),
+    );
+    return undefined;
+  }
+  return registration;
+}
+
+function logicalEpisodeKey(sourceId: string, episodeId: string): string {
+  return canonicalJsonText([sourceId, episodeId]);
+}
+
+async function findEpisodes(
+  context: EngineContext,
+  wanted: ReadonlySet<string>,
+  wantedSources: ReadonlySet<string>,
+): Promise<ReadonlyMap<string, readonly ResolvedEpisode[]>> {
+  const matches = new Map<string, ResolvedEpisode[]>();
+  for await (const page of iterateRecordPages(context.store, "episode", { limit: SCAN_PAGE_LIMIT })) {
+    for (const stored of page.records) {
+      const episode = parseEpisodeRecord(stored.value);
+      if (episode.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored episode id does not match its key", ["id"]);
+      }
+      if (!episode.sourceRefs.some((sourceId) => wantedSources.has(sourceId))) continue;
+      const identityState = await loadEpisodeIdentityState(context, episode.id);
+      if (identityState.status !== "resolved") continue;
+      const identity = identityState.identity;
+      const key = logicalEpisodeKey(identity.sourceId, identity.episodeId);
+      if (!wanted.has(key)) continue;
+      const values = matches.get(key) ?? [];
+      values.push({
+        episode,
+        episodeDigest: stored.digest,
+        identity,
+        identityDigest: recordDigest(toJsonValue(identity)),
+      });
+      matches.set(key, values);
+    }
+  }
+  return matches;
+}
+
+function validateEpisode(
+  item: ReceiptBoundEvidence,
+  episode: ResolvedEpisode,
+  expectedScopeDigest: string,
+  index: number,
+  health: MutableHealth,
+): boolean {
+  if (
+    !episode.episode.sourceRefs.includes(item.registration.id) ||
+    episode.identity.sourceId !== item.registration.id ||
+    episode.identity.episodeId !== item.record.episodeId ||
+    episode.identity.registryRevision !== item.registration.registryRevision ||
+    episode.identity.trustCeiling !== item.registration.trustCeiling
+  ) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.episode_identity_mismatch",
+        "error",
+        "episode record and resolved source identity do not match candidate evidence",
+        ["evidenceIds", index],
+      ),
+    );
+    return false;
+  }
+  if (candidateScopeDigest(episode.episode.scope) !== expectedScopeDigest) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.scope_mismatch",
+        "error",
+        "candidate evidence episode does not have the exact candidate scope",
+        ["evidenceIds", index],
+      ),
+    );
+    return false;
+  }
+  return true;
+}
+
+function validateEpisodeReceipt(
+  context: EngineContext,
+  item: ReceiptBoundEvidence,
+  episode: ResolvedEpisode,
+  receipt: SourcePageReceipt,
+  index: number,
+  health: MutableHealth,
+): boolean {
+  const adapter = adapterFor(item.registration);
+  const contentPolicy = context.contentPoliciesById.get(item.registration.contentPolicyId);
+  // An episode may be projected on a different page, but it must belong to
+  // the same registered source artifact/revision and exact loop configuration.
+  if (
+    receipt.state.status !== "available" ||
+    item.receipt.state.status !== "available" ||
+    receipt.sourceId !== item.registration.id ||
+    receipt.sourceRegistrationRevision !== item.registration.registryRevision ||
+    receipt.sourceRef !== item.receipt.sourceRef ||
+    receipt.state.sourceRevision !== item.receipt.state.sourceRevision ||
+    receipt.adapterVersion !== item.receipt.adapterVersion ||
+    receipt.loopRegistryRevision !== item.receipt.loopRegistryRevision ||
+    receipt.contentPolicyId !== item.receipt.contentPolicyId ||
+    receipt.contentPolicyDigest !== item.receipt.contentPolicyDigest ||
+    adapter === undefined ||
+    adapter.descriptor.adapterVersion !== receipt.adapterVersion ||
+    contentPolicy === undefined ||
+    contentPolicy.digest !== receipt.contentPolicyDigest ||
+    !episode.episode.sourceRefs.includes(receipt.sourceId)
+  ) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.episode_receipt_mismatch",
+        "error",
+        "episode derivative receipt does not match the evidence source and configuration",
+        ["evidenceIds", index],
+      ),
+    );
+    return false;
+  }
+  return true;
+}
+
+function pageIdentity(receipt: SourcePageReceipt): string {
+  return canonicalJsonText([receipt.sourceId, receipt.sourceRegistrationRevision, receipt.sourceRef, receipt.pageRef]);
+}
+
+function findingIdentity(finding: EvidenceHealthFinding): string {
+  return canonicalJsonText([finding.sourceId, finding.sourceRegistrationRevision, finding.sourceRef, finding.pageRef]);
+}
+
+async function foldReceiptHealth(
+  context: EngineContext,
+  receipts: readonly SourcePageReceipt[],
+  health: MutableHealth,
+): Promise<void> {
+  const uniqueReceipts = new Map(receipts.map((receipt) => [receipt.id, receipt]));
+  const pageIdentities = new Set([...uniqueReceipts.values()].map(pageIdentity));
+  const findings = new Map<string, EvidenceHealthFinding>();
+
+  for (const receipt of uniqueReceipts.values()) {
+    if (receipt.state.status !== "available") {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic("evidence.receipt_unavailable", "error", "evidence receipt is not available"),
+      );
+    } else if (receipt.state.completeness !== "complete") {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic("evidence.receipt_incomplete", "warning", "evidence receipt is not complete"),
+      );
+    }
+    for (const findingId of receipt.healthFindingIds) {
+      const stored = await loadStoredRecord(context, "evidence-health", findingId);
+      if (stored === undefined) {
+        markHealth(
+          health,
+          "invalid",
+          evidenceDiagnostic(
+            "evidence.health_missing",
+            "error",
+            "source page receipt references a missing evidence-health finding",
+          ),
+        );
+        continue;
+      }
+      const finding = parseEvidenceHealthFinding(stored.value);
+      if (finding.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored evidence-health id does not match its key", ["id"]);
+      }
+      if (findingIdentity(finding) !== pageIdentity(receipt)) {
+        markHealth(
+          health,
+          "invalid",
+          evidenceDiagnostic(
+            "evidence.health_mismatch",
+            "error",
+            "source page receipt references evidence health for another source page",
+          ),
+        );
+        continue;
+      }
+      findings.set(finding.id, finding);
+    }
+  }
+
+  // Findings created after the original page receipt still constrain current
+  // use, so fold every durable finding for either evidence or episode page.
+  for await (const page of iterateRecordPages(context.store, "evidence-health", { limit: SCAN_PAGE_LIMIT })) {
+    for (const stored of page.records) {
+      const finding = parseEvidenceHealthFinding(stored.value);
+      if (finding.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored evidence-health id does not match its key", ["id"]);
+      }
+      if (pageIdentities.has(findingIdentity(finding))) findings.set(finding.id, finding);
+    }
+  }
+
+  for (const finding of findings.values()) {
+    if (finding.effect === "blocks_use") {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic("evidence.health_blocks_use", "error", "current source health blocks evidence use"),
+      );
+    } else {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic(
+          "evidence.health_incomplete",
+          "warning",
+          "current source health limits evidence claims or audit use",
+        ),
+      );
+    }
+    if (finding.completeness !== "complete") {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic("evidence.health_incomplete", "warning", "evidence-health finding is not complete"),
+      );
+    }
+  }
+}
+
+function buildEvidenceRef(item: FullyBoundEvidence): EvidenceRef {
+  const provenance = item.record.provenance;
+  const sourceRecordId = provenance.recordRef;
+  if (sourceRecordId === undefined) {
+    throw invalid("schema.corrupt", "resolved evidence has no source record reference", ["recordRef"]);
+  }
+  const episode = {
+    sourceId: item.episode.identity.sourceId,
+    episodeId: item.episode.identity.episodeId,
+    episodeRecordId: item.episode.episode.id,
+    episodeRecordDigest: item.episode.episodeDigest,
+    episodeIdentityDigest: item.episode.identityDigest,
+    pageReceiptId: item.episodeReceipt.id,
+    pageReceiptDigest: item.episodeReceipt.receiptDigest,
+    scopeDigest: candidateScopeDigest(item.episode.episode.scope),
+  };
+  const bound = {
+    kind: item.kind,
+    recordId: item.record.id,
+    recordDigest: item.digest,
+    sourceId: provenance.sourceId,
+    sourceRegistrationRevision: item.registration.registryRevision,
+    sourceRef: provenance.sourceRef,
+    sourceRevision: provenance.sourceRevision,
+    sourceRecordId,
+    pageRef: item.receipt.pageRef,
+    pageReceiptId: item.receipt.id,
+    pageReceiptDigest: item.receipt.receiptDigest,
+    loopRegistryRevision: item.receipt.loopRegistryRevision,
+    trust: provenance.trust,
+    completeness: provenance.completeness,
+    episode,
+  };
+  return parseEvidenceRef({ schemaVersion: 1, ...bound, referenceDigest: evidenceRefDigest(bound) });
+}
+
+async function evidenceSnapshotRevision(context: EngineContext): Promise<string> {
+  const revisions: Array<readonly [RecordKind, string]> = [];
+  for (const kind of EVIDENCE_SNAPSHOT_KINDS) {
+    revisions.push([kind, await readRecordKindRevision(context.store, kind)]);
+  }
+  return canonicalJsonText(revisions);
+}
+
+/** Resolves exact durable ids into immutable, receipt- and episode-bound refs. */
+async function resolveCandidateEvidenceOnce(
+  context: EngineContext,
+  exactDurableIds: readonly string[],
+  scope: Scope,
+): Promise<CandidateEvidenceResolution> {
+  const health: MutableHealth = { status: "ready", diagnostics: [] };
+  const ids = validateExactIds(exactDurableIds, health);
+  if (ids === undefined) return result([], [], health);
+  const candidateScope = context.scopePolicy.validate(scope);
+  const expectedScopeDigest = candidateScopeDigest(candidateScope);
+
+  const loadedByIndex: Array<LoadedEvidence | undefined> = [];
+  for (const [index, id] of ids.entries()) {
+    loadedByIndex.push(await loadEvidenceRecord(context, id, index, health));
+  }
+
+  const evidenceReceiptKeys = new Set<string>();
+  for (const loaded of loadedByIndex) {
+    if (loaded !== undefined) evidenceReceiptKeys.add(derivativeKey(loaded.kind, loaded.record.id, loaded.digest));
+  }
+  const evidenceReceiptMatches = await findDerivativeReceipts(context, evidenceReceiptKeys);
+  const receiptBoundByIndex: Array<ReceiptBoundEvidence | undefined> = [];
+  for (const [index, loaded] of loadedByIndex.entries()) {
+    if (loaded === undefined) {
+      receiptBoundByIndex.push(undefined);
+      continue;
+    }
+    const matches = evidenceReceiptMatches.get(derivativeKey(loaded.kind, loaded.record.id, loaded.digest)) ?? [];
+    if (matches.length !== 1) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          matches.length === 0 ? "evidence.receipt_missing" : "evidence.receipt_ambiguous",
+          "error",
+          matches.length === 0
+            ? "evidence record has no exact committed source page receipt"
+            : "evidence record has more than one committed source page receipt",
+          ["evidenceIds", index],
+        ),
+      );
+      receiptBoundByIndex.push(undefined);
+      continue;
+    }
+    const receipt = matches[0];
+    if (receipt === undefined) {
+      receiptBoundByIndex.push(undefined);
+      continue;
+    }
+    const registration = configuredSource(context, loaded, receipt, index, health);
+    receiptBoundByIndex.push(registration === undefined ? undefined : { ...loaded, receipt, registration });
+  }
+
+  const wantedEpisodes = new Set<string>();
+  const wantedSources = new Set<string>();
+  for (const item of receiptBoundByIndex) {
+    if (item === undefined) continue;
+    wantedEpisodes.add(logicalEpisodeKey(item.registration.id, item.record.episodeId));
+    wantedSources.add(item.registration.id);
+  }
+  const episodeMatches = await findEpisodes(context, wantedEpisodes, wantedSources);
+  const episodeBoundByIndex: Array<(ReceiptBoundEvidence & { readonly episode: ResolvedEpisode }) | undefined> = [];
+  const episodeReceiptKeys = new Set<string>();
+  for (const [index, item] of receiptBoundByIndex.entries()) {
+    if (item === undefined) {
+      episodeBoundByIndex.push(undefined);
+      continue;
+    }
+    const matches = episodeMatches.get(logicalEpisodeKey(item.registration.id, item.record.episodeId)) ?? [];
+    if (matches.length !== 1) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          matches.length === 0 ? "evidence.episode_missing" : "evidence.episode_ambiguous",
+          "error",
+          matches.length === 0
+            ? "evidence does not resolve to one committed episode identity"
+            : "evidence resolves to more than one episode identity",
+          ["evidenceIds", index],
+        ),
+      );
+      episodeBoundByIndex.push(undefined);
+      continue;
+    }
+    const episode = matches[0];
+    if (episode === undefined || !validateEpisode(item, episode, expectedScopeDigest, index, health)) {
+      episodeBoundByIndex.push(undefined);
+      continue;
+    }
+    episodeReceiptKeys.add(derivativeKey("episode", episode.episode.id, episode.episodeDigest));
+    episodeBoundByIndex.push({ ...item, episode });
+  }
+
+  const episodeReceiptMatches = await findDerivativeReceipts(context, episodeReceiptKeys);
+  const fullyBound: FullyBoundEvidence[] = [];
+  for (const [index, item] of episodeBoundByIndex.entries()) {
+    if (item === undefined) continue;
+    const matches =
+      episodeReceiptMatches.get(derivativeKey("episode", item.episode.episode.id, item.episode.episodeDigest)) ?? [];
+    if (matches.length !== 1) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          matches.length === 0 ? "evidence.episode_receipt_missing" : "evidence.episode_receipt_ambiguous",
+          "error",
+          matches.length === 0
+            ? "resolved episode has no exact committed source page receipt"
+            : "resolved episode has more than one committed source page receipt",
+          ["evidenceIds", index],
+        ),
+      );
+      continue;
+    }
+    const episodeReceipt = matches[0];
+    if (
+      episodeReceipt === undefined ||
+      !validateEpisodeReceipt(context, item, item.episode, episodeReceipt, index, health)
+    ) {
+      continue;
+    }
+    fullyBound.push({ ...item, episodeReceipt });
+  }
+
+  for (const item of fullyBound) {
+    if (item.record.provenance.completeness !== "complete" || item.episode.identity.completeness !== "complete") {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic("evidence.incomplete", "warning", "evidence or episode identity is not complete"),
+      );
+    }
+    if (item.kind === "measurement") {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.measurement_unqualified",
+          "error",
+          "measurement evidence is recognized but unqualified until measurement ownership is implemented",
+        ),
+      );
+    }
+  }
+  await foldReceiptHealth(
+    context,
+    fullyBound.flatMap((item) => [item.receipt, item.episodeReceipt]),
+    health,
+  );
+
+  return result(
+    fullyBound.map(buildEvidenceRef),
+    fullyBound.map((item) => item.record),
+    health,
+  );
+}
+
+/**
+ * Retries the composite read unless every evidence-bearing namespace retained
+ * one stable revision across the full record/receipt/identity/health fold.
+ */
+export async function resolveCandidateEvidence(
+  context: EngineContext,
+  exactDurableIds: readonly string[],
+  scope: Scope,
+): Promise<CandidateEvidenceResolution> {
+  for (let attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const before = await evidenceSnapshotRevision(context);
+    const resolved = await resolveCandidateEvidenceOnce(context, exactDurableIds, scope);
+    const after = await evidenceSnapshotRevision(context);
+    if (before === after) return resolved;
+  }
+  throw new LearningLoopError("evidence.snapshot_changed", [
+    {
+      code: "evidence.snapshot_changed",
+      severity: "error",
+      message: "evidence changed repeatedly while resolving candidate lineage; retry the operation",
+    },
+  ]);
+}
+
+/** Revalidates every embedded v2 reference; v1 candidates remain unbound. */
+export async function revalidateCandidateEvidence(
+  context: EngineContext,
+  candidate: Candidate,
+): Promise<CandidateEvidenceResolution> {
+  if (candidate.schemaVersion === 1) {
+    return {
+      refs: [],
+      records: [],
+      health: {
+        status: "legacy_unbound",
+        diagnostics: [
+          evidenceDiagnostic(
+            "candidate.legacy_unbound",
+            "warning",
+            "schema-version-1 candidate has no content-bound evidence references",
+          ),
+        ],
+      },
+    };
+  }
+
+  const resolved = await resolveCandidateEvidence(
+    context,
+    candidate.evidenceRefs.map((reference) => reference.recordId),
+    candidate.scope,
+  );
+  const health: MutableHealth = {
+    status:
+      resolved.health.status === "ready" ? "ready" : resolved.health.status === "incomplete" ? "incomplete" : "invalid",
+    diagnostics: [...resolved.health.diagnostics],
+  };
+  for (const [index, embedded] of candidate.evidenceRefs.entries()) {
+    const current = resolved.refs[index];
+    if (
+      current === undefined ||
+      current.referenceDigest !== embedded.referenceDigest ||
+      canonicalJsonText(toJsonValue(current)) !== canonicalJsonText(toJsonValue(embedded))
+    ) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.reference_mismatch",
+          "error",
+          "embedded evidence reference does not match current durable evidence lineage",
+          ["evidenceRefs", index],
+        ),
+      );
+    }
+  }
+  return result(resolved.refs, resolved.records, health);
+}

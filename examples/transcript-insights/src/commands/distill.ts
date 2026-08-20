@@ -4,8 +4,8 @@
 // from transcript text. Cross-run dedup comes free from the kernel's
 // content-digest dedup: identical aggregates re-propose into the existing
 // candidate instead of creating a twin.
-import type { CandidateDigestInput, CandidateInput, Scope } from "@cormidia/learning-loop";
-import { candidateContentDigest } from "@cormidia/learning-loop";
+import type { CandidateInput, Scope } from "@cormidia/learning-loop";
+import { sha256HexOfCanonicalJson, toJsonValue } from "@cormidia/learning-loop";
 import type { DemoLoop } from "../compose.js";
 import type { FoldListProgress, SignalCluster, StoreFold } from "../fold.js";
 import { foldStore } from "../fold.js";
@@ -101,7 +101,7 @@ export async function runDistillCommand(loop: DemoLoop, out: CliOutput): Promise
       { type: "provider", id: cluster.provider },
       { type: "project", id: cluster.project },
     ];
-    const digestInput: CandidateDigestInput = {
+    const proposalContent: Omit<CandidateInput, "id" | "proposedBy"> = {
       scope,
       problem: cluster.problem,
       hypothesis: cluster.hypothesis,
@@ -114,12 +114,14 @@ export async function runDistillCommand(loop: DemoLoop, out: CliOutput): Promise
       },
       proposedRisk: "T1",
     };
-    // The digest is content-derived, so evolving aggregates mint a new
-    // candidate id while identical aggregates dedup into the existing one.
-    const digest = candidateContentDigest(digestInput);
+    // This request fingerprint only makes a stable display id. The kernel
+    // resolves exact EvidenceRefs and computes the authoritative Candidate v2
+    // content digest; evolving aggregates mint a new display id, while the
+    // kernel's digest index remains the deduplication authority.
+    const requestDigest = sha256HexOfCanonicalJson(toJsonValue(proposalContent));
     const input: CandidateInput = {
-      id: `ti-${slugOf(cluster.label)}-${slugOf(cluster.project)}-${digest.slice(0, 12)}`,
-      ...digestInput,
+      id: `ti-${slugOf(cluster.label)}-${slugOf(cluster.project)}-${requestDigest.slice(0, 12)}`,
+      ...proposalContent,
       proposedBy: loop.distiller,
     };
     const outcome = await loop.learning.propose(input);

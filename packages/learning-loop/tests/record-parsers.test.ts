@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { LearningLoopError } from "../src/diagnostics.js";
-import { candidateContentDigest, parseCandidate } from "../src/records/candidate.js";
+import { candidateContentDigest, candidateScopeDigest, parseCandidate } from "../src/records/candidate.js";
+import type { EvidenceRef } from "../src/records/evidence-ref.js";
+import { evidenceRefDigest, parseEvidenceRef } from "../src/records/evidence-ref.js";
 import { parseEpisodeRecord, parseMeasurementRecord, parseMetricDefinition } from "../src/records/episode.js";
 import { parseObservation } from "../src/records/observation.js";
 import { parsePrincipalRef } from "../src/records/principal.js";
@@ -92,6 +94,65 @@ const candidateFixture = {
   contentDigest: candidateContentDigest(candidateBoundFields),
 };
 
+const evidenceRefBound: Omit<EvidenceRef, "schemaVersion" | "referenceDigest"> = {
+  kind: "observation",
+  recordId: "manual-source/obs-1",
+  recordDigest: "1".repeat(64),
+  sourceId: "manual-source",
+  sourceRegistrationRevision: "2".repeat(64),
+  sourceRef: "artifact-1",
+  sourceRevision: "revision-1",
+  sourceRecordId: "obs-1",
+  pageRef: "page-observation",
+  pageReceiptId: `source-page-${"3".repeat(64)}`,
+  pageReceiptDigest: "3".repeat(64),
+  loopRegistryRevision: "4".repeat(64),
+  trust: "observed",
+  completeness: "complete",
+  episode: {
+    sourceId: "manual-source",
+    episodeId: "ep-1",
+    episodeRecordId: "manual-source/episode-record-1",
+    episodeRecordDigest: "5".repeat(64),
+    episodeIdentityDigest: "6".repeat(64),
+    scopeDigest: candidateScopeDigest(candidateBoundFields.scope),
+    pageReceiptId: `source-page-${"7".repeat(64)}`,
+    pageReceiptDigest: "7".repeat(64),
+  },
+};
+
+const evidenceRefFixture: EvidenceRef = {
+  schemaVersion: 1,
+  ...evidenceRefBound,
+  referenceDigest: evidenceRefDigest(evidenceRefBound),
+};
+
+function candidateV2FixtureFor(
+  evidenceRefs: readonly EvidenceRef[],
+  lineage?: { readonly supersedes: string; readonly originalDigest: string },
+) {
+  const digestInput = {
+    schemaVersion: 2 as const,
+    scope: candidateBoundFields.scope,
+    problem: candidateBoundFields.problem,
+    hypothesis: candidateBoundFields.hypothesis,
+    evidenceRefs,
+    intervention: candidateBoundFields.intervention,
+    proposedRisk: candidateBoundFields.proposedRisk,
+    ...(lineage === undefined ? {} : lineage),
+  };
+  return {
+    ...digestInput,
+    id: "cand-v2",
+    proposedBy: { id: "distiller-a", kind: "agent" as const, independenceDomain: "provider-a" },
+    proposerAttestationDigest: "8".repeat(64),
+    proposedAt: "2026-08-16T10:05:00.000Z",
+    contentDigest: candidateContentDigest(digestInput),
+  };
+}
+
+const candidateV2Fixture = candidateV2FixtureFor([evidenceRefFixture]);
+
 const reviewFixture = {
   schemaVersion: 1,
   id: "review-1",
@@ -172,6 +233,14 @@ const parserCases: readonly ParserCase[] = [
     versioned: true,
   },
   {
+    name: "parseEvidenceRef",
+    parse: parseEvidenceRef,
+    fixture: { ...evidenceRefFixture },
+    requiredField: "recordDigest",
+    wrongTypeField: "episode",
+    versioned: true,
+  },
+  {
     name: "parseCandidateReview",
     parse: parseCandidateReview,
     fixture: { ...reviewFixture },
@@ -181,7 +250,7 @@ const parserCases: readonly ParserCase[] = [
   },
 ];
 
-describe.each(parserCases)("$name", ({ parse, fixture, requiredField, wrongTypeField, versioned }) => {
+describe.each(parserCases)("$name", ({ name, parse, fixture, requiredField, wrongTypeField, versioned }) => {
   it("accepts a valid fixture and round-trips its fields", () => {
     expect(parse(fixture)).toEqual(fixture);
   });
@@ -211,7 +280,10 @@ describe.each(parserCases)("$name", ({ parse, fixture, requiredField, wrongTypeF
 
   if (versioned) {
     it("rejects a wrong schemaVersion as schema.unsupported_version", () => {
-      expect(errorFrom(() => parse({ ...fixture, schemaVersion: 2 })).code).toBe("schema.unsupported_version");
+      const wrongVersion = name === "parseCandidate" ? 3 : 2;
+      expect(errorFrom(() => parse({ ...fixture, schemaVersion: wrongVersion })).code).toBe(
+        "schema.unsupported_version",
+      );
     });
 
     it("rejects a missing schemaVersion as schema.unsupported_version", () => {
@@ -230,6 +302,137 @@ describe("parseCandidate digest verification", () => {
   it("rejects mutated bound content whose stored digest no longer matches", () => {
     const error = errorFrom(() => parseCandidate({ ...candidateFixture, problem: "Rewritten after review." }));
     expect(error.code).toBe("schema.corrupt");
+  });
+});
+
+describe("parseEvidenceRef exact lineage", () => {
+  it("rejects a changed field whose reference digest is stale", () => {
+    expect(errorFrom(() => parseEvidenceRef({ ...evidenceRefFixture, recordDigest: "9".repeat(64) })).code).toBe(
+      "schema.corrupt",
+    );
+  });
+
+  it("rejects self-consistently re-digested foreign record and episode ownership", () => {
+    const foreignRecordBound = { ...evidenceRefBound, recordId: "other-source/obs-1" };
+    expect(
+      errorFrom(() =>
+        parseEvidenceRef({
+          schemaVersion: 1,
+          ...foreignRecordBound,
+          referenceDigest: evidenceRefDigest(foreignRecordBound),
+        }),
+      ).code,
+    ).toBe("schema.corrupt");
+
+    const foreignEpisodeBound = {
+      ...evidenceRefBound,
+      episode: { ...evidenceRefBound.episode, sourceId: "other-source" },
+    };
+    expect(
+      errorFrom(() =>
+        parseEvidenceRef({
+          schemaVersion: 1,
+          ...foreignEpisodeBound,
+          referenceDigest: evidenceRefDigest(foreignEpisodeBound),
+        }),
+      ).code,
+    ).toBe("schema.corrupt");
+  });
+
+  it("rejects self-consistently re-digested page receipt id/digest mismatches", () => {
+    const evidencePageMismatch = { ...evidenceRefBound, pageReceiptId: `source-page-${"a".repeat(64)}` };
+    expect(
+      errorFrom(() =>
+        parseEvidenceRef({
+          schemaVersion: 1,
+          ...evidencePageMismatch,
+          referenceDigest: evidenceRefDigest(evidencePageMismatch),
+        }),
+      ).code,
+    ).toBe("schema.corrupt");
+
+    const episodePageMismatch = {
+      ...evidenceRefBound,
+      episode: { ...evidenceRefBound.episode, pageReceiptId: `source-page-${"b".repeat(64)}` },
+    };
+    expect(
+      errorFrom(() =>
+        parseEvidenceRef({
+          schemaVersion: 1,
+          ...episodePageMismatch,
+          referenceDigest: evidenceRefDigest(episodePageMismatch),
+        }),
+      ).code,
+    ).toBe("schema.corrupt");
+  });
+});
+
+describe("parseCandidate schema v2 invariants", () => {
+  it("accepts a valid receipt-bound candidate", () => {
+    expect(parseCandidate(candidateV2Fixture)).toEqual(candidateV2Fixture);
+  });
+
+  it("requires a nonempty, duplicate-free ordered EvidenceRef list", () => {
+    const empty = candidateV2FixtureFor([]);
+    expect(errorFrom(() => parseCandidate(empty)).code).toBe("schema.invalid");
+
+    const exactDuplicate = candidateV2FixtureFor([evidenceRefFixture, evidenceRefFixture]);
+    expect(errorFrom(() => parseCandidate(exactDuplicate)).code).toBe("schema.invalid");
+
+    const sameRecordBound = {
+      ...evidenceRefBound,
+      pageRef: "other-page",
+      pageReceiptId: `source-page-${"c".repeat(64)}`,
+      pageReceiptDigest: "c".repeat(64),
+    };
+    const sameRecord: EvidenceRef = {
+      schemaVersion: 1,
+      ...sameRecordBound,
+      referenceDigest: evidenceRefDigest(sameRecordBound),
+    };
+    const recordDuplicate = candidateV2FixtureFor([evidenceRefFixture, sameRecord]);
+    expect(errorFrom(() => parseCandidate(recordDuplicate)).code).toBe("schema.invalid");
+  });
+
+  it("requires every reference scope digest to equal the candidate scope", () => {
+    const otherScopeBound = {
+      ...evidenceRefBound,
+      episode: { ...evidenceRefBound.episode, scopeDigest: candidateScopeDigest([{ type: "project", id: "other" }]) },
+    };
+    const otherScopeReference: EvidenceRef = {
+      schemaVersion: 1,
+      ...otherScopeBound,
+      referenceDigest: evidenceRefDigest(otherScopeBound),
+    };
+    expect(errorFrom(() => parseCandidate(candidateV2FixtureFor([otherScopeReference]))).code).toBe("schema.corrupt");
+  });
+
+  it("requires supersedes and originalDigest together and binds both into contentDigest", () => {
+    expect(errorFrom(() => parseCandidate({ ...candidateV2Fixture, supersedes: "candidate-old" })).code).toBe(
+      "schema.invalid",
+    );
+    expect(errorFrom(() => parseCandidate({ ...candidateV2Fixture, originalDigest: "d".repeat(64) })).code).toBe(
+      "schema.invalid",
+    );
+
+    const lineage = candidateV2FixtureFor([evidenceRefFixture], {
+      supersedes: "candidate-old",
+      originalDigest: "d".repeat(64),
+    });
+    expect(parseCandidate(lineage)).toEqual(lineage);
+    expect(errorFrom(() => parseCandidate({ ...lineage, originalDigest: "e".repeat(64) })).code).toBe("schema.corrupt");
+  });
+
+  it("rejects tampering with any embedded reference or candidate content", () => {
+    expect(
+      errorFrom(() =>
+        parseCandidate({
+          ...candidateV2Fixture,
+          evidenceRefs: [{ ...evidenceRefFixture, referenceDigest: "f".repeat(64) }],
+        }),
+      ).code,
+    ).toBe("schema.corrupt");
+    expect(errorFrom(() => parseCandidate({ ...candidateV2Fixture, problem: "tampered" })).code).toBe("schema.corrupt");
   });
 });
 

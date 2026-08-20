@@ -1,21 +1,13 @@
-// Read-side fold over the stored records, shared by `report` and `distill`.
-//
-// The engine keeps its records in the "learning" namespace with kinds
-// "observation" / "episode" — knowledge this consumer takes from the store
-// layout because the façade exposes no read path for observations (recorded
-// as consumer feedback). Every value read back is validated with the public
-// record parsers; corrupt records are counted, never trusted.
-//
-// Observations are grouped per episode via observation.episodeId (the
-// adapters' projected episode id) and attributed to provider/project via each
-// episode's transcript.session.meta observation — the stored episode record
-// carries a different derived id, so the meta observation is the only robust
-// public join key.
-import type { LearningStore, Observation, StoredRecord } from "@cormidia/learning-loop";
-import { parseObservation } from "@cormidia/learning-loop";
+// Read-side fold over the kernel's typed, bounded query façade, shared by
+// `report` and `distill`. The consumer never knows the engine's store namespace
+// or record-kind strings. Episode views provide the source-scoped logical
+// identity that observations use, while the episode record's scope supplies
+// host-neutral provider/project attribution.
+import type { EpisodeView, LearningLoop, Observation, QueryPage, Scope } from "@cormidia/learning-loop";
+import { canonicalJsonText } from "@cormidia/learning-loop";
 import { jsonBoolean, jsonNumber, jsonObject, jsonString } from "./json.js";
 
-export const LEARNING_NAMESPACE = "learning";
+const PAGE_LIMIT = 200;
 
 export interface FoldListProgress {
   readonly kind: "episodes" | "observations";
@@ -27,44 +19,43 @@ export interface FoldListProgress {
 
 export type FoldProgress = (progress: FoldListProgress) => void;
 
-export async function listLearningRecords(
-  store: LearningStore,
-  kind: "episode" | "observation",
+async function consumePages<T>(
+  kind: FoldListProgress["kind"],
+  source: AsyncIterable<QueryPage<T>>,
+  consume: (item: T) => void,
   progress?: FoldProgress,
-): Promise<readonly StoredRecord[]> {
-  const records: StoredRecord[] = [];
-  let cursor: string | undefined;
+): Promise<number> {
+  let records = 0;
   let pages = 0;
-  const label = kind === "episode" ? "episodes" : "observations";
   const startedAt = Date.now();
   const elapsedSeconds = (): number => Math.max(0, Math.floor((Date.now() - startedAt) / 1_000));
   const heartbeat = setInterval(() => {
-    progress?.({ kind: label, records: records.length, pages, heartbeat: true, elapsedSeconds: elapsedSeconds() });
+    progress?.({ kind, records, pages, heartbeat: true, elapsedSeconds: elapsedSeconds() });
   }, 5_000);
   heartbeat.unref();
   try {
-    for (;;) {
-      const page = await store.list({
-        namespace: LEARNING_NAMESPACE,
-        kind,
-        ...(cursor !== undefined ? { cursor } : {}),
-        limit: 200,
-      });
+    for await (const page of source) {
       pages += 1;
-      records.push(...page.records);
+      records += page.items.length;
+      for (const item of page.items) consume(item);
       const done = page.nextCursor === undefined;
       if (pages === 1 || pages % 25 === 0 || done) {
         progress?.({
-          kind: label,
-          records: records.length,
+          kind,
+          records,
           pages,
           heartbeat: false,
           elapsedSeconds: elapsedSeconds(),
         });
       }
-      if (done) return records;
-      cursor = page.nextCursor;
     }
+    // A conforming query yields one terminal empty page for an empty result.
+    // Keep progress useful if a custom implementation instead yields none.
+    if (pages === 0) {
+      pages = 1;
+      progress?.({ kind, records, pages, heartbeat: false, elapsedSeconds: elapsedSeconds() });
+    }
+    return records;
   } finally {
     clearInterval(heartbeat);
   }
@@ -111,25 +102,33 @@ export interface StoreFold {
   readonly observationCount: number;
   readonly completeness: { readonly complete: number; readonly partial: number; readonly unknown: number };
   readonly unknownRecordCount: number;
-  readonly corruptRecordCount: number;
+  readonly unresolvedEpisodeIdentityCount: number;
+  readonly unresolvedObservationCount: number;
 }
 
-interface EpisodeGroup {
-  provider: string;
-  project: string;
-  readonly observations: Observation[];
+function episodeKey(sourceId: string, episodeId: string): string {
+  return canonicalJsonText([sourceId, episodeId]);
+}
+
+function projectKey(provider: string, project: string): string {
+  return canonicalJsonText([provider, project]);
+}
+
+function segmentId(scope: Scope, type: string): string | undefined {
+  return scope.find((segment) => segment.type === type)?.id;
 }
 
 function foldObservation(fold: ProjectFold, observation: Observation): void {
   fold.observations += 1;
   const data = jsonObject(observation.data);
+  const scopedEpisodeId = episodeKey(observation.provenance.sourceId, observation.episodeId);
   switch (observation.kind) {
     case "transcript.message": {
       const actor = jsonString(data?.actor);
       if (actor === "human") {
         fold.humanMessages += 1;
         if (jsonBoolean(data?.correctionSignal) === true) {
-          addToCluster(fold.corrections, observation.episodeId, observation.id);
+          addToCluster(fold.corrections, scopedEpisodeId, observation.id);
         }
       } else if (actor === "agent") {
         fold.agentMessages += 1;
@@ -142,7 +141,7 @@ function foldObservation(fold: ProjectFold, observation: Observation): void {
         const toolName = jsonString(data?.toolName) ?? "unknown";
         const cluster = fold.toolFailures.get(toolName) ?? newCluster();
         fold.toolFailures.set(toolName, cluster);
-        addToCluster(cluster, observation.episodeId, observation.id);
+        addToCluster(cluster, scopedEpisodeId, observation.id);
       }
       return;
     }
@@ -166,77 +165,75 @@ function foldObservation(fold: ProjectFold, observation: Observation): void {
   }
 }
 
-export async function foldStore(store: LearningStore, progress?: FoldProgress): Promise<StoreFold> {
-  // Observations dominate real backfills, so name that phase immediately
-  // while the file store prepares its insertion catalog.
-  const observationRecords = await listLearningRecords(store, "observation", progress);
-  const episodeRecords = await listLearningRecords(store, "episode", progress);
-  let corrupt = 0;
-
-  const groups = new Map<string, EpisodeGroup>();
-  const completeness = { complete: 0, partial: 0, unknown: 0 };
-  let unknownRecordCount = 0;
-  let observationCount = 0;
-  for (const record of observationRecords) {
-    let observation: Observation;
-    try {
-      observation = parseObservation(record.value);
-    } catch {
-      corrupt += 1;
-      continue;
-    }
-    observationCount += 1;
-    completeness[observation.provenance.completeness] += 1;
-    if (observation.kind === "transcript.unknown") unknownRecordCount += 1;
-    const group = groups.get(observation.episodeId) ?? {
-      provider: "unknown",
-      project: "unknown",
-      observations: [],
-    };
-    groups.set(observation.episodeId, group);
-    group.observations.push(observation);
-    if (observation.kind === "transcript.session.meta") {
-      const data = jsonObject(observation.data);
-      group.provider = jsonString(data?.provider) ?? "unknown";
-      group.project = jsonString(data?.projectSlug) ?? "unknown";
-    }
-  }
+export async function foldStore(learning: LearningLoop, progress?: FoldProgress): Promise<StoreFold> {
+  const episodeScopes = new Map<string, { readonly provider: string; readonly project: string }>();
+  let unresolvedEpisodeIdentityCount = 0;
+  const episodeRecordCount = await consumePages(
+    "episodes",
+    learning.queryEpisodes({ limit: PAGE_LIMIT }),
+    (view: EpisodeView) => {
+      if (view.identity.status === "unresolved") {
+        unresolvedEpisodeIdentityCount += 1;
+        return;
+      }
+      episodeScopes.set(episodeKey(view.identity.sourceId, view.identity.episodeId), {
+        provider: segmentId(view.episode.scope, "provider") ?? "unknown",
+        project: segmentId(view.episode.scope, "project") ?? "unknown",
+      });
+    },
+    progress,
+  );
 
   const projects = new Map<string, ProjectFold>();
-  for (const [episodeId, group] of groups) {
-    const key = `${group.provider}/${group.project}`;
-    const fold = projects.get(key) ?? {
-      provider: group.provider,
-      project: group.project,
-      episodeIds: new Set<string>(),
-      observations: 0,
-      partialObservations: 0,
-      unknownRecords: 0,
-      humanMessages: 0,
-      agentMessages: 0,
-      corrections: newCluster(),
-      toolFailures: new Map<string, SignalCluster>(),
-      toolCompletions: 0,
-      aborted: 0,
-      rolledBack: 0,
-      tokensIn: 0,
-      tokensOut: 0,
-    };
-    projects.set(key, fold);
-    fold.episodeIds.add(episodeId);
-    for (const observation of group.observations) {
+  const completeness = { complete: 0, partial: 0, unknown: 0 };
+  let unknownRecordCount = 0;
+  let unresolvedObservationCount = 0;
+  const observationCount = await consumePages(
+    "observations",
+    learning.queryObservations({ limit: PAGE_LIMIT }),
+    (observation: Observation) => {
+      completeness[observation.provenance.completeness] += 1;
+      if (observation.kind === "transcript.unknown") unknownRecordCount += 1;
+      const key = episodeKey(observation.provenance.sourceId, observation.episodeId);
+      const episodeScope = episodeScopes.get(key);
+      if (episodeScope === undefined) {
+        unresolvedObservationCount += 1;
+        return;
+      }
+      const keyForProject = projectKey(episodeScope.provider, episodeScope.project);
+      const fold = projects.get(keyForProject) ?? {
+        provider: episodeScope.provider,
+        project: episodeScope.project,
+        episodeIds: new Set<string>(),
+        observations: 0,
+        partialObservations: 0,
+        unknownRecords: 0,
+        humanMessages: 0,
+        agentMessages: 0,
+        corrections: newCluster(),
+        toolFailures: new Map<string, SignalCluster>(),
+        toolCompletions: 0,
+        aborted: 0,
+        rolledBack: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+      };
+      projects.set(keyForProject, fold);
+      fold.episodeIds.add(key);
       if (observation.provenance.completeness === "partial") fold.partialObservations += 1;
       foldObservation(fold, observation);
-    }
-  }
+    },
+    progress,
+  );
 
-  const sorted = new Map([...projects.entries()].sort(([left], [right]) => left.localeCompare(right)));
+  const sorted = new Map([...projects.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)));
   return {
     projects: sorted,
-    episodeRecordCount: episodeRecords.length,
+    episodeRecordCount,
     observationCount,
     completeness,
     unknownRecordCount,
-    corruptRecordCount: corrupt,
+    unresolvedEpisodeIdentityCount,
+    unresolvedObservationCount,
   };
 }

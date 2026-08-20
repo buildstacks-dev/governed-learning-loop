@@ -5,10 +5,29 @@
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import type { Diagnostic } from "../diagnostics.js";
+import { invalid, parseNonEmptyText, parseOneOf } from "../parse/toolkit.js";
 import type { MetricDefinition, EpisodeOutcome } from "../records/episode.js";
 import type { SourceDescriptor, TrustClass, Completeness } from "../records/provenance.js";
+import { TRUST_CLASSES } from "../records/provenance.js";
 import type { Scope } from "../records/scope.js";
 import { registeredSourceBrand } from "../records/brands.js";
+
+const MAX_SOURCE_ID_LENGTH = 1_000;
+
+function parseSourceId(input: unknown): string {
+  const path = ["source", "descriptor", "id"] as const;
+  const value = parseNonEmptyText(input, path);
+  if (value.length > MAX_SOURCE_ID_LENGTH) {
+    throw invalid("config.invalid", `source id exceeds ${MAX_SOURCE_ID_LENGTH} characters`, path);
+  }
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw invalid("config.invalid", "source id contains a control character", path);
+    }
+  }
+  return value;
+}
 
 export interface ProjectedObservation {
   readonly sourceRecordId: string;
@@ -31,6 +50,9 @@ export interface ProjectedMeasurement {
 export interface ProjectedEpisode {
   readonly sourceRecordId: string;
   readonly episodeId: string;
+  readonly parentEpisodeId?: string;
+  readonly episodeClass?: string;
+  readonly completeness?: Completeness;
   readonly scope: Scope;
   readonly openedAt: string;
   readonly closedAt?: string;
@@ -94,17 +116,31 @@ export function defineSourceRegistration<I>(input: {
   readonly trustCeiling: TrustClass;
   readonly contentPolicyId: string;
 }): RegisteredSource<I> {
-  const { id, adapterVersion } = input.source.descriptor;
+  const id = parseSourceId(input.source.descriptor.id);
+  if (id.includes("/")) {
+    throw invalid("config.invalid", "source id must not contain the reserved '/' separator", [
+      "source",
+      "descriptor",
+      "id",
+    ]);
+  }
+  const adapterVersion = parseNonEmptyText(input.source.descriptor.adapterVersion, [
+    "source",
+    "descriptor",
+    "adapterVersion",
+  ]);
+  const trustCeiling = parseOneOf(TRUST_CLASSES)(input.trustCeiling, ["trustCeiling"]);
+  const contentPolicyId = parseNonEmptyText(input.contentPolicyId, ["contentPolicyId"]);
   const registryRevision = sha256HexOfCanonicalJson({
     sourceId: id,
     adapterVersion,
-    trustCeiling: input.trustCeiling,
-    contentPolicyId: input.contentPolicyId,
+    trustCeiling,
+    contentPolicyId,
   });
   return withSourceBrand({
     id,
     registryRevision,
-    trustCeiling: input.trustCeiling,
-    contentPolicyId: input.contentPolicyId,
+    trustCeiling,
+    contentPolicyId,
   });
 }

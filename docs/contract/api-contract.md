@@ -1,8 +1,8 @@
 <!-- Provenance: adopted verbatim from Cormidia research/2026-08-12_learning-loop-library/api-contract.md (source snapshot 242b12acf5e733dec9fbbeeedf4d47588c22da91). This copy is the ratified contract for this repository; amend by exact diff with a decision record in docs/decisions/. -->
-# Proposed Public Contract for a TypeScript Learning Loop
+# Public Contract for a TypeScript Learning Loop
 
 **Date:** 2026-08-12  
-**Status:** non-normative API proposal; intended for ratification before implementation  
+**Status:** ratified public contract; schema version 1
 **Working import:** `@cormidia/learning-loop` — provisional
 
 ## The developer experience to optimize
@@ -421,7 +421,7 @@ export interface CandidateReview {
 }
 ```
 
-The engine accepts reviewer identity only from a `VerifiedPrincipal` handle and refuses a decisive self-review. Policy may additionally require a different attested `independenceDomain`, a human reviewer, multiple reviewers, or a calibrated reviewer version. An `accept` with a blocking finding is invalid.
+The engine accepts reviewer identity only from a `VerifiedPrincipal` handle and refuses a decisive self-review. Policy may additionally require a different attested `independenceDomain`, a human reviewer, multiple reviewers, or a calibrated reviewer version. An `accept` with a blocking finding is invalid. A candidate evidence id that is not a durable source-qualified observation id may resolve only when it matches exactly one stored observation from one source; ambiguous raw source-record references fail review.
 
 ### Publication plan and authorization binding
 
@@ -659,11 +659,14 @@ export interface ProjectedMeasurement {
 export interface ProjectedEpisode {
   readonly sourceRecordId: string;
   readonly episodeId: string;
+  readonly parentEpisodeId?: string;
+  readonly episodeClass?: string;
   readonly scope: Scope;
   readonly openedAt: string;
   readonly closedAt?: string;
   readonly status?: EpisodeOutcome["status"];
   readonly measurementSourceRecordIds: readonly string[];
+  readonly completeness?: "complete" | "partial" | "unknown";
 }
 
 export interface EvidencePage {
@@ -707,7 +710,9 @@ export declare function defineSourceRegistration<I>(input: {
 }): RegisteredSource<I>;
 ```
 
-The host binds the adapter to a `trustCeiling` and content policy before constructing the loop. The resulting capability preserves its input type, so `learning.ingest(source, input)` cannot accept another source's input. The registry is immutable and content-digested; changing it creates a new loop configuration revision. The engine adds canonical digests, stable IDs, effective trust, import receipts, and idempotency. The adapter never receives network, authority, publication or active-context capabilities.
+The host binds the adapter to a `trustCeiling` and content policy before constructing the loop. The resulting capability preserves its input type, so `learning.ingest(source, input)` cannot accept another source's input. The registry is immutable and content-digested; changing it creates a new loop configuration revision. Registered source ids must not contain `/`, which is the reserved separator between the source id and an opaque source-record id in schema-version-1 durable record ids. The engine adds canonical digests, stable IDs, effective trust, import receipts, and idempotency. The adapter never receives network, authority, publication or active-context capabilities.
+
+Projection source-record ids, logical episode ids, observation kinds, metric names, parent ids, and episode classes are bounded to 1,000 control-free characters at ingestion. This keeps every accepted value addressable by the bounded query surface; durable ids may be longer because they frame a source id and source-record id. `ProjectedEpisode.completeness` is the adapter's assessment of that episode projection. An omitted value is `unknown`, never an implied complete record. `parentEpisodeId` records provider-neutral parent/child lineage, and `episodeClass` is a host-defined applicability label such as an interactive, automation, benchmark, or replay class. Both are data, not authority; adapters omit them rather than guess.
 
 ### Storage
 
@@ -972,6 +977,7 @@ export interface LearningLoopConfig {
   readonly scopePolicy: ScopePolicy;
   readonly contentPolicies: readonly ContentPolicy[];
   readonly sources: readonly RegisteredSource<unknown>[];
+  readonly queryCursorScope?: string;
   readonly outcomeSources?: readonly RegisteredOutcomeSource<unknown>[];
   readonly destinations?: readonly DestinationRegistration[];
   readonly replayExecutors?: readonly ReplayExecutor[];
@@ -1023,10 +1029,12 @@ export interface GovernanceView {
   readonly reasons: readonly Diagnostic[];
 }
 
-export interface ProposeOutcome {
+export interface CandidateView {
   readonly candidate: Candidate;
   readonly governance: GovernanceView;
 }
+
+export interface ProposeOutcome extends CandidateView {}
 
 export interface PreparedPublication {
   readonly plan: PublicationPlan;
@@ -1095,8 +1103,75 @@ export interface EvaluationResult {
   readonly diagnostics: readonly Diagnostic[];
 }
 
+export interface QueryPage<T> {
+  readonly items: readonly T[];
+  readonly nextCursor?: string;
+  readonly snapshotRevision: string;
+}
+
+export interface ObservationQuery {
+  readonly observationIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly episodeIds?: readonly string[];
+  readonly kinds?: readonly string[];
+  readonly trust?: readonly TrustClass[];
+  readonly completeness?: readonly Provenance["completeness"][];
+  readonly since?: string;
+  readonly until?: string;
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface MeasurementQuery {
+  readonly measurementIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly episodeIds?: readonly string[];
+  readonly metricNames?: readonly string[];
+  readonly trust?: readonly TrustClass[];
+  readonly completeness?: readonly Provenance["completeness"][];
+  readonly since?: string;
+  readonly until?: string;
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface EpisodeQuery {
+  readonly recordIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly episodeIds?: readonly string[];
+  readonly parentEpisodeIds?: readonly string[];
+  readonly episodeClasses?: readonly string[];
+  readonly scope?: Scope;
+  readonly statuses?: readonly EpisodeOutcome["status"][];
+  readonly since?: string;
+  readonly until?: string;
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface EpisodeView {
+  readonly episode: EpisodeRecord;
+  readonly identity:
+    | {
+        readonly status: "resolved";
+        readonly sourceId: string;
+        readonly sourceRecordId: string;
+        readonly episodeId: string;
+        readonly parentEpisodeId?: string;
+        readonly episodeClass?: string;
+        readonly registryRevision: string;
+        readonly trustCeiling: TrustClass;
+        readonly completeness: Provenance["completeness"];
+      }
+    | {
+        readonly status: "unresolved";
+        readonly diagnostics: readonly Diagnostic[];
+      };
+}
+
 export interface LearningReportQuery {
   readonly scope?: Scope;
+  readonly sourceIds?: readonly string[];
   readonly episodeIds?: readonly string[];
   readonly since?: string;
   readonly until?: string;
@@ -1122,6 +1197,11 @@ export interface LearningLoop {
 
   propose(input: CandidateInput): Promise<ProposeOutcome>;
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
+
+  queryObservations(input: ObservationQuery): AsyncIterable<QueryPage<Observation>>;
+  queryMeasurements(input: MeasurementQuery): AsyncIterable<QueryPage<MeasurementRecord>>;
+  queryEpisodes(input: EpisodeQuery): AsyncIterable<QueryPage<EpisodeView>>;
+  getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
 
   preparePublication(input: {
     readonly candidateId: string;
@@ -1156,6 +1236,18 @@ export interface LearningLoop {
 ```
 
 `RegisteredSource<I>` ties each input to its preconfigured adapter, trust ceiling and content policy. `recordOutcomes` accepts only the distinct `RegisteredOutcomeSource<I>` capability. The strict-consumer test must prove the two cannot be substituted or widened, never paper over the distinction with a cast.
+
+The three query methods are read-only, domain-specific views over engine-owned records. `limit` is required and must be an integer from 1 through 500; it bounds each page, not the whole iterable. Items retain deterministic insertion order. Identifier arrays match exact identifiers, values within one array are alternatives, and different populated filters combine by intersection. Unknown query fields are rejected so a misspelled isolation filter cannot broaden a read. Each filter array is capped at 1,000 values, each string value at 4,096 characters (wide enough for framed durable ids), and an encoded cursor at 16,384 characters. `sourceIds`, `trust`, and `completeness` select observation/measurement provenance; `sourceIds` also selects resolved episode identity, whose view exposes its trust ceiling and completeness. `parentEpisodeIds` and `episodeClasses` select exact adapter-declared lineage/applicability values. Parent traversal should pair `parentEpisodeIds` with `sourceIds`; callers can stream repeated parent queries to traverse descendants without a provider-specific graph API. `scope` is validated by the configured `ScopePolicy` and matches the stored episode scope exactly; it does not invent ancestor inheritance. `statuses` excludes episodes with no outcome.
+
+`since` and `until` are inclusive canonical RFC 3339 UTC timestamps with milliseconds. They apply to `Observation.occurredAt`, `MeasurementRecord.measuredAt`, and `EpisodeRecord.openedAt`, respectively; a record without the relevant optional timestamp does not satisfy a time-bounded observation or measurement query. `recordIds` addresses durable `EpisodeRecord.id` values, while `episodeIds` addresses the provider-neutral episode identity shared by projections.
+
+Query cursors are opaque and bind the domain kind, normalized filters, immutable registry revision, and a query-cursor store scope. A cursor used with another query, registry, or store scope is invalid. `LearningLoopConfig.queryCursorScope` lets a host provide a stable, non-secret tenant/store identity of at most 1,000 characters when cursors must resume across loop instances; it must not contain a secret because only its digest travels in the cursor. If omitted, the engine creates a process-local scope and cursors are valid only for that loop instance. Page `limit` is excluded from the binding so a resumed reader may change page size. Each page's `snapshotRevision` is the store revision observed for that page. Episode pages recheck that revision after loading identity claims and fail with `query.snapshot_changed` if the composite view crossed a concurrent write. Appends may become visible on later pages, so the iterable is not a frozen detector, calibration, or experiment population; such workflows must persist and digest their exact eligible record set.
+
+`EpisodeView.identity` comes from an engine-private, append-only sidecar claim stream created during ingestion. Each claim preserves source id, source record id, projected episode id, optional parent and episode class, registry revision, trust ceiling, and episode completeness without changing historical `EpisodeRecord` bytes. One distinct claim resolves; two claims atomically fold to conflict. Re-ingesting an existing episode idempotently backfills a missing claim. Conflicting or unavailable lineage produces `status: "unresolved"` with typed diagnostics and never a fabricated identity.
+
+`getCandidateView` is a pure read: it validates the stored candidate and folds its reviews into `GovernanceView`. It does not call `propose`, claim a content digest, or mutate the store.
+
+`LearningReportQuery` uses the same closed-key, bounded-string/array, exact-scope, and canonical-time rules as typed queries. `sourceIds` alone filters candidates to evidence from those sources. `episodeIds` addresses logical projected episode ids and therefore requires `sourceIds`; the pair is the collision-safe identity. Raw source-record references are included only when globally unambiguous and do not collide with a durable observation id. An unscoped or ambiguous logical episode-id report is rejected or excluded rather than merging evidence from two sources.
 
 The façade should not expose “force approve,” “mark validated,” or “write active memory” operations. Status is derived from accepted evidence and legal transitions.
 

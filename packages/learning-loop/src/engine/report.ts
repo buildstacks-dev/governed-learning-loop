@@ -3,14 +3,17 @@
 // those id lists are empty with an explanatory diagnostic rather than a
 // silent absence.
 import type { Diagnostic } from "../diagnostics.js";
+import { invalid } from "../parse/toolkit.js";
 import { parseCandidate } from "../records/candidate.js";
 import { parseObservation } from "../records/observation.js";
 import type { Scope } from "../records/scope.js";
 import type { EngineContext } from "./context.js";
-import { listAllRecords } from "./context.js";
+import { iterateRecordPages } from "./context.js";
+import { parseLearningReportQuery } from "./query.js";
 
 export interface LearningReportQuery {
   readonly scope?: Scope;
+  readonly sourceIds?: readonly string[];
   readonly episodeIds?: readonly string[];
   readonly since?: string;
   readonly until?: string;
@@ -38,44 +41,70 @@ const TIERS_NOT_IMPLEMENTED: Diagnostic = {
  */
 async function episodeEvidenceKeys(
   context: EngineContext,
-  episodeIds: readonly string[],
+  sourceIds: readonly string[],
+  episodeIds?: readonly string[],
 ): Promise<ReadonlySet<string>> {
-  const wanted = new Set(episodeIds);
+  const wantedSources = new Set(sourceIds);
+  const wantedEpisodes = episodeIds === undefined ? undefined : new Set(episodeIds);
   const keys = new Set<string>();
-  const stored = await listAllRecords(context.store, "observation");
-  for (const record of stored) {
-    const observation = parseObservation(record.value);
-    if (!wanted.has(observation.episodeId)) continue;
-    keys.add(observation.id);
-    if (observation.provenance.recordRef !== undefined) keys.add(observation.provenance.recordRef);
+  const allDurableIds = new Set<string>();
+  const rawSources = new Map<string, Set<string>>();
+  const matchingRawRefs = new Set<string>();
+  for await (const page of iterateRecordPages(context.store, "observation", { limit: 100 })) {
+    for (const record of page.records) {
+      const observation = parseObservation(record.value);
+      allDurableIds.add(observation.id);
+      if (observation.provenance.recordRef !== undefined) {
+        const sources = rawSources.get(observation.provenance.recordRef) ?? new Set<string>();
+        sources.add(observation.provenance.sourceId);
+        rawSources.set(observation.provenance.recordRef, sources);
+      }
+      if (
+        !wantedSources.has(observation.provenance.sourceId) ||
+        (wantedEpisodes !== undefined && !wantedEpisodes.has(observation.episodeId))
+      ) {
+        continue;
+      }
+      keys.add(observation.id);
+      if (observation.provenance.recordRef !== undefined) matchingRawRefs.add(observation.provenance.recordRef);
+    }
+  }
+  for (const rawRef of matchingRawRefs) {
+    if (!allDurableIds.has(rawRef) && rawSources.get(rawRef)?.size === 1) keys.add(rawRef);
   }
   return keys;
 }
 
-export async function runReport(context: EngineContext, query: LearningReportQuery): Promise<LearningReport> {
-  const scope = query.scope === undefined ? undefined : context.scopePolicy.validate(query.scope);
-  const evidenceKeys =
-    query.episodeIds === undefined ? undefined : await episodeEvidenceKeys(context, query.episodeIds);
+function candidateInsideWindow(candidateTimestamp: string, query: LearningReportQuery): boolean {
+  if (query.since === undefined && query.until === undefined) return true;
+  const time = Date.parse(candidateTimestamp);
+  if (!Number.isFinite(time) || new Date(time).toISOString() !== candidateTimestamp) {
+    throw invalid("query.incomplete", "stored candidate has a noncanonical proposedAt timestamp", ["proposedAt"]);
+  }
+  if (query.since !== undefined && time < Date.parse(query.since)) return false;
+  if (query.until !== undefined && time > Date.parse(query.until)) return false;
+  return true;
+}
 
-  const stored = await listAllRecords(context.store, "candidate");
+export async function runReport(context: EngineContext, input: LearningReportQuery): Promise<LearningReport> {
+  const query = parseLearningReportQuery(context, input);
+  const scope = query.scope;
+  const evidenceKeys =
+    query.sourceIds === undefined ? undefined : await episodeEvidenceKeys(context, query.sourceIds, query.episodeIds);
+
   const candidateIds: string[] = [];
-  for (const record of stored) {
-    const candidate = parseCandidate(record.value);
-    if (scope !== undefined && context.scopePolicy.comparePrecedence(scope, candidate.scope) !== 0) continue;
-    // ISO-8601 UTC timestamps compare correctly as strings; both bounds inclusive.
-    if (query.since !== undefined && candidate.proposedAt < query.since) continue;
-    if (query.until !== undefined && candidate.proposedAt > query.until) continue;
-    if (evidenceKeys !== undefined && !candidate.evidenceIds.some((id) => evidenceKeys.has(id))) continue;
-    candidateIds.push(candidate.id);
+  for await (const page of iterateRecordPages(context.store, "candidate", { limit: 100 })) {
+    for (const record of page.records) {
+      const candidate = parseCandidate(record.value);
+      if (scope !== undefined && context.scopePolicy.comparePrecedence(scope, candidate.scope) !== 0) continue;
+      if (!candidateInsideWindow(candidate.proposedAt, query)) continue;
+      if (evidenceKeys !== undefined && !candidate.evidenceIds.some((id) => evidenceKeys.has(id))) continue;
+      candidateIds.push(candidate.id);
+    }
   }
 
   return {
-    query: {
-      ...(scope !== undefined ? { scope } : {}),
-      ...(query.episodeIds !== undefined ? { episodeIds: query.episodeIds } : {}),
-      ...(query.since !== undefined ? { since: query.since } : {}),
-      ...(query.until !== undefined ? { until: query.until } : {}),
-    },
+    query,
     candidateIds,
     interventionIds: [],
     evaluationIds: [],

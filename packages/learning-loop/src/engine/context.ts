@@ -6,7 +6,9 @@ import type { Diagnostic } from "../diagnostics.js";
 import { LearningLoopError } from "../diagnostics.js";
 import type { Clock, IdGenerator } from "../ports/clock.js";
 import type { RegisteredSource } from "../ports/evidence.js";
-import type { LearningStore, RecordKey, StoredRecord } from "../ports/store.js";
+import type { LearningStore, RecordKey, StoredRecord, WriteResult } from "../ports/store.js";
+import { invalid, parseArrayOf, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
+import type { Parse } from "../parse/toolkit.js";
 import type { Candidate, RiskTier } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
 import type { ContentPolicy } from "../records/provenance.js";
@@ -16,7 +18,14 @@ import type { LearningPolicy, PolicyRules } from "./policy.js";
 /** Every engine-owned record lives in this namespace. */
 export const RECORD_NAMESPACE = "learning";
 
-export type RecordKind = "observation" | "measurement" | "episode" | "candidate" | "review" | "candidate-by-digest";
+export type RecordKind =
+  | "observation"
+  | "measurement"
+  | "episode"
+  | "episode-identity"
+  | "candidate"
+  | "review"
+  | "candidate-by-digest";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -26,6 +35,7 @@ export interface EngineContext {
   readonly contentPoliciesById: ReadonlyMap<string, ContentPolicy>;
   readonly sources: ReadonlySet<RegisteredSource<unknown>>;
   readonly registryRevision: string;
+  readonly queryCursorScopeDigest: string;
   readonly clock: Clock;
   readonly ids: IdGenerator;
 }
@@ -63,27 +73,146 @@ export function errorDiagnostics(error: unknown): readonly Diagnostic[] {
   throw error;
 }
 
-/** Exhaustively pages through the store for one record kind. */
-export async function listAllRecords(store: LearningStore, kind: RecordKind): Promise<readonly StoredRecord[]> {
-  const records: StoredRecord[] = [];
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await store.list({
-      namespace: RECORD_NAMESPACE,
-      kind,
-      ...(cursor !== undefined ? { cursor } : {}),
-      limit: 100,
-    });
-    records.push(...page.records);
-    if (page.nextCursor === undefined) return records;
-    cursor = page.nextCursor;
+export interface StoredPage {
+  readonly records: readonly StoredRecord[];
+  readonly nextCursor?: string;
+  readonly snapshotRevision: string;
+}
+
+const parseUnknown: Parse<unknown> = (input) => input;
+
+const parseStoredRecordAt: Parse<StoredRecord> = (input, path) => {
+  const fields = readFields(input, path);
+  const keyFields = readFields(fields.req("key", parseUnknown), [...path, "key"]);
+  return {
+    key: {
+      namespace: keyFields.req("namespace", parseNonEmptyText),
+      kind: keyFields.req("kind", parseNonEmptyText),
+      id: keyFields.req("id", parseNonEmptyText),
+    },
+    value: fields.req("value", parseUnknown),
+    revision: fields.req("revision", parseNonEmptyText),
+    digest: fields.req("digest", parseNonEmptyText),
+  };
+};
+
+function parseStoredPageAt(input: unknown, path: readonly (string | number)[], limit: number): StoredPage {
+  const fields = readFields(input, path);
+  const rawRecords = fields.req("records", parseUnknown);
+  if (!Array.isArray(rawRecords)) {
+    throw invalid("store.corrupt", "store list records must be an array", [...path, "records"]);
+  }
+  if (rawRecords.length > limit) {
+    throw invalid("store.corrupt", "store listing exceeded the requested page limit", [...path, "records"]);
+  }
+  const nextCursor = fields.opt("nextCursor", parseNonEmptyText);
+  return {
+    records: rawRecords.map((record: unknown, index: number) =>
+      parseStoredRecordAt(record, [...path, "records", index]),
+    ),
+    ...(nextCursor !== undefined ? { nextCursor } : {}),
+    snapshotRevision: fields.req("snapshotRevision", parseNonEmptyText),
+  };
+}
+
+const WRITE_STATUSES = ["created", "updated", "exists_same", "conflict"] as const;
+
+export function parseWriteResult(input: unknown): WriteResult {
+  const fields = readFields(input, ["store", "write"]);
+  const status = fields.req("status", parseOneOf(WRITE_STATUSES));
+  const revision = fields.opt("revision", parseNonEmptyText);
+  if (status === "conflict") return revision === undefined ? { status } : { status, revision };
+  if (revision === undefined) {
+    throw invalid("store.corrupt", `store returned ${status} without a revision`, ["store", "write", "revision"]);
+  }
+  return { status, revision };
+}
+
+const parseStreamEntryIdAt: Parse<string> = (input, path) => {
+  const fields = readFields(input, path);
+  return fields.req("id", parseNonEmptyText);
+};
+
+function expectedStoredDigest(kind: RecordKind, value: unknown): string {
+  if (kind === "episode-identity") {
+    const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
+    return sha256HexOfCanonicalJson(entryIds);
+  }
+  return recordDigest(toJsonValue(value));
+}
+
+function assertRecordLocation(record: StoredRecord, kind: RecordKind, id?: string): void {
+  if (
+    record.key.namespace !== RECORD_NAMESPACE ||
+    record.key.kind !== kind ||
+    (id !== undefined && record.key.id !== id)
+  ) {
+    throw invalid("store.corrupt", `store returned a foreign ${kind} record`, ["key"]);
+  }
+  const expectedDigest = expectedStoredDigest(kind, record.value);
+  if (record.digest !== expectedDigest) {
+    throw invalid("store.corrupt", `stored ${kind} digest does not match its content`, ["digest"]);
   }
 }
 
+/** Validated, bounded page stream over one private engine record kind. */
+export async function* iterateRecordPages(
+  store: LearningStore,
+  kind: RecordKind,
+  options: { readonly cursor?: string; readonly limit: number },
+): AsyncIterable<StoredPage> {
+  let cursor = options.cursor;
+  const seenCursors = new Set<string>();
+  if (cursor !== undefined) seenCursors.add(cursor);
+  for (;;) {
+    const rawPage: unknown = await store.list({
+      namespace: RECORD_NAMESPACE,
+      kind,
+      ...(cursor !== undefined ? { cursor } : {}),
+      limit: options.limit,
+    });
+    const page = parseStoredPageAt(rawPage, ["store", "list", kind], options.limit);
+    for (const record of page.records) assertRecordLocation(record, kind);
+    yield page;
+    if (page.nextCursor === undefined) return;
+    if (seenCursors.has(page.nextCursor)) {
+      throw invalid("store.corrupt", `store listing for ${kind} cycled its cursor`, ["nextCursor"]);
+    }
+    cursor = page.nextCursor;
+    seenCursors.add(cursor);
+  }
+}
+
+export async function readRecordKindRevision(store: LearningStore, kind: RecordKind): Promise<string> {
+  const rawPage: unknown = await store.list({ namespace: RECORD_NAMESPACE, kind, limit: 1 });
+  const page = parseStoredPageAt(rawPage, ["store", "list", kind, "revision"], 1);
+  for (const record of page.records) assertRecordLocation(record, kind);
+  return page.snapshotRevision;
+}
+
+export async function loadStoredRecord(
+  context: EngineContext,
+  kind: RecordKind,
+  id: string,
+): Promise<StoredRecord | undefined> {
+  const rawStored: unknown = await context.store.get(recordKey(kind, id));
+  if (rawStored === undefined) return undefined;
+  const stored = parseStoredRecordAt(rawStored, ["store", "get", kind]);
+  assertRecordLocation(stored, kind, id);
+  return stored;
+}
+
+export async function loadRecordValue(
+  context: EngineContext,
+  kind: RecordKind,
+  id: string,
+): Promise<unknown | undefined> {
+  return (await loadStoredRecord(context, kind, id))?.value;
+}
+
 export async function loadCandidate(context: EngineContext, candidateId: string): Promise<Candidate | undefined> {
-  const stored = await context.store.get(recordKey("candidate", candidateId));
-  if (stored === undefined) return undefined;
-  return parseCandidate(stored.value);
+  const value = await loadRecordValue(context, "candidate", candidateId);
+  return value === undefined ? undefined : parseCandidate(value);
 }
 
 /**
@@ -99,7 +228,8 @@ export async function createOnly(
   operationId: string,
 ): Promise<"created" | "exists_same" | "conflict"> {
   const value = toJsonValue(record);
-  const result = await context.store.create(recordKey(kind, id), value, recordDigest(value), operationId);
+  const rawResult: unknown = await context.store.create(recordKey(kind, id), value, recordDigest(value), operationId);
+  const result = parseWriteResult(rawResult);
   if (result.status === "updated") {
     throw new LearningLoopError("store.corrupt", [
       {

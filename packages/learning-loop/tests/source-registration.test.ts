@@ -86,4 +86,24 @@ describe("defineSourceRegistration", () => {
     }).registryRevision;
     expect(new Set([baseline, adapterBump, ceilingChange, policyChange]).size).toBe(4);
   });
+
+  it("rejects source ids containing the durable-id separator", () => {
+    expect(() =>
+      defineSourceRegistration({
+        source: makeSource("source/ambiguous", "1.0.0"),
+        trustCeiling: "observed",
+        contentPolicyId: "policy-1",
+      }),
+    ).toThrow(expect.objectContaining({ code: "config.invalid" }));
+  });
+
+  it("rejects source ids that cannot be addressed by bounded queries", () => {
+    expect(() =>
+      defineSourceRegistration({
+        source: makeSource("s".repeat(1_001), "1.0.0"),
+        trustCeiling: "observed",
+        contentPolicyId: "policy-1",
+      }),
+    ).toThrow(expect.objectContaining({ code: "config.invalid" }));
+  });
 });

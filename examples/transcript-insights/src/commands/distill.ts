@@ -88,7 +88,7 @@ function progressLine(progress: FoldListProgress): string {
 }
 
 export async function runDistillCommand(loop: DemoLoop, out: CliOutput): Promise<number> {
-  const fold = await foldStore(loop.store, (progress) => out.write(progressLine(progress)));
+  const fold = await foldStore(loop.learning, (progress) => out.write(progressLine(progress)));
   const clusters = deriveClusters(fold);
   out.write(
     `distill: fold complete projects=${fold.projects.size}; ${clusters.length} qualifying cluster(s)` +

@@ -4,7 +4,7 @@ import type { Candidate } from "../records/candidate.js";
 import type { CandidateReview } from "../records/review.js";
 import { parseCandidateReview } from "../records/review.js";
 import type { EngineContext } from "./context.js";
-import { listAllRecords } from "./context.js";
+import { iterateRecordPages } from "./context.js";
 import type { GovernanceView } from "./governance.js";
 import { computeGovernanceView } from "./governance.js";
 
@@ -14,10 +14,14 @@ import { computeGovernanceView } from "./governance.js";
  * element is therefore the latest decisive review.
  */
 export async function loadReviews(context: EngineContext, candidateId: string): Promise<readonly CandidateReview[]> {
-  const stored = await listAllRecords(context.store, "review");
-  return stored
-    .map((record) => parseCandidateReview(record.value))
-    .filter((review) => review.candidateId === candidateId);
+  const reviews: CandidateReview[] = [];
+  for await (const page of iterateRecordPages(context.store, "review", { limit: 100 })) {
+    for (const record of page.records) {
+      const review = parseCandidateReview(record.value);
+      if (review.candidateId === candidateId) reviews.push(review);
+    }
+  }
+  return reviews;
 }
 
 export async function governanceViewOf(

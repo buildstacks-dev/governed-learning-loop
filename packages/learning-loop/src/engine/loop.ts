@@ -10,12 +10,14 @@
 // not exist yet — a smaller surface now, additive later.
 import { randomUUID } from "node:crypto";
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
-import { invalid } from "../parse/toolkit.js";
+import { invalid, parseNonEmptyText } from "../parse/toolkit.js";
 import type { Clock, IdGenerator } from "../ports/clock.js";
 import type { RegisteredSource } from "../ports/evidence.js";
 import type { LearningStore } from "../ports/store.js";
 import type { ContentPolicy } from "../records/provenance.js";
 import type { IdentityPort } from "../records/principal.js";
+import type { MeasurementRecord } from "../records/episode.js";
+import type { Observation } from "../records/observation.js";
 import type { CandidateReview } from "../records/review.js";
 import type { ScopePolicy } from "../records/scope.js";
 import type { EngineContext } from "./context.js";
@@ -25,6 +27,15 @@ import type { LearningPolicy } from "./policy.js";
 import { extractPolicyRules } from "./policy.js";
 import type { CandidateInput, ProposeOutcome } from "./propose.js";
 import { runPropose } from "./propose.js";
+import type {
+  CandidateView,
+  EpisodeQuery,
+  EpisodeView,
+  MeasurementQuery,
+  ObservationQuery,
+  QueryPage,
+} from "./query.js";
+import { runEpisodeQuery, runGetCandidateView, runMeasurementQuery, runObservationQuery } from "./query.js";
 import type { LearningReport, LearningReportQuery } from "./report.js";
 import { runReport } from "./report.js";
 import type { CandidateReviewInput } from "./review.js";
@@ -38,14 +49,20 @@ export interface LearningLoopConfig {
   readonly scopePolicy: ScopePolicy;
   readonly contentPolicies: readonly ContentPolicy[];
   readonly sources: readonly RegisteredSource<unknown>[];
+  /** Stable host/store scope for resumable query cursors; omitted means process-local cursors. */
+  readonly queryCursorScope?: string;
   readonly clock?: Clock;
   readonly ids?: IdGenerator;
 }
 
 export interface LearningLoop {
   ingest<I>(source: RegisteredSource<I>, sourceInput: I, options?: IngestOptions): Promise<IngestReceipt>;
+  queryObservations(input: ObservationQuery): AsyncIterable<QueryPage<Observation>>;
+  queryMeasurements(input: MeasurementQuery): AsyncIterable<QueryPage<MeasurementRecord>>;
+  queryEpisodes(input: EpisodeQuery): AsyncIterable<QueryPage<EpisodeView>>;
   propose(input: CandidateInput): Promise<ProposeOutcome>;
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
+  getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
   report(input: LearningReportQuery): Promise<LearningReport>;
 }
 
@@ -89,6 +106,16 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   }
 
   const policyRules = extractPolicyRules(config.policy);
+  const queryCursorScope =
+    config.queryCursorScope === undefined
+      ? `process:${randomUUID()}`
+      : parseNonEmptyText(config.queryCursorScope, ["queryCursorScope"]);
+  if (queryCursorScope.length > 1_000) {
+    throw invalid("config.invalid", "queryCursorScope exceeds 1000 characters", ["queryCursorScope"]);
+  }
+  const queryCursorScopeDigest = sha256HexOfCanonicalJson({
+    queryCursorScope,
+  });
 
   // The immutable registry, digested. Any change to any registered component
   // is a new registry revision; the revision is bound into ingest receipts.
@@ -116,6 +143,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     contentPoliciesById,
     sources,
     registryRevision,
+    queryCursorScopeDigest,
     clock: config.clock ?? systemClock,
     ids: config.ids ?? randomIds(),
   };
@@ -123,8 +151,12 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   return {
     ingest: <I>(source: RegisteredSource<I>, sourceInput: I, options?: IngestOptions) =>
       runIngest(context, source, sourceInput, options),
+    queryObservations: (input) => runObservationQuery(context, input),
+    queryMeasurements: (input) => runMeasurementQuery(context, input),
+    queryEpisodes: (input) => runEpisodeQuery(context, input),
     propose: (input) => runPropose(context, input),
     reviewCandidate: (input) => runReviewCandidate(context, input),
+    getCandidateView: (input) => runGetCandidateView(context, input),
     report: (input) => runReport(context, input),
   };
 }

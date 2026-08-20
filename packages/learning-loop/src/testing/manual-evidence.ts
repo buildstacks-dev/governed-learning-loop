@@ -30,6 +30,8 @@ export interface ManualEvidenceInput {
   }[];
   readonly episodes?: readonly {
     readonly id: string;
+    readonly parentEpisodeId?: string;
+    readonly episodeClass?: string;
     readonly scope: Scope;
     readonly openedAt: string;
     readonly closedAt?: string;
@@ -59,6 +61,9 @@ function pageFor(input: ManualEvidenceInput): EvidencePage {
     episodes: (input.episodes ?? []).map((episode) => ({
       sourceRecordId: episode.id,
       episodeId: episode.id,
+      ...(episode.parentEpisodeId !== undefined ? { parentEpisodeId: episode.parentEpisodeId } : {}),
+      ...(episode.episodeClass !== undefined ? { episodeClass: episode.episodeClass } : {}),
+      completeness: "complete" as const,
       scope: episode.scope,
       openedAt: episode.openedAt,
       ...(episode.closedAt !== undefined ? { closedAt: episode.closedAt } : {}),

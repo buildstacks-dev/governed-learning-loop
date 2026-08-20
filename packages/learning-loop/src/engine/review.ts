@@ -14,7 +14,7 @@ import type { VerifiedPrincipal } from "../records/principal.js";
 import type { CandidateReview, ReviewDisposition, ReviewFinding } from "../records/review.js";
 import { parseCandidateReview, reviewInvalidReasons } from "../records/review.js";
 import type { EngineContext } from "./context.js";
-import { createOnly, effectiveRisk, listAllRecords, loadCandidate } from "./context.js";
+import { createOnly, effectiveRisk, iterateRecordPages, loadCandidate } from "./context.js";
 import { assertVerifiedPrincipal } from "./identity.js";
 
 /** Semantic-judgment port for candidate review (contract §Semantic judgment). */
@@ -73,14 +73,38 @@ function refusal(code: string, message: string): LearningLoopError {
 /** Observations referenced by the candidate, matched by durable id or source recordRef. */
 async function loadEvidence(context: EngineContext, candidate: Candidate): Promise<readonly Observation[]> {
   const wanted = new Set(candidate.evidenceIds);
-  const stored = await listAllRecords(context.store, "observation");
-  return stored
-    .map((record) => parseObservation(record.value))
-    .filter(
-      (observation) =>
-        wanted.has(observation.id) ||
-        (observation.provenance.recordRef !== undefined && wanted.has(observation.provenance.recordRef)),
-    );
+  const exact = new Map<string, Observation>();
+  const raw = new Map<string, Observation[]>();
+  for await (const page of iterateRecordPages(context.store, "observation", { limit: 100 })) {
+    for (const record of page.records) {
+      const observation = parseObservation(record.value);
+      if (wanted.has(observation.id)) exact.set(observation.id, observation);
+      if (observation.provenance.recordRef !== undefined && wanted.has(observation.provenance.recordRef)) {
+        const matches = raw.get(observation.provenance.recordRef) ?? [];
+        matches.push(observation);
+        raw.set(observation.provenance.recordRef, matches);
+      }
+    }
+  }
+  const evidence: Observation[] = [];
+  for (const evidenceId of candidate.evidenceIds) {
+    const exactMatch = exact.get(evidenceId);
+    if (exactMatch !== undefined) {
+      evidence.push(exactMatch);
+      continue;
+    }
+    const rawMatches = raw.get(evidenceId) ?? [];
+    const sourceIds = new Set(rawMatches.map((observation) => observation.provenance.sourceId));
+    if (sourceIds.size > 1 || rawMatches.length > 1) {
+      throw refusal(
+        "review.evidence_ambiguous",
+        "candidate evidence id matches more than one stored observation; use a durable source-qualified id",
+      );
+    }
+    const rawMatch = rawMatches[0];
+    if (rawMatch !== undefined) evidence.push(rawMatch);
+  }
+  return evidence;
 }
 
 export async function runReviewCandidate(

@@ -11,9 +11,17 @@ import type { Candidate } from "../records/candidate.js";
 import { candidateContentDigest, parseCandidate } from "../records/candidate.js";
 import type { VerifiedPrincipal } from "../records/principal.js";
 import type { EngineContext } from "./context.js";
-import { createOnly, effectiveRisk, loadCandidate, recordDigest, recordKey } from "./context.js";
-import type { GovernanceView } from "./governance.js";
+import {
+  createOnly,
+  effectiveRisk,
+  loadCandidate,
+  loadStoredRecord,
+  parseWriteResult,
+  recordDigest,
+  recordKey,
+} from "./context.js";
 import { assertVerifiedPrincipal } from "./identity.js";
+import type { CandidateView } from "./query.js";
 import { governanceViewOf } from "./views.js";
 
 export type CandidateInput = Omit<
@@ -23,10 +31,7 @@ export type CandidateInput = Omit<
   readonly proposedBy: VerifiedPrincipal;
 };
 
-export interface ProposeOutcome {
-  readonly candidate: Candidate;
-  readonly governance: GovernanceView;
-}
+export interface ProposeOutcome extends CandidateView {}
 
 interface DigestIndexEntry {
   readonly candidateId: string;
@@ -94,7 +99,7 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
   }
 
   // exists_same or conflict: this content digest is already claimed.
-  const storedIndex = await context.store.get(recordKey("candidate-by-digest", contentDigest));
+  const storedIndex = await loadStoredRecord(context, "candidate-by-digest", contentDigest);
   if (storedIndex === undefined) {
     throw new LearningLoopError("store.corrupt", [
       {
@@ -125,13 +130,14 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
   // different content (its propose was refused after the claim). Take the
   // claim over, then persist.
   const indexValue = toJsonValue(indexEntry);
-  const repaired = await context.store.compareAndSet(
+  const rawRepaired: unknown = await context.store.compareAndSet(
     recordKey("candidate-by-digest", contentDigest),
     storedIndex.revision,
     indexValue,
     recordDigest(indexValue),
     operationId,
   );
+  const repaired = parseWriteResult(rawRepaired);
   if (repaired.status === "conflict") {
     throw new LearningLoopError("store.conflict", [
       {
@@ -139,6 +145,15 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
         severity: "error",
         message: `content digest ${contentDigest} was claimed concurrently; retry the proposal`,
         details: { contentDigest },
+      },
+    ]);
+  }
+  if (repaired.status === "created") {
+    throw new LearningLoopError("store.corrupt", [
+      {
+        code: "store.corrupt",
+        severity: "error",
+        message: "store created a missing digest index during compare-and-set",
       },
     ]);
   }

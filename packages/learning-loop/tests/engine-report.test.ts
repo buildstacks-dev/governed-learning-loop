@@ -32,6 +32,15 @@ describe("learning.report", () => {
     expect(window.candidateIds).toEqual(["cand-1"]);
     const after = await learning.report({ since: "2026-08-16T10:00:01.000Z" });
     expect(after.candidateIds).toEqual([]);
+    await expect(learning.report({ since: "2026-08-16T10:00:00Z" })).rejects.toMatchObject({
+      code: "query.invalid",
+    });
+  });
+
+  it("rejects unknown report fields instead of broadening the read", async () => {
+    const { learning } = await createHarness();
+    const misspelled = { scope: SCOPE, sourceId: "manual-evidence" };
+    await expect(learning.report(misspelled)).rejects.toMatchObject({ code: "query.invalid" });
   });
 
   it("filters by episode through the candidates' evidence", async () => {
@@ -46,10 +55,11 @@ describe("learning.report", () => {
       }),
     );
 
-    const filtered = await learning.report({ episodeIds: ["change-42"] });
+    const filtered = await learning.report({ sourceIds: ["manual-evidence"], episodeIds: ["change-42"] });
     expect(filtered.candidateIds).toEqual(["cand-1"]);
-    const missing = await learning.report({ episodeIds: ["no-such-episode"] });
+    const missing = await learning.report({ sourceIds: ["manual-evidence"], episodeIds: ["no-such-episode"] });
     expect(missing.candidateIds).toEqual([]);
+    await expect(learning.report({ episodeIds: ["change-42"] })).rejects.toMatchObject({ code: "query.invalid" });
   });
 
   it("reports empty intervention and evaluation ids with an explanatory diagnostic", async () => {

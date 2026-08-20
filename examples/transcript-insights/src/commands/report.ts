@@ -19,7 +19,7 @@ function progressLine(progress: FoldListProgress): string {
 }
 
 export async function runReportCommand(loop: DemoLoop, out: CliOutput): Promise<number> {
-  const fold = await foldStore(loop.store, (progress) => out.write(progressLine(progress)));
+  const fold = await foldStore(loop.learning, (progress) => out.write(progressLine(progress)));
   out.write(
     `report: fold complete projects=${fold.projects.size} observations=${fold.observationCount}` +
       ` episodes=${fold.episodeRecordCount}`,
@@ -38,7 +38,12 @@ export async function runReportCommand(loop: DemoLoop, out: CliOutput): Promise<
       `partial=${fold.completeness.partial} unknown=${fold.completeness.unknown}`,
   );
   out.write(`unknown transcript records (transcript.unknown): ${fold.unknownRecordCount}`);
-  if (fold.corruptRecordCount > 0) out.write(`records failing validation on read: ${fold.corruptRecordCount}`);
+  if (fold.unresolvedEpisodeIdentityCount > 0) {
+    out.write(`episode records with unresolved identity: ${fold.unresolvedEpisodeIdentityCount}`);
+  }
+  if (fold.unresolvedObservationCount > 0) {
+    out.write(`observations excluded by unresolved episode identity: ${fold.unresolvedObservationCount}`);
+  }
   if (corruptSummaries > 0) out.write(`ingest summaries failing validation on read: ${corruptSummaries}`);
   out.write("episodes by provider/project:");
   if (fold.projects.size === 0) {

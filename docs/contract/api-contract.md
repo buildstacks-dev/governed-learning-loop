@@ -142,7 +142,7 @@ Start with one package and subpath exports:
 @cormidia/learning-loop
 ├── .             domain records, validators, policy, engine, ports
 ├── node          JSON Lines/filesystem store and journal adapters
-├── testing       in-memory stores, deterministic fixtures, conformance suites
+├── testing       runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── reference-detectors  opt-in deterministic core/reference pack bundle
 └── workflows     optional distiller and reviewer workflows
 ```
@@ -163,6 +163,31 @@ Reference detector contents use their own opt-in subpath so a growing
 experimental catalog does not become root protocol policy. Transcript adapters
 remain outside the root package. Provider formats have a different release
 cadence and privacy risk from the governed-learning protocol.
+
+### Runtime-safe testing subpath
+
+The `/testing` entrypoint is safe to import in a plain Node process. Importing
+its in-memory store, deterministic fixtures, builders, or conformance runner
+does not import Vitest, inspect test-worker state, register a suite, or depend
+on a global test API. The repository may use Vitest as a development
+dependency, but it is not a runtime dependency of this entrypoint.
+
+`runLearningStoreConformance` keeps its public name and
+`LearningStoreFactory` input type. The caller supplies the test framework's
+minimal structural API as the required second argument:
+
+```ts
+import { runLearningStoreConformance } from "@cormidia/learning-loop/testing";
+import { describe, expect, it } from "vitest";
+
+runLearningStoreConformance(makeStore, { describe, expect, it });
+```
+
+The runner needs only `describe`, `it`, `expect`, and the exact matchers used by
+the suite. That shape remains inline rather than adding a framework-specific
+public type. Existing one-argument callers migrate to the call above; there is
+no optional fallback that would reintroduce an eager or ambient test-framework
+dependency.
 
 ## Core vocabulary and records
 
@@ -4512,6 +4537,11 @@ Rules:
 
 Every third-party store, destination, authority adapter, transcript source, and replay executor needs executable conformance tests.
 
+Public conformance runners are framework-neutral at runtime. A store adapter
+registers the unchanged suite with
+`runLearningStoreConformance(makeStore, { describe, expect, it })`; importing
+`/testing` alone never registers or executes it.
+
 The core suite should prove at least:
 
 - candidate records never resolve into active context;
@@ -4735,9 +4765,10 @@ The first release should expose no more than:
 - the `/node` adapters actually supported;
 - testing builders and conformance runners.
 
-Decision 0019 keeps that root budget at 154 symbols and adds exactly two names
-on the opt-in `/reference-detectors` subpath: `ReferenceDetectorBundle` and
-`createReferenceDetectorBundle`. The all-entrypoint snapshot is therefore 156.
+Decision 0020 keeps the 154-symbol pre-reference entrypoint budget and the two
+names on the opt-in `/reference-detectors` subpath:
+`ReferenceDetectorBundle` and `createReferenceDetectorBundle`. The
+all-entrypoint snapshot therefore remains 156.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 

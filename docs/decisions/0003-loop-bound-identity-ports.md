@@ -82,7 +82,9 @@ object claims the same bytes.
   test registration is not accepted by a loop configured with another port.
 - The transcript-insights demo keeps its host-owned roster and evidence parser,
   but moves minting to the root factory. Its runtime source graph no longer
-  needs `/testing`, so the vitest import shim and stub can be removed.
+  needs `/testing`, so its local Vitest import shim and stub were removed. That
+  consumer-specific avoidance did not make `/testing` itself runtime-safe;
+  decision 0020 closes that separate issue for all plain-runtime consumers.
 - Adding identity metadata changes loop registry revisions and invalidates old
   opaque query cursors by design. Source registrations, durable evidence,
   schema-version-1 candidates, and schema-version-1 reviews are not rewritten.

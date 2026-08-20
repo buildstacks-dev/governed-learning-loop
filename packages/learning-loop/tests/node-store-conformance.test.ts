@@ -10,7 +10,7 @@ import { LearningLoopError } from "../src/diagnostics.js";
 import { createFileStore } from "../src/node/index.js";
 import { recordFile } from "../src/node/paths.js";
 import type { RecordKey } from "../src/ports/store.js";
-import { runLearningStoreConformance } from "../src/testing/store-conformance.js";
+import { runLearningStoreConformance } from "@cormidia/learning-loop/testing";
 
 const roots: string[] = [];
 
@@ -24,7 +24,7 @@ afterAll(() => {
   for (const dir of roots) rmSync(dir, { recursive: true, force: true });
 });
 
-runLearningStoreConformance(() => createFileStore({ rootDir: freshRoot() }));
+runLearningStoreConformance(() => createFileStore({ rootDir: freshRoot() }), { describe, expect, it });
 
 describe("createFileStore extras (mirror of the in-memory reference)", () => {
   const k: RecordKey = { namespace: "ns", kind: "candidate", id: "c-1" };

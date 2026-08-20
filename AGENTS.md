@@ -148,6 +148,17 @@ between code and contract, open an issue — never silently drift either one.
   rejectionSuppression bytes are registered and digested but non-enforcing
   until durable pack receipts, Candidate/group claims, review snapshots and
   proposal admission land in later decisions.
+- **Pack receipts are retry-stable, scoped audit facts.** Only a configured
+  commit with a one-to-one exact-scope population may create a
+  DetectorPackRunReceipt; dry, policy-omitted, missing or wrong-scope inputs
+  create none. Durable items normalize away callback and `existing` state,
+  bind full policy/registry/population/child/recurrence/governance lineage, and
+  contain only stable reason codes. Child graphs and the exact registry
+  snapshot precede a scope-private result lock; the receipt is last and is not
+  a transaction across children. Reads require exact scope and revalidate every
+  child and recurrence reference. Governance remains explicitly not_assessed;
+  reserved assessed bytes grant no Candidate, suppression, authority, utility
+  or efficacy.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

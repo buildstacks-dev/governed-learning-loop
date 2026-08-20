@@ -14,9 +14,11 @@ import {
   conservativePolicy,
   createLearningLoop,
   defineDetectorImplementation,
+  detectorOrchestrationPolicyDigest,
   detectorPackManifestDigest,
   detectorRegistrationDigest,
   parseDetectorPackManifest,
+  parseDetectorOrchestrationPolicy,
   parseDetectorRegistration,
   parseSemanticRegistryConfig,
   semanticRegistryDigest,
@@ -38,6 +40,34 @@ export const PUBLIC_LOCATOR = {
   treatment: "public_structural",
   structuralLabel: "status_poll",
 } satisfies DetectorRecurrenceLocator;
+
+export function createDetectorOrchestrationPolicy(
+  input: {
+    readonly maximumInvocationsPerRun?: number;
+    readonly maximumInsightGroupsPerRun?: number;
+    readonly maximumEvidenceHealthGroupsPerRun?: number;
+    readonly rejectionSuppression?: DetectorOrchestrationPolicy["rejectionSuppression"];
+  } = {},
+): DetectorOrchestrationPolicy {
+  const rejectionSuppression: DetectorOrchestrationPolicy["rejectionSuppression"] = input.rejectionSuppression ?? {
+    mode: "disabled",
+  };
+  const base = {
+    id: "host.detector-orchestration",
+    version: "1.0.0",
+    caps: {
+      maximumInvocationsPerRun: input.maximumInvocationsPerRun ?? 100,
+      maximumInsightGroupsPerRun: input.maximumInsightGroupsPerRun ?? 100,
+      maximumEvidenceHealthGroupsPerRun: input.maximumEvidenceHealthGroupsPerRun ?? 100,
+    },
+    rejectionSuppression,
+  };
+  return parseDetectorOrchestrationPolicy({
+    schemaVersion: 1,
+    ...base,
+    policyDigest: detectorOrchestrationPolicyDigest(base),
+  });
+}
 
 function digest(value: unknown): string {
   return sha256HexOfCanonicalJson(toJsonValue(value));
@@ -81,9 +111,13 @@ export async function createRecurrenceRunnerHarness(
     readonly implementation?: boolean;
     readonly detectorRequiredCapabilities?: readonly string[];
     readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
+    readonly scope?: Scope;
   } = {},
 ): Promise<RecurrenceRunnerHarness> {
-  const template = await createSemanticEngineHarness({ label: `template-${input.label ?? "recurrence"}` });
+  const template = await createSemanticEngineHarness({
+    label: `template-${input.label ?? "recurrence"}`,
+    ...(input.scope === undefined ? {} : { scope: input.scope }),
+  });
   const {
     schemaVersion: _detectorSchema,
     registrationDigest: _detectorDigest,

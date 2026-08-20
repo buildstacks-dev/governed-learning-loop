@@ -26,7 +26,7 @@ import {
 } from "../records/semantic-shared.js";
 import type { EngineContext } from "./context.js";
 import { createOnly, loadStoredRecord, parseWriteResult, recordDigest, recordKey } from "./context.js";
-import { loadDetectorExecutionRecord } from "./semantic-graph.js";
+import { loadDetectorExecutionRecord, semanticGraphSnapshotRevision } from "./semantic-graph.js";
 
 const MAX_APPEND_ATTEMPTS = 8;
 const MAX_GROUP_MEMBERS = DETECTOR_RECURRENCE_GROUP_MEMBER_LIMIT;
@@ -716,4 +716,49 @@ export async function recurrenceForExecution(
 
 export function recurrenceLocatorOf(state: DetectorRunRecurrence): DetectorRecurrenceLocator | null {
   return state.status === "grouped" ? state.locator : null;
+}
+
+export async function recurrenceReceiptLineage(
+  context: EngineContext,
+  execution: DetectorExecutionRecord,
+): Promise<{
+  readonly binding: ExecutionRecurrenceBinding | undefined;
+  readonly episodeIdentityDigests: readonly string[];
+  readonly executionIds: readonly string[];
+  readonly executionCount: number;
+}> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const before = await semanticGraphSnapshotRevision(context);
+    const recurrence = await recurrenceForExecution(context, execution, undefined);
+    const binding = await loadExecutionRecurrenceBinding(context, execution.id);
+    if (recurrence.status !== "grouped") {
+      const after = await semanticGraphSnapshotRevision(context);
+      if (before === after) return { binding, episodeIdentityDigests: [], executionIds: [], executionCount: 0 };
+      continue;
+    }
+    if (binding === undefined || binding.groupKeyDigest !== recurrence.groupKeyDigest) {
+      throw invalid("store.corrupt", "grouped execution has no exact recurrence decision binding", []);
+    }
+    const stats = await committedGroupStats(context, recurrence.groupKeyDigest);
+    const episodeIdentityDigests = [...stats.episodeIdentityDigests].sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    const countsMatch =
+      episodeIdentityDigests.length === recurrence.distinctEpisodeCount &&
+      stats.executionIds.size === recurrence.executionCount;
+    const after = await semanticGraphSnapshotRevision(context);
+    if (before !== after) continue;
+    if (!countsMatch) {
+      throw invalid("store.corrupt", "recurrence receipt lineage counts do not match one stable group", []);
+    }
+    const executionIds = [...stats.executionIds].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    return { binding, episodeIdentityDigests, executionIds, executionCount: executionIds.length };
+  }
+  throw new LearningLoopError("detector.snapshot_changed", [
+    {
+      code: "detector.snapshot_changed",
+      severity: "error",
+      message: "detector recurrence lineage changed repeatedly during receipt resolution",
+    },
+  ]);
 }

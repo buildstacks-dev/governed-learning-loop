@@ -147,6 +147,19 @@ registered and digested but deliberately non-enforcing. Durable pack receipts/qu
 Candidate-to-group claims, deduplication, review-based suppression and proposal
 admission remain separate follow-up slices.
 
+#30c2b2-receipts adds a content-bound DetectorPackRunReceipt for configured
+commit runs whose requested population resolves one-to-one in the exact scope.
+It embeds the full policy, normalized retry-stable child/recurrence facts and an
+explicit not_assessed governance snapshot; callback activity and `existing`
+persistence state remain transient. Child graphs commit first, a scope-private
+result lock follows, and the receipt is last, so retries forward-complete while
+honestly preserving non-atomic child commits. Public query/get methods require
+exact scope and views independently report registry, policy, receipt/child
+commit, governance and current evidence health. Missing/wrong-scope inputs,
+policy omission and dry runs create no receipt. The assessed Candidate/review
+branch is parseable for future audit but is historical and non-enforcing in
+this runtime.
+
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.
 Evidence-health findings stay separate from behavioral derivations, and only

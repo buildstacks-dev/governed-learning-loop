@@ -65,6 +65,10 @@ root:DetectorRecurrenceLocator
 root:DetectorOrchestrationPolicy
 root:detectorOrchestrationPolicyDigest
 root:parseDetectorOrchestrationPolicy
+root:DetectorPackRunReceipt
+root:parseDetectorPackRunReceipt
+root:DetectorPackRunQuery
+root:DetectorPackRunView
 root:DetectorOrchestrationDisposition
 root:DetectorPackRunInput
 root:DetectorPackRunResult

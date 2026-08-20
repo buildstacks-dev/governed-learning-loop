@@ -104,9 +104,10 @@ rule must not be presented as enforcement.
 optional loop binding, lower invocation admission, separate transient grouped
 result caps, and explicit `not_grouped | unassessed | capped` reporting.
 
-**Deferred to the durable-receipt slice:** DetectorPackRunReceipt, exact
-pack-run key/full digests, exact-scope persistence/query/view, immutable
-governance-snapshot lineage, and historical/current view separation.
+**Implemented next by decision 0015:** DetectorPackRunReceipt, exact pack-run
+key/full digests, receipt-last exact-scope persistence/query/view, immutable
+not-assessed governance-snapshot lineage, and historical/current view
+separation.
 
 **Deferred to the Candidate-governance slice:** kernel-derived
 Candidate-to-group claims, exact Candidate/review snapshot semantics,

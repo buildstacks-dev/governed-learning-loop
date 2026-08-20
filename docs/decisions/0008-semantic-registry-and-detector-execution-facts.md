@@ -169,4 +169,5 @@ ids or asserted effects.
 Decision 0009 implements the kernel-private receipt-last persistence and
 scope-partitioned typed audit reads previously deferred to #30b2a. Decision
 0010 implements Candidate derivation resolution and independent review.
-Callable detector execution remains #30c.
+Decision 0011 implements exact single-detector callable execution in #30c1;
+pack-wide orchestration remains #30c2.

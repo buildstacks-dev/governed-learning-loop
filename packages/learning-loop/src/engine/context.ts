@@ -20,6 +20,7 @@ import type { ScopePolicy } from "../records/scope.js";
 import type { SemanticRegistryConfig } from "../records/semantic-registry.js";
 import type { SourceSemanticProfile } from "../records/source-semantic-profile.js";
 import type { LearningPolicy, PolicyRules } from "./policy.js";
+import type { RegisteredDetectorImplementation } from "./detector-implementation.js";
 
 /** Every engine-owned record lives in this namespace. */
 export const RECORD_NAMESPACE = "learning";
@@ -56,6 +57,7 @@ export interface EngineContext {
   readonly semanticPacksByRef?: ReadonlyMap<string, DetectorPackManifest>;
   readonly semanticLensesByRef?: ReadonlyMap<string, LearningLensRegistration>;
   readonly sourceSemanticProfilesBySourceId?: ReadonlyMap<string, SourceSemanticProfile>;
+  readonly detectorImplementationsByRef?: ReadonlyMap<string, RegisteredDetectorImplementation>;
   readonly registryRevision: string;
   readonly queryCursorScopeDigest: string;
   readonly clock: Clock;

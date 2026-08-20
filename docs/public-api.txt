@@ -55,6 +55,12 @@ root:DetectorExecutionQuery
 root:DetectorExecutionView
 root:InsightDerivationQuery
 root:InsightDerivationView
+root:RegisteredDetectorImplementation
+root:defineDetectorImplementation
+root:DetectorWindow
+root:DetectorResultDraft
+root:DetectorRunInput
+root:DetectorRunResult
 root:EvidenceRef
 root:EvidenceRefV1
 root:ObservationEvidenceRef

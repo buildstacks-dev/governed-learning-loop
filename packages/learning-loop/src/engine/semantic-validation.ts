@@ -269,7 +269,11 @@ export async function validatePopulation(
       : registry?.lenses.find((candidate) => lensRefKey(candidate) === lensRefKey(executionLens));
   const lensClasses = lens?.episodeClasses.mode === "include" ? new Set(lens.episodeClasses.values) : undefined;
   const episodeRequirement = lens?.evidenceRequirements.find((requirement) => requirement.kind === "episode");
-  if (episodeRequirement !== undefined && execution.window.population.episodes.length === 0) {
+  if (
+    execution.result.status === "applied" &&
+    episodeRequirement !== undefined &&
+    execution.window.population.episodes.length === 0
+  ) {
     throw invalid("semantic.population_invalid", "learning lens requires nonempty episode evidence", []);
   }
   for (const episodeInput of execution.window.population.episodes) {
@@ -289,6 +293,7 @@ export async function validatePopulation(
       throw invalid("semantic.population_invalid", "execution population identity is unresolved or changed", []);
     }
     if (
+      execution.result.status === "applied" &&
       episodeRequirement !== undefined &&
       (trustRank(identityState.identity.trustCeiling) < trustRank(episodeRequirement.minimumTrust) ||
         completenessRank(identityState.identity.completeness) <
@@ -584,13 +589,17 @@ export function validateDerivationAgainstExecution(
   }
   if (derivation.candidateIntervention !== null) {
     const intervention = derivation.candidateIntervention;
+    if (!lens.permittedDestinationKinds.includes(intervention.proposedDestinationKind)) {
+      throw invalid("semantic.derivation_policy_invalid", "derivation destination kind is not permitted", []);
+    }
     if (
-      !lens.permittedDestinationKinds.includes(intervention.proposedDestinationKind) ||
-      (intervention.proposedDestinationId !== null &&
-        !lens.permittedDestinationIds.includes(intervention.proposedDestinationId)) ||
-      derivation.validation?.strategyDigest !== lens.validationStrategyDigest
+      intervention.proposedDestinationId !== null &&
+      !lens.permittedDestinationIds.includes(intervention.proposedDestinationId)
     ) {
-      throw invalid("semantic.derivation_policy_invalid", "derivation intervention is not permitted by its lens", []);
+      throw invalid("semantic.derivation_policy_invalid", "derivation destination id is not permitted", []);
+    }
+    if (derivation.validation?.strategyDigest !== lens.validationStrategyDigest) {
+      throw invalid("semantic.derivation_policy_invalid", "derivation validation strategy is not permitted", []);
     }
   }
 }

@@ -178,5 +178,5 @@ remain duplicate-free. Scope entries recompute `scopeDigest`.
 
 Decision 0009 implements private receipt-last persistence and typed audit
 reads previously deferred to #30b. Decision 0010 implements derivation-backed
-Candidate proposal and producer-independent review. Callable detector
-execution stays #30c.
+Candidate proposal and producer-independent review. Decision 0011 implements
+single-detector execution in #30c1; orchestration stays #30c2.

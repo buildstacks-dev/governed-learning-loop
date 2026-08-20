@@ -69,6 +69,10 @@ import {
   runInsightDerivationQuery,
 } from "./semantic-query.js";
 import { adapterFor } from "./source-registration.js";
+import type { RegisteredDetectorImplementation } from "./detector-implementation.js";
+import { detectorImplementationRegistration } from "./detector-implementation.js";
+import type { DetectorRunInput, DetectorRunResult } from "./detector-run.js";
+import { runDetector } from "./detector-run.js";
 
 export interface LearningLoopConfig {
   readonly store: LearningStore;
@@ -78,6 +82,7 @@ export interface LearningLoopConfig {
   readonly contentPolicies: readonly ContentPolicy[];
   readonly sources: readonly RegisteredSource<unknown>[];
   readonly semanticRegistry?: SemanticRegistryConfig;
+  readonly detectorImplementations?: readonly RegisteredDetectorImplementation[];
   /** Stable host/store scope for resumable query cursors; omitted means process-local cursors. */
   readonly queryCursorScope?: string;
   readonly clock?: Clock;
@@ -106,6 +111,7 @@ export interface LearningLoop {
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
   report(input: LearningReportQuery): Promise<LearningReport>;
+  runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
 }
 
 const systemClock: Clock = { now: () => new Date().toISOString() };
@@ -176,6 +182,7 @@ function freezeSemanticValue<T>(value: T): T {
 
 export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   const configuredSemanticRegistry = config.semanticRegistry;
+  const configuredDetectorImplementations = config.detectorImplementations;
   const contentPoliciesById = new Map<string, ContentPolicy>();
   for (const configuredPolicy of config.contentPolicies) {
     const policy = snapshotContentPolicy(configuredPolicy);
@@ -271,6 +278,39 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
       lens,
     ]) ?? [],
   );
+  const detectorImplementationsByRef = new Map<string, RegisteredDetectorImplementation>();
+  const detectorImplementationRegistryProjection: Array<{
+    readonly detector: RegisteredDetectorImplementation["detector"];
+    readonly implementationDigest: string;
+    readonly registrationDigest: string;
+  }> = [];
+  if (configuredDetectorImplementations !== undefined) {
+    for (const [index, capability] of configuredDetectorImplementations.entries()) {
+      const registration = detectorImplementationRegistration(capability);
+      const key = detectorRefKey(registration);
+      const configured = semanticDetectorsByRef.get(key);
+      if (
+        configured === undefined ||
+        configured.maturity === "deprecated" ||
+        configured.implementationDigest !== capability.implementationDigest ||
+        detectorImplementationsByRef.has(key)
+      ) {
+        throw invalid("config.invalid", "detector implementation does not match one exact installed registration", [
+          "detectorImplementations",
+          index,
+        ]);
+      }
+      detectorImplementationsByRef.set(key, capability);
+      detectorImplementationRegistryProjection.push({
+        detector: capability.detector,
+        implementationDigest: capability.implementationDigest,
+        registrationDigest: capability.registrationDigest,
+      });
+    }
+    detectorImplementationRegistryProjection.sort((left, right) =>
+      detectorRefKey(left.detector) < detectorRefKey(right.detector) ? -1 : 1,
+    );
+  }
   const queryCursorScope =
     config.queryCursorScope === undefined
       ? `process:${randomUUID()}`
@@ -302,6 +342,9 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     ...(semanticRegistry !== undefined
       ? { semanticRegistry: { registryDigest: semanticRegistry.registryDigest } }
       : {}),
+    ...(configuredDetectorImplementations !== undefined
+      ? { detectorImplementations: detectorImplementationRegistryProjection }
+      : {}),
   });
 
   const context: EngineContext = {
@@ -317,6 +360,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     semanticPacksByRef,
     semanticLensesByRef,
     sourceSemanticProfilesBySourceId,
+    detectorImplementationsByRef,
     registryRevision,
     queryCursorScopeDigest,
     clock: config.clock ?? systemClock,
@@ -340,5 +384,6 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     reviewCandidate: (input) => runReviewCandidate(context, input),
     getCandidateView: (input) => runGetCandidateView(context, input),
     report: (input) => runReport(context, input),
+    runDetector: (input) => runDetector(context, input),
   };
 }

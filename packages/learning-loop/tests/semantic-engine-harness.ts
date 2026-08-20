@@ -127,6 +127,14 @@ function createDetector(
   scopePolicyDigest: string,
   lens: LearningLensRegistration,
   outputKind: DetectorRegistration["outputKind"],
+  options: {
+    readonly requiredCapabilities?: readonly string[];
+    readonly acceptedObservationKinds?: readonly string[];
+    readonly minimumTrust?: DetectorRegistration["minimumTrust"];
+    readonly minimumCompleteness?: DetectorRegistration["minimumCompleteness"];
+    readonly episodeClasses?: DetectorRegistration["episodeClasses"];
+    readonly scopeConstraint?: DetectorRegistration["scopeConstraint"];
+  },
 ): DetectorRegistration {
   const configuration = { detector: "semantic-fixture", thresholdClass: "exact" };
   const falsePositivePolicy = { complexLegitimateControls: "required" };
@@ -141,13 +149,13 @@ function createDetector(
     thresholds: null,
     thresholdDigest: null,
     observationVocabularyDigest: "6".repeat(64),
-    requiredCapabilities: ["operation.state"],
-    acceptedObservationKinds: ["tool.process.completed"],
-    minimumTrust: "advisory",
-    minimumCompleteness: "partial",
-    episodeClasses: { mode: "include", values: ["interactive"] },
+    requiredCapabilities: options.requiredCapabilities ?? ["operation.state"],
+    acceptedObservationKinds: options.acceptedObservationKinds ?? ["tool.process.completed"],
+    minimumTrust: options.minimumTrust ?? "advisory",
+    minimumCompleteness: options.minimumCompleteness ?? "partial",
+    episodeClasses: options.episodeClasses ?? { mode: "include", values: ["interactive"] },
     scopePolicyDigest,
-    scopeConstraint: { mode: "invocation" },
+    scopeConstraint: options.scopeConstraint ?? { mode: "invocation" },
     lensConstraint:
       outputKind === "insight_derivation"
         ? { mode: "required", selection: "allowlist", registrations: [lensRef(lens)] }
@@ -262,6 +270,12 @@ export async function createSemanticEngineHarness(
     readonly lensMinimumTrust?: LearningLensRegistration["evidenceRequirements"][number]["minimumTrust"];
     readonly detectorOutputKind?: DetectorRegistration["outputKind"];
     readonly withMeasurement?: boolean;
+    readonly detectorRequiredCapabilities?: readonly string[];
+    readonly detectorAcceptedObservationKinds?: readonly string[];
+    readonly detectorMinimumTrust?: DetectorRegistration["minimumTrust"];
+    readonly detectorMinimumCompleteness?: DetectorRegistration["minimumCompleteness"];
+    readonly detectorEpisodeClasses?: DetectorRegistration["episodeClasses"];
+    readonly detectorScopeConstraint?: DetectorRegistration["scopeConstraint"];
   } = {},
 ): Promise<SemanticEngineHarness> {
   const scope = input.scope ?? SEMANTIC_SCOPE_A;
@@ -278,7 +292,20 @@ export async function createSemanticEngineHarness(
     input.lensEvidenceKind ?? "observation",
     input.lensMinimumTrust ?? "advisory",
   );
-  const detector = createDetector(scopePolicy.digest, lens, input.detectorOutputKind ?? "insight_derivation");
+  const detector = createDetector(scopePolicy.digest, lens, input.detectorOutputKind ?? "insight_derivation", {
+    ...(input.detectorRequiredCapabilities === undefined
+      ? {}
+      : { requiredCapabilities: input.detectorRequiredCapabilities }),
+    ...(input.detectorAcceptedObservationKinds === undefined
+      ? {}
+      : { acceptedObservationKinds: input.detectorAcceptedObservationKinds }),
+    ...(input.detectorMinimumTrust === undefined ? {} : { minimumTrust: input.detectorMinimumTrust }),
+    ...(input.detectorMinimumCompleteness === undefined
+      ? {}
+      : { minimumCompleteness: input.detectorMinimumCompleteness }),
+    ...(input.detectorEpisodeClasses === undefined ? {} : { episodeClasses: input.detectorEpisodeClasses }),
+    ...(input.detectorScopeConstraint === undefined ? {} : { scopeConstraint: input.detectorScopeConstraint }),
+  });
   const pack = createPack(detector, lens);
   const profile = createProfile(source);
   const registry = createRegistry({ scopePolicyDigest: scopePolicy.digest, detector, pack, lens, profile });

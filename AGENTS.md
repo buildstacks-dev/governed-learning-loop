@@ -115,6 +115,17 @@ between code and contract, open an issue — never silently drift either one.
   exact committed receipt is terminal for either mode and skips evaluation.
   Empty or unusable windows never invoke the callback, and hard ceilings fail
   without truncation.
+- **Pack orchestration is bounded and transient.** `runDetectorPack` derives
+  exact selected detector/compatible-lens pairs for one caller-declared scope
+  and episode population, orders them by protocol code-unit keys, and reports
+  every bounded cap or refusal with callback-attempt visibility. It admits at
+  most 100 child runs, retains at most 100 unique new content-addressed output
+  records and 64 MiB of canonical child results, and never truncates one
+  child. Dry-run writes
+  nothing; commit persists exact child graphs sequentially and is not a batch
+  transaction. C2a creates no pack receipt, durable cap/suppression policy,
+  Candidate, provider turn, or authority. Keyed recurrence, durable grouping,
+  rejection suppression, and host-configured policy belong to #30c2b.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

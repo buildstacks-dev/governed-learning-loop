@@ -127,10 +127,15 @@ population window materialization, synchronous callback parsing, mode-driven
 single-detector execution, dry-run zero-write behavior, engine-owned
 non-application, lineage minting, persistence, and conformance ceilings.
 
-**Deferred to #30c2:** multi-detector/pack orchestration, automatic eligibility
-windows, recurrence keys, clustering, deduplication, suppression, batch dry-run
-reports, scheduling/routing, and detector/derivation/Candidate/fan-out policy
-caps beyond c1's hard safety ceilings.
+**Implemented next in #30c2a by decision 0012:** exact selected-pack fan-out,
+compatible-lens selection, explicit bounded dispositions, fixed aggregate
+safety ceilings, transient batch dry runs, and sequential private child
+persistence. C2a adds no durable pack receipt or policy authority.
+
+**Deferred to immediate #30c2b:** privacy-treated recurrence keys, comparable
+groups, clustering, deduplication, decisive-rejection suppression,
+host-configured digested lower caps, and durable pack-run audit receipts.
+Automatic population discovery and scheduling/routing remain outside c2a.
 
 Reference detector contents remain #30d. Semantic/model-mediated generation
 and calibrated qualitative review remain #13. Candidate-utility measurement

@@ -109,7 +109,21 @@ windows, rejects asynchronous/thenable callbacks, owns non-applicable and
 incomplete results, and mints all lineage. New eligible dry runs evaluate but
 write nothing; commit rematerializes and evaluates again before private
 persistence. An exact committed receipt is returned without re-evaluation.
-No detector run creates a Candidate. Pack-wide orchestration remains #30c2.
+No detector run creates a Candidate.
+
+#30c2a adds bounded `runDetectorPack` fan-out over one exact selected pack,
+scope, and caller-declared episode population. Exact detector/lens pairs use
+stable protocol ordering and every bounded non-application, cap, or refusal is
+returned explicitly with callback-attempt visibility. Dry-run remains
+zero-write; commit persists retained child graphs sequentially through the
+same private receipt-last path. The pack report is transient and deliberately
+not batch-atomic: there is no pack receipt, public writer, durable rate cap,
+deduplication claim, suppression claim, Candidate, or utility verdict.
+Hard ceilings allow at most 5,000 considered pairs, 100 admitted child runs,
+100 unique new content-addressed output records, and 64 MiB of retained
+canonical child results.
+Privacy-treated recurrence, durable grouping/suppression, digested host caps,
+and scoped pack-run receipts remain immediate #30c2b.
 
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.

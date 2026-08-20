@@ -142,7 +142,18 @@ function noExecutionResult(
   };
 }
 
-export async function runDetector(context: EngineContext, rawInput: DetectorRunInput): Promise<DetectorRunResult> {
+const detectorRunFailureCallbacks = new WeakMap<object, boolean>();
+
+export function detectorRunFailureCallbackInvoked(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  return detectorRunFailureCallbacks.get(error) ?? false;
+}
+
+async function runDetectorInternal(
+  context: EngineContext,
+  rawInput: DetectorRunInput,
+  state: { callbackInvoked: boolean },
+): Promise<DetectorRunResult> {
   const input = parseInput(context, rawInput);
   const registry = context.semanticRegistry;
   const inputLens = input.lens;
@@ -268,6 +279,7 @@ export async function runDetector(context: EngineContext, rawInput: DetectorRunI
   let callbackInvoked = false;
   if (materialized.status === "ready" && implementation !== undefined) {
     callbackInvoked = true;
+    state.callbackInvoked = true;
     let rawDraft: unknown;
     try {
       rawDraft = evaluateDetectorImplementation(implementation, materialized.window);
@@ -332,4 +344,16 @@ export async function runDetector(context: EngineContext, rawInput: DetectorRunI
     evidenceHealth: materialized.evidenceHealth,
     diagnostics: [...reasonDiagnostics(materialized.reasonCodes), ...materialized.evidenceHealth.diagnostics],
   };
+}
+
+export async function runDetector(context: EngineContext, rawInput: DetectorRunInput): Promise<DetectorRunResult> {
+  const state = { callbackInvoked: false };
+  try {
+    return await runDetectorInternal(context, rawInput, state);
+  } catch (error) {
+    if (typeof error === "object" && error !== null) {
+      detectorRunFailureCallbacks.set(error, state.callbackInvoked);
+    }
+    throw error;
+  }
 }

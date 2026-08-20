@@ -61,6 +61,7 @@ root:DetectorWindow
 root:DetectorResultDraft
 root:DetectorRunInput
 root:DetectorRunResult
+root:DetectorRecurrenceLocator
 root:DetectorOrchestrationDisposition
 root:DetectorPackRunInput
 root:DetectorPackRunResult

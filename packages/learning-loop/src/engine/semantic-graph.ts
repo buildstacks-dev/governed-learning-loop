@@ -29,6 +29,8 @@ const SEMANTIC_GRAPH_KINDS: readonly RecordKind[] = [
   "insight-derivation",
   "derivation-execution",
   "detector-execution",
+  "detector-recurrence-binding",
+  "detector-recurrence-group",
   "observation",
   "measurement",
   "episode",

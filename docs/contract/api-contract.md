@@ -1023,8 +1023,20 @@ export interface DetectorWindow {
   readonly windowDigest: string;
 }
 
+export type DetectorRecurrenceLocator =
+  | {
+      readonly treatment: "public_structural";
+      readonly structuralLabel: string;
+    }
+  | {
+      readonly treatment: "tenant_keyed_private";
+      readonly keyedDigest: string;
+      readonly keyPolicyDigest: string;
+    };
+
 export type DetectorResultDraft = {
   readonly conditionDetected: boolean;
+  readonly recurrenceLocator?: DetectorRecurrenceLocator | null;
   readonly insights: readonly {
     readonly learningClass: LearningClass;
     readonly directObservation: {
@@ -1076,6 +1088,21 @@ export interface DetectorRunResult {
   readonly callbackInvoked: boolean;
   readonly execution?: DetectorExecutionRecord;
   readonly derivations: readonly InsightDerivation[];
+  readonly recurrence:
+    | {
+        readonly status: "grouped";
+        readonly groupKeyDigest: string;
+        readonly locator: DetectorRecurrenceLocator;
+        readonly distinctEpisodeCount: number;
+        readonly executionCount: number;
+      }
+    | { readonly status: "execution_not_materialized" }
+    | {
+        readonly status: "execution_not_applied";
+        readonly executionStatus: "not_applicable" | "incomplete";
+      }
+    | { readonly status: "condition_not_detected" }
+    | { readonly status: "locator_unavailable" };
   readonly evidenceHealth: EvidenceHealthView;
   readonly diagnostics: readonly Diagnostic[];
 }
@@ -1447,14 +1474,85 @@ idempotency.
 
 C2a creates no durable pack-run receipt, id/digest, store kind, query, or public
 writer. Its fixed caps are per-call safety ceilings rather than durable rate,
-deduplication, or suppression policy. Privacy-treated recurrence locators,
-comparable recurrence groups, clustering, deduplication, decisive-rejection
-suppression, host-configured digested lower caps, and durable exact-scope
-pack-run audit receipts remain immediate #30c2b. Automatic population
-discovery and scheduling/routing remain outside c2a. Core/reference/host pack
-contents and reference consumers are #30d. Optional semantic-provider
-generation and disclosure are #13. Default-quality and candidate-utility
-claims remain #26.
+deduplication, or suppression policy.
+
+#30c2b1 adds one optional, invocation-level recurrence locator to the applied
+callback draft. DetectorRecurrenceLocator is either a bounded canonical public
+structural label matching `[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?` and capped at
+200 characters, or a tenant-keyed private digest plus exact key-policy digest.
+The locator treatment must match the exact DetectorRegistration privacy
+treatment; `mixed` permits either branch and `none` permits neither. A private
+key-policy digest must equal the detector privacy policy digest. Raw key
+material never crosses or persists. Omission remains valid for every existing
+callback, and a locator is valid only when the exact result is
+`applied && conditionDetected`.
+
+DetectorRunResult exposes recurrence independently from execution status. A
+grouped result carries exact group-key and locator lineage plus current or
+projected distinct-episode and execution counts. `execution_not_materialized`
+means no exact execution exists; `execution_not_applied` retains the closed
+`not_applicable | incomplete` status; `condition_not_detected` is reserved for
+an applied negative condition; and `locator_unavailable` covers a detected
+execution with no qualified binding, including historical c1/c2a facts. None
+of these states implies pass, harm, preference, utility, or efficacy.
+
+The private recurrence group key is the digest of exact
+`{ domain: "detector-recurrence-group:v1", detector, lens, scope,
+scopeDigest, scopePolicyDigest, locator }`, where detector includes exact id,
+version, registration, configuration, and implementation digests. Pack,
+loop-registry revision, population, evidence, outputs, interpretation, policy,
+and disposition are excluded. Pack is distribution rather than semantics, so
+the same exact detector/lens/scope/locator joins across packs; every execution
+member still retains exact pack and population provenance.
+
+A private create-only ExecutionRecurrenceBinding records every new detected
+callback decision and binds exact execution id/key/full digest,
+detector/pack/lens/scope, paired nullable locator/group key, exact episode
+id/identity/view members in nonempty canonical-unique order, and bindingDigest.
+A null pair durably records
+`locator_unavailable` and creates no group member; a historical receipt has no
+binding. For a non-null pair, an append-only RecurrenceGroupMember binds that
+execution and binding, exact pack, and
+memberDigest under the group key. Episode members remain in the exact
+binding/execution and are loaded from the binding during a fold rather than
+being duplicated in the group stream. `bindingDigest` hashes every binding
+content field except schema version and itself; `memberDigest` does the same
+for every member content field. The member stream entry id is exact
+`execution:<executionId>:<executionDigest>` and its entry digest binds the full
+member value. Binding and member are written before the DetectorExecutionRecord
+receipt, but only after the create-only execution scope index locks that exact
+execution digest. The nullable decision binding then ensures concurrent null
+and non-null locator evaluations cannot both reach receipt. A competing result
+or locator therefore cannot deposit later lineage after losing its locks.
+Group folds
+unknown-first parse and require the exact binding, member, detected-applied
+execution receipt, privacy policy, and population lineage before counting a
+member.
+
+`executionCount` counts exact committed execution receipts.
+`distinctEpisodeCount` unions exact episodeIdentityDigest values, never record
+or view counts. A fresh dry-run previews the current committed group plus its
+would-be execution once and writes nothing; commit reloads durable counts after
+receipt-last persistence. Binding/member-only crash remnants are orphaned and
+do not count; retry forward-completes exact bytes. Receipt-plus-binding without
+the exact member, locator drift, privacy mismatch, or malformed self-bound
+state is corruption. Existing receipts without bindings remain
+`locator_unavailable` and never rerun for backfill.
+
+Recurrence folds accept at most 5,000 member entries, 50,000 total episode
+references across exact bindings, and 5,000 distinct episode identity digests.
+Each exact ceiling is valid and the next value fails typed without truncation
+or a partial count. Raw member length is refused before entry parsing and
+episode references use bounded iteration. These descriptive counts are not
+comparable experiments.
+
+Immutable orchestration policy, availability thresholds beyond detector-owned
+conditions, deduplication, decisive-rejection suppression and overrides,
+Candidate-to-group claims, durable pack-run/disposition receipts, and scoped
+pack-run queries remain #30c2b2. Automatic population discovery and
+scheduling/routing remain outside c2b1. Core/reference/host pack contents and
+reference consumers are #30d. Optional semantic-provider generation and
+disclosure are #13. Default-quality and candidate-utility claims remain #26.
 
 ### Candidate
 
@@ -3395,6 +3493,25 @@ The core suite should prove at least:
   graph failures never leave a caller-minted pack receipt;
 - detector-pack commit persists only retained exact child graphs through the
   private receipt-last path and documents sequential partial-commit behavior;
+- recurrence locators reject non-canonical structural labels, malformed keyed
+  digests, detector privacy-treatment mismatch, key-policy mismatch, and any
+  locator on a negative or non-applied execution;
+- recurrence group keys isolate exact detector version/configuration,
+  implementation, lens, scope and locator while proving that pack changes do
+  not fork the same group;
+- recurrence result locks precede bindings/members and the execution receipt
+  remains last; create-only nullable decisions serialize concurrent null versus
+  non-null locator evaluations, and the graph recovers idempotently from
+  lock/binding/member/receipt crashes, excludes valid orphans from counts, and
+  fails corrupt on mismatched binding/member/execution or forbidden stored
+  privacy treatment;
+- recurrence dry-run previews write nothing and count a would-be execution at
+  most once; committed folds count only exact receipts, deduplicate episode
+  identity digests, accept exactly 5,000 entries, 50,000 episode references,
+  and 5,000 distinct identities, then fail closed at the next value without
+  truncation;
+- historical execution receipts without recurrence binding remain
+  `locator_unavailable`, skip callbacks, and never acquire inferred lineage;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

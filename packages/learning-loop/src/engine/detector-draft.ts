@@ -9,6 +9,8 @@ import {
   parseDetectorExecutionRecord,
 } from "../records/detector-execution.js";
 import type { EvidenceRef } from "../records/evidence-ref.js";
+import type { DetectorRecurrenceLocator } from "../records/detector-recurrence.js";
+import { parseDetectorRecurrenceLocatorAt } from "../records/detector-recurrence.js";
 import type { InsightDerivation, LearningClass } from "../records/semantic.js";
 import { insightDerivationDigest, parseInsightDerivation } from "../records/semantic.js";
 import {
@@ -46,6 +48,7 @@ const HEALTH_EFFECTS = ["limits_claims", "blocks_audit", "blocks_use"] as const;
 
 export interface DetectorResultDraft {
   readonly conditionDetected: boolean;
+  readonly recurrenceLocator?: DetectorRecurrenceLocator | null;
   readonly insights: readonly {
     readonly learningClass: LearningClass;
     readonly directObservation: {
@@ -228,6 +231,7 @@ export function parseDetectorResultDraft(input: unknown): DetectorResultDraft {
   const fields = readFields(input, ["detectorResult"]);
   return {
     conditionDetected: fields.req("conditionDetected", parseBool),
+    recurrenceLocator: fields.opt("recurrenceLocator", parseNullable(parseDetectorRecurrenceLocatorAt)) ?? null,
     insights: fields.req("insights", parseBoundedArray(parseInsightDraftAt, 100, "insight drafts")),
     findings: fields.req("findings", parseBoundedArray(parseFindingDraftAt, 100, "finding drafts")),
   };
@@ -301,7 +305,15 @@ function buildFinding(
 export function assembleAppliedDetectorResult(
   window: DetectorWindow,
   draft: DetectorResultDraft,
-): { readonly execution: DetectorExecutionRecord; readonly derivations: readonly InsightDerivation[] } {
+): {
+  readonly execution: DetectorExecutionRecord;
+  readonly derivations: readonly InsightDerivation[];
+  readonly recurrenceLocator: DetectorRecurrenceLocator | null;
+} {
+  const recurrenceLocator = draft.recurrenceLocator ?? null;
+  if (!draft.conditionDetected && recurrenceLocator !== null) {
+    throw invalid("detector.result_invalid", "negative detector condition cannot carry a recurrence locator", []);
+  }
   if (!draft.conditionDetected && (draft.insights.length !== 0 || draft.findings.length !== 0)) {
     throw invalid("detector.result_invalid", "negative detector condition cannot carry outputs", []);
   }
@@ -433,7 +445,7 @@ export function assembleAppliedDetectorResult(
     executionKeyDigest,
     executionDigest,
   });
-  return { execution, derivations };
+  return { execution, derivations, recurrenceLocator };
 }
 
 export function assembleNonAppliedDetectorResult(

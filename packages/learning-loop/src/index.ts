@@ -75,6 +75,7 @@ export { defineDetectorImplementation } from "./engine/detector-implementation.j
 export type { DetectorWindow } from "./engine/detector-window.js";
 export type { DetectorResultDraft } from "./engine/detector-draft.js";
 export type { DetectorRunInput, DetectorRunResult } from "./engine/detector-run.js";
+export type { DetectorRecurrenceLocator } from "./records/detector-recurrence.js";
 export type { DetectorOrchestrationDisposition } from "./engine/detector-pack-run.js";
 export type { DetectorPackRunInput } from "./engine/detector-pack-run.js";
 export type { DetectorPackRunResult } from "./engine/detector-pack-run.js";

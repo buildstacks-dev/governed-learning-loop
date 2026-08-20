@@ -7,6 +7,7 @@ import type {
   DetectorPackManifest,
   DetectorPackRunInput,
   DetectorPackRunResult,
+  DetectorRecurrenceLocator,
   DetectorRegistration,
   DetectorResultDraft,
   DetectorRunInput,
@@ -371,6 +372,10 @@ test("strict consumer can construct and parse host-neutral semantic records from
   ]);
 
   const strictDraft: DetectorResultDraft = { conditionDetected: false, insights: [], findings: [] };
+  const strictRecurrenceLocator: DetectorRecurrenceLocator = {
+    treatment: "public_structural",
+    structuralLabel: "status_poll",
+  };
   const strictImplementation: RegisteredDetectorImplementation = defineDetectorImplementation({
     registration,
     evaluate: (window: DetectorWindow) => {
@@ -402,6 +407,7 @@ test("strict consumer can construct and parse host-neutral semantic records from
     registrationDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
   });
   expect(strictRunInput.mode).toBe("dry_run");
+  expect(strictRecurrenceLocator).toEqual({ treatment: "public_structural", structuralLabel: "status_poll" });
   expect(typeof acceptsRunResult).toBe("function");
   expect(typeof acceptsPackRunResult).toBe("function");
   expect(typeof semanticLearning.runDetectorPack).toBe("function");

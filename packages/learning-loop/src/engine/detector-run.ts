@@ -39,6 +39,9 @@ import {
 } from "./semantic-graph.js";
 import { persistDetectorExecution } from "./semantic-persistence.js";
 import { loadDetectorExecutionView } from "./semantic-views.js";
+import type { DetectorRunRecurrence } from "./detector-recurrence.js";
+import { recurrenceForExecution, validateDetectorRecurrenceLocator } from "./detector-recurrence.js";
+import type { DetectorRecurrenceLocator } from "../records/detector-recurrence.js";
 
 const MAX_EPISODE_IDS = 500;
 const MAX_SNAPSHOT_ATTEMPTS = 3;
@@ -60,6 +63,7 @@ export interface DetectorRunResult {
   readonly callbackInvoked: boolean;
   readonly execution?: DetectorExecutionRecord;
   readonly derivations: readonly InsightDerivation[];
+  readonly recurrence: DetectorRunRecurrence;
   readonly evidenceHealth: EvidenceHealthView;
   readonly diagnostics: readonly Diagnostic[];
 }
@@ -137,6 +141,7 @@ function noExecutionResult(
     persistence: "none",
     callbackInvoked: false,
     derivations: [],
+    recurrence: { status: "execution_not_materialized" },
     evidenceHealth,
     diagnostics: [...reasonDiagnostics(reasons), ...evidenceHealth.diagnostics],
   };
@@ -269,6 +274,7 @@ async function runDetectorInternal(
       callbackInvoked: false,
       execution: existing.execution,
       derivations: existing.derivations,
+      recurrence: await recurrenceForExecution(context, existing.execution, undefined),
       evidenceHealth: view.evidenceHealth,
       diagnostics: view.evidenceHealth.diagnostics,
     };
@@ -276,6 +282,7 @@ async function runDetectorInternal(
 
   let execution = tentative;
   let derivations: readonly InsightDerivation[] = [];
+  let recurrenceLocator: DetectorRecurrenceLocator | null = null;
   let callbackInvoked = false;
   if (materialized.status === "ready" && implementation !== undefined) {
     callbackInvoked = true;
@@ -323,6 +330,7 @@ async function runDetectorInternal(
     }
     execution = assembled.execution;
     derivations = assembled.derivations;
+    recurrenceLocator = validateDetectorRecurrenceLocator(detector, assembled.recurrenceLocator);
     const afterCallback = await semanticGraphSnapshotRevision(context);
     if (materializedRevision === undefined || afterCallback !== materializedRevision) {
       throw new LearningLoopError("detector.snapshot_changed", [
@@ -332,7 +340,7 @@ async function runDetectorInternal(
   }
 
   if (input.mode === "commit") {
-    await persistDetectorExecution(context, execution, derivations);
+    await persistDetectorExecution(context, execution, derivations, recurrenceLocator);
   }
   return {
     mode: input.mode,
@@ -341,6 +349,7 @@ async function runDetectorInternal(
     callbackInvoked,
     execution,
     derivations,
+    recurrence: await recurrenceForExecution(context, execution, recurrenceLocator),
     evidenceHealth: materialized.evidenceHealth,
     diagnostics: [...reasonDiagnostics(materialized.reasonCodes), ...materialized.evidenceHealth.diagnostics],
   };

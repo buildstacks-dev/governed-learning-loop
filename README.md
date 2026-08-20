@@ -122,8 +122,24 @@ deduplication claim, suppression claim, Candidate, or utility verdict.
 Hard ceilings allow at most 5,000 considered pairs, 100 admitted child runs,
 100 unique new content-addressed output records, and 64 MiB of retained
 canonical child results.
-Privacy-treated recurrence, durable grouping/suppression, digested host caps,
-and scoped pack-run receipts remain immediate #30c2b.
+
+#30c2b1 adds an optional privacy-treated recurrence locator to a positive
+detector result and durable private execution-to-group lineage. Public
+structural labels and tenant-keyed private digests are registration-constrained;
+raw private key material never crosses the callback. Group identity binds the
+exact detector version/configuration/implementation, lens, scope policy, and
+locator while deliberately excluding pack distribution and episode
+membership. Dry runs expose a zero-write projected count; commits lock an
+exact nullable recurrence decision, append a member only for a qualified
+locator, and leave the execution receipt last before reloading bounded counts.
+Historical unbound executions are never rerun or migrated. Counts are
+descriptive, not harm, preference, utility, or efficacy claims. Folds fail
+closed above 5,000 members, 50,000 exact episode references, or 5,000 distinct
+episode identities.
+
+Durable orchestration policy, deduplication, rejection suppression, digested
+host caps, Candidate-to-group claims, and scoped pack-run receipts remain
+#30c2b2.
 
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.

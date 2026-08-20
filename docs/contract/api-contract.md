@@ -1489,6 +1489,11 @@ Digest inclusion is exact:
 | `DetectorPackRunReceipt.governanceSnapshotDigest` | Sorted unique group key, execution/distinct-episode counts, episode-set digest and full governance branch | `governanceSnapshotDigest` |
 | `DetectorPackRunReceipt.packRunKeyDigest` | Domain; loop/semantic registry; policy ref; pack; scope/policy; population digest; governance snapshot; sorted detector/lens/output-kind selection, child execution key or null, and recurrence group key or null | `schemaVersion`, `id`, execution disposition, reason/absent codes, callback/persistence activity, child full execution digests, direct recurrence count/set fields, item/full receipt digests, `packRunKeyDigest`, `receiptDigest` |
 | `DetectorPackRunReceipt.receiptDigest` | Complete receipt content including full policy, population, items, governance snapshot and `packRunKeyDigest` | `schemaVersion`, `id`, `receiptDigest` |
+| `CandidateAdmissionSnapshot.snapshotDigest` | Registry revision, full policy, group/scope, exact pre-slot admission head, recurrence members/count, episode identities/count, and full assessment | `schemaVersion`, `snapshotDigest` |
+| `CandidateAdmissionReservation.reservationKeyDigest` | Domain `candidate-recurrence-admission-slot:v1`; registry revision; policy, group, scope, pre-slot-head, and snapshot digests | Candidate/proposer content and every field not named in the included set |
+| `CandidateAdmissionReservation.reservationDigest` | Complete reservation key, Candidate/claim/content-lock/group/scope/policy/snapshot lineage, basis, and required predecessor | `schemaVersion`, `reservationDigest` |
+| `CandidateAdmissionBinding.bindingDigest` | Complete Candidate/claim/content-lock/group/scope/policy/snapshot/reservation lineage | `schemaVersion`, `bindingDigest` |
+| `CandidateAdmissionSlot.slotDigest` | Reservation-key, reservation, and snapshot digests | `schemaVersion`, `slotDigest` |
 
 Changing implementation, configuration, thresholds, capabilities,
 applicability, normalization, comparability, fixtures, false-positive policy,
@@ -1804,7 +1809,9 @@ reserved for a retained result whose exact recurrence state is not grouped.
 rejectionSuppression is registered and digested but deliberately
 non-enforcing. This slice does not read Candidate/review state, create a
 Candidate-to-group claim, classify a group available/deduplicated/suppressed,
-refuse or revise a proposal, or authorize an override.
+refuse or revise a proposal, or authorize an override. Decision 0018 later
+uses the exact registered bytes inside a separate serialized admission
+snapshot; the policy record alone still grants nothing.
 
 #30c2b2-receipts adds a kernel-created DetectorPackRunReceipt only for commit
 mode with a configured orchestration policy and a population proven one-to-one
@@ -1882,10 +1889,11 @@ and population episodes at 5,000 each, and unique group folds at 100. No digest
 helper or receipt writer is public.
 
 Private derivation/Candidate recurrence claims are implemented by decision
-0016 and observational receipt assessment by decision 0017. Automatic
-deduplication, rejection suppression, override enforcement, and concurrent
-proposal admission remain a separate governance slice. Automatic population discovery and
-scheduling/routing remain outside this receipt. Core/reference/host pack
+0016, observational receipt assessment by decision 0017, and serialized
+proposal admission by decision 0018. Pack receipt classifications remain
+descriptive; admission separately freezes and enforces the same pure classifier
+before a subject Candidate writes any facts. Automatic population discovery
+and scheduling/routing remain outside this receipt. Core/reference/host pack
 contents and reference consumers are #30d. Optional semantic-provider
 generation and disclosure are #13. Default-quality and candidate-utility
 claims remain #26.
@@ -1980,8 +1988,9 @@ group record `derivation_unbound`. A grouped decision freezes the full
 committed group at proposal through sorted exact member snapshots and their
 digest, then recomputes the exact episode-identity set/count from those member
 bindings. Later append-only group growth is a current superset, never a rewrite
-of that baseline. Exact same-group Candidate supersession is recorded but does
-not yet become an admission rule.
+of that baseline. Exact same-group Candidate supersession is recorded by the
+claim layer. Decision 0018 separately requires that lineage for a subject
+successor when the stable admission snapshot names an exact predecessor.
 
 The Candidate-id decision is written and reloaded first, freezing exact
 proposer, attestation and proposal time. The private candidate-by-content
@@ -2002,8 +2011,9 @@ episode sets at 5,000 values, and same-group derivation witnesses share one
 bounded group fold. Raw malformed bytes or impossible bindings propagate
 `schema.corrupt` or `store.corrupt`; a self-consistent but referentially invalid Candidate claim is
 visible through its typed invalid lineage. Claims do not alter the recurrence
-group key, Candidate content digest, proposal admission, publication,
-authority, utility or efficacy.
+group key or Candidate content digest and grant no publication, authority,
+utility, or efficacy. Decision 0018 may consume a valid grouped claim as one
+input to its separate admission graph; the claim itself still grants nothing.
 
 #### Private review marker and observational frontier assessment
 
@@ -2100,6 +2110,190 @@ retry/work, although it cannot enter the exact-scope frontier or returned
 content. The library therefore does not yet claim completely scope-local
 analysis work; an exact-reference evidence-health/source-receipt index remains
 follow-up work.
+
+#### Serialized recurrence proposal admission
+
+Decision 0018 makes the decision-0017 classifier enforceable only through a
+separate, private, pre-write admission graph. A proposal is subject when it is
+Candidate-v2, derivation-backed, resolves exact grouped recurrence, and runs in
+a loop with DetectorOrchestrationPolicy configured. Manual, recurrence-unbound,
+policy-unconfigured, and already-terminal pre-admission Candidates are
+`not_subject`. A grouped pre-admission claim/content-lock orphan without a
+Candidate receipt is generically refused by a configured loop; only a
+policy-unconfigured loop may finish it.
+
+Admission uses the uncapped current insight-group frontier. The exact matrix is:
+
+- an empty frontier admits a fresh Candidate with basis `group_available`;
+- any active null/accept/escalate review, or more than one otherwise eligible
+  predecessor, refuses the proposal;
+- one `revise` or one `reject` under disabled suppression admits only an exact
+  same-group successor with basis `required_supersession`;
+- multiplier rejection below
+  `ceil(proposalDistinctEpisodeCount × configuredMultiplier)` refuses;
+- equality or growth above that threshold admits only the exact successor with
+  basis `rejection_override`; and
+- `candidate_review_history_unavailable` admits only an exact mirrored
+  successor of the sole active non-subject pre-marker predecessor, with basis
+  `historical_supersession`.
+
+Typed-incomplete current recurrence, derivation, evidence, mirrored
+supersession, review, or subject-admission lineage refuses. Subject validity is
+recursive and cached: every active Candidate used by an admission snapshot
+must still have its exact lock, marker, snapshot, reservation, slot, binding,
+group member, recurrence population, embedded governance, and Candidate
+receipt. A valid binding under a different current registry/policy is
+historical and remains reviewable; a missing or mismatched graph is invalid.
+
+Before any proposed-Candidate write, the kernel materializes this private
+snapshot twice. Consecutive `snapshotDigest` values must match. Each snapshot
+binds full policy and registry identity, group/scope, the pre-slot admission
+stream head, exact recurrence members/episode identities, and the complete
+assessment. Three unstable pairs fail `candidate.snapshot_changed`. The stable
+read freezes exact inputs; later append-only review or group growth does not
+rewrite it.
+
+The `candidate-recurrence-admission/<groupKeyDigest>` stream serializes only
+that exact recurrence group. Its rolling head commits ordered slots. A slot id
+is `slot:<reservationKeyDigest>`. The empty head hashes
+`{ domain:"candidate-recurrence-admission-head:v1", previous:null }`; each next
+head hashes that domain, prior head, and exact stored slot
+`{ id,digest,value }`. The reservation key hashes domain
+`candidate-recurrence-admission-slot:v1`, registry revision, policy digest,
+group/scope digests, the pre-slot stream head, and snapshot digest. CAS append
+allows one contender for one exact state. A conflicting contender
+forward-completes the winner and recomputes; eight conflicts fail
+`candidate.admission_in_progress`. Forward completion may extend only the
+exact stream it validated, and every prior slot must already have a terminal
+Candidate. Append-only caches may establish member presence, but cached absence
+is reloaded before declaring corruption.
+
+The private durable records are:
+
+```ts
+type CandidateClaimRef = {
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly claimDigest: string;
+};
+
+type AssessedGovernance = Extract<
+  DetectorPackRunGroupGovernance,
+  { readonly status: "assessed" }
+>;
+
+type GroupedCandidateClaim = Extract<
+  CandidateRecurrenceClaim,
+  { readonly status: "grouped" }
+>;
+
+interface CandidateAdmissionSnapshot {
+  readonly schemaVersion: 1;
+  readonly loopRegistryRevision: string;
+  readonly policy: DetectorOrchestrationPolicy;
+  readonly groupKeyDigest: string;
+  readonly scopeDigest: string;
+  readonly admissionStreamSnapshotDigest: string;
+  readonly groupMembers: readonly RecurrenceCommittedMemberSnapshot[];
+  readonly groupMemberSnapshotDigest: string;
+  readonly executionCount: number;
+  readonly episodeIdentityDigests: readonly string[];
+  readonly episodeIdentitySetDigest: string;
+  readonly distinctEpisodeCount: number;
+  readonly assessment:
+    | { readonly status: "assessed"; readonly governance: AssessedGovernance }
+    | { readonly status: "historical_supersession"; readonly predecessor: CandidateClaimRef };
+  readonly snapshotDigest: string;
+}
+
+interface CandidateAdmissionReservation {
+  readonly schemaVersion: 1;
+  readonly reservationKeyDigest: string;
+  readonly reservationDigest: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly candidateClaimDigest: string;
+  readonly candidateContentLockDigest: string;
+  readonly groupKeyDigest: string;
+  readonly scopeDigest: string;
+  readonly policyDigest: string;
+  readonly snapshotDigest: string;
+  readonly basis:
+    | "group_available"
+    | "required_supersession"
+    | "rejection_override"
+    | "historical_supersession";
+  readonly requiredSupersedes: CandidateClaimRef | null;
+  readonly candidate: CandidateV2;
+  readonly candidateClaim: GroupedCandidateClaim;
+}
+
+interface CandidateAdmissionBinding {
+  readonly schemaVersion: 1;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly candidateClaimDigest: string;
+  readonly candidateContentLockDigest: string;
+  readonly groupKeyDigest: string;
+  readonly scopeDigest: string;
+  readonly policyDigest: string;
+  readonly snapshotDigest: string;
+  readonly reservationKeyDigest: string;
+  readonly reservationDigest: string;
+  readonly bindingDigest: string;
+}
+
+interface CandidateAdmissionSlot {
+  readonly schemaVersion: 1;
+  readonly reservationKeyDigest: string;
+  readonly reservationDigest: string;
+  readonly snapshotDigest: string;
+  readonly slotDigest: string;
+}
+```
+
+For a subject Candidate the exact durable order is recurrence decision,
+full-Candidate/claim content lock with neutral `admissionExpected:true`, review
+marker, content-addressed snapshot, content-addressed reservation, group CAS
+slot, Candidate-id binding, group-Candidate member, then Candidate receipt.
+The exact private keys are `candidate-admission-snapshot/<snapshotDigest>`,
+`candidate-admission-reservation/<reservationDigest>`,
+`candidate-admission-binding/<candidateId>`, and
+`candidate-recurrence-admission/<groupKeyDigest>`.
+The receipt is last. Every acknowledged create/append is reloaded. Before the
+slot, missing prerequisites are never backfilled; after the slot, exact retry
+may forward-complete binding/member/receipt. A policy refusal on a clean group
+creates no fact for the refused Candidate, although the call may first recover
+an earlier winning reservation. A contender that passed preflight and then
+lost the CAS may retain inert pre-slot attempt records; it has no binding,
+group member, or Candidate receipt and retries under its exact anchored id.
+
+One stream and one group-Candidate stream admit at most 5,000 entries; one
+snapshot admits 5,000 members and 5,000 episode identities; and one recursive
+admission fold validates at most 5,000 distinct Candidates with cycle
+detection. Snapshot, reservation, and stream canonical bytes are each bounded
+at 64 MiB. The aggregate raw canonical bytes of every slotted
+snapshot+reservation pair in one group are separately bounded at 64 MiB, with
+the prospective pair checked before either record or its slot is written.
+Exactly 64 MiB remains crash-recoverable; the next byte returns
+`candidate.admission_limit`. Existing 50,000-unit recurrence-governance bounds
+remain in force; no result is truncated.
+
+The trusted host must exclusively cut over a recurrence group/scope before
+relying on admission. A concurrent old runtime or policy-unconfigured writer
+remains intentionally non-subject and can bypass the stream; there is no
+mixed-runtime or cross-configuration enforcement claim. Evidence/derivation
+revalidation also retains the global revision/source-receipt scan debt stated
+above.
+
+CandidateView exposes only the closed admission projection documented below.
+An invalid admission blocks review and publication; `reviewCandidate` checks it
+before the callback and again before review persistence. Historical and
+non-subject Candidates remain reviewable under the existing rules. No admission
+record, slot, or classification grants publication, authorization, validation,
+utility, or efficacy, and no admission writer/parser/digest helper is public.
+CandidateView evolves under its existing symbol; the root export snapshot
+remains 154.
 
 ### Candidate
 
@@ -3244,6 +3438,46 @@ export interface CandidateView {
           readonly distinctEpisodeCountAtProposal: number;
         };
       };
+  readonly admissionLineage:
+    | {
+        readonly status: "not_subject";
+        readonly reason:
+          | "manual"
+          | "recurrence_unbound"
+          | "policy_unconfigured"
+          | "historical_pre_admission";
+      }
+    | {
+        readonly status: "resolved";
+        readonly bindingDigest: string;
+        readonly reservationKeyDigest: string;
+        readonly reservationDigest: string;
+        readonly snapshotDigest: string;
+        readonly policyDigest: string;
+        readonly basis:
+          | "group_available"
+          | "required_supersession"
+          | "rejection_override"
+          | "historical_supersession";
+      }
+    | {
+        readonly status: "historical";
+        readonly bindingDigest: string;
+        readonly reservationKeyDigest: string;
+        readonly reservationDigest: string;
+        readonly snapshotDigest: string;
+        readonly policyDigest: string;
+        readonly basis:
+          | "group_available"
+          | "required_supersession"
+          | "rejection_override"
+          | "historical_supersession";
+        readonly diagnostics: readonly Diagnostic[];
+      }
+    | {
+        readonly status: "invalid";
+        readonly diagnostics: readonly Diagnostic[];
+      };
 }
 
 export interface ProposeOutcome extends CandidateView {
@@ -3580,6 +3814,20 @@ diagnostics. Because decision 0016 is observational, typed recurrence
 invalidity does not change GovernanceView or review/proposal disposition;
 malformed raw claim/stream bytes still fail as `schema.corrupt` or
 `store.corrupt`.
+`admissionLineage` independently reports `not_subject`, `resolved`,
+`historical`, or `invalid`. The not-subject reasons are closed to `manual`,
+`recurrence_unbound`, `policy_unconfigured`, and
+`historical_pre_admission`. Resolved/historical projections expose only exact
+binding, reservation-key, reservation, snapshot, and policy digests plus the
+admission basis; they do not expose the private group, frontier, full policy,
+population, or slot. Historical means the immutable admission remains exact
+but its policy or registry is no longer configured. Invalid admission blocks
+review and publication, and review revalidates it both before and after the
+reviewer callback. Historical uses diagnostic
+`candidate.admission_policy_historical`, invalid uses
+`candidate.admission_invalid`, and review refusal is
+`review.admission_invalid`. Reading never creates, upgrades, or reclassifies
+an admission graph.
 For a v1 candidate the fold also reports its permanent `legacy_unbound`
 constraint and keeps publication blocked regardless of historical review
 disposition. Reading a v1 record never resolves its evidence ids or creates a
@@ -4152,8 +4400,8 @@ The core suite should prove at least:
   member and Candidate receipt recover in order across failures and lost
   acknowledgements;
 - same-content contenders cannot steal an anchored Candidate id or proposer,
-  while distinct Candidate contents in one group remain allowed because this
-  slice performs no deduplication or suppression;
+  while the claim-only slice records distinct Candidate contents without
+  itself deduplicating or suppressing them;
 - grouped Candidate claims freeze exact proposal member refs and the full
   episode-identity set, remain valid under later group growth, reject
   self-consistent member/baseline/anchor tamper, and expose only observational
@@ -4166,7 +4414,7 @@ The core suite should prove at least:
   tamper and 5,001 refs without truncation;
 - assessed frontiers retain only exact active claims, ignore superseded review
   history, classify the full closed disposition/reason matrix identically in
-  runtime and parser, and leave proposal admission unchanged;
+  runtime and parser, while receipt classification itself remains descriptive;
 - capped insight and evidence-health groups do zero Candidate assessment work,
   while typed-invalid or pre-marker active frontiers remain explicitly not
   assessed;
@@ -4176,6 +4424,32 @@ The core suite should prove at least:
 - later Candidate, review, policy, registry, or group-snapshot changes make an
   older exact assessed receipt historical; missing embedded refs or an invalid
   pack graph make governance invalid, never current;
+- configured recurrence admission applies the exact classifier before any
+  proposed-Candidate write, admits only the empty/revise/disabled-rejection/
+  threshold-met/historical-sole-predecessor branches with exact supersession,
+  and creates no proposed-Candidate facts on a clean refusal;
+- stable admission snapshots require two identical reads, bind exact
+  policy/registry/group/population/frontier/stream-head bytes, and fail after
+  bounded churn; one per-group CAS slot serializes contenders without a shared
+  journal or cross-scope existence oracle;
+- admission receipt-last persistence orders decision, neutral content lock,
+  marker, snapshot, reservation, slot, binding, group member, and Candidate;
+  lost acknowledgements and crashes forward-complete exactly, cached member
+  absence reloads, and a newly appended unvalidated head is never extended;
+- grouped pre-admission orphans cannot direct-complete through a configured
+  loop, while already-terminal manual/unbound/unconfigured history remains
+  non-subject and only one exact pre-marker predecessor can migrate;
+- invalid recursive subject admission blocks succession, Candidate governance,
+  and review both before and after the callback; valid historical-policy
+  admission remains reviewable;
+- admission admits exactly 5,000 slots/validation nodes and an aggregate 64 MiB
+  of slotted snapshot+reservation bytes, forward-recovers the exact byte
+  boundary after a crash, and writes no new slot at the next byte;
+- deployment tests and documentation require exclusive configured-loop cutover;
+  concurrent old or policy-unconfigured writers are outside the enforcement
+  claim, and evidence revalidation retains its global scan debt;
+- CandidateView exposes closed recurrence and admission lineage under existing
+  symbols, with no admission writer/parser/digest helper or new root export;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

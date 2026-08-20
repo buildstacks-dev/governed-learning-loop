@@ -178,14 +178,15 @@ derivation-to-group claims, one exact nullable recurrence decision for every
 new Candidate, claim-before-receipt recovery, and inline CandidateView
 recurrence lineage.
 
-**Still deferred:** Candidate/review assessment, deduplication,
-decisive-rejection suppression and override evidence, assessed pack receipts,
-and proposal admission. The recurrence, policy, receipt, and claim slices do
-not refuse a Candidate because another claim exists.
-
 **Implemented later by decision 0017:** observational Candidate/review
-frontier assessment and current/historical assessed receipt views. Enforced
-deduplication, suppression, override, and proposal admission remain deferred.
+frontier assessment and current/historical assessed receipt views. Those
+receipt/view classifications remain descriptive.
+
+**Implemented later by decision 0018:** a separate stable-snapshot,
+per-recurrence-group CAS admission stream that enforces exact deduplication,
+same-group supersession and rejection-override rules for subject proposals.
+The recurrence, policy, receipt, and claim records still do not independently
+refuse or authorize a Candidate.
 
 Reference detector contents and fixtures remain #30d. Optional semantic/model
 workflows remain #13. Candidate-utility calibration and every quality or
@@ -208,4 +209,6 @@ publication, authorization, exposure, and activation stay outside this slice.
   activation path, or efficacy metric. Decision 0014 adds only non-enforcing
   policy registration/transient caps; decision 0015 adds audit receipts/reads
   without Candidate governance; decision 0016 adds only private observational
-  Candidate/group claims.
+  Candidate/group claims; decision 0017 adds descriptive assessment; and
+  decision 0018 adds admission without authority, publication, validation,
+  utility, or efficacy.

@@ -138,7 +138,7 @@ between code and contract, open an issue — never silently drift either one.
   references, or 5,000 distinct episode identities. Counts are descriptive
   only. C2b1 grants no deduplication, suppression, Candidate, authority,
   utility, or efficacy claim.
-- **Orchestration policy tightens caps but does not govern Candidates.** An
+- **Orchestration policy is inert until a separate admission snapshot uses it.** An
   optional immutable DetectorOrchestrationPolicy contributes its exact digest
   to loop identity, may lower the 100-child callback ceiling, and separately
   classifies retained exact insight/evidence-health recurrence states as
@@ -146,8 +146,9 @@ between code and contract, open an issue — never silently drift either one.
   dispositions: no-result items omit the unknown classification, and caps do
   not truncate or block exact child persistence.
   rejectionSuppression bytes are registered and digested but remain
-  non-enforcing after durable receipts, observational Candidate/group claims,
-  and assessed receipt views; proposal admission requires a later decision.
+  non-enforcing in policy, receipt, claim, and assessed-view records. Only the
+  decision-0018 serialized pre-write admission graph may enforce them for a
+  subject Candidate.
 - **Pack receipts are retry-stable, scoped audit facts.** Only a configured
   commit with a one-to-one exact-scope population may create a
   DetectorPackRunReceipt; dry, policy-omitted, missing or wrong-scope inputs
@@ -171,7 +172,7 @@ between code and contract, open an issue — never silently drift either one.
   but this slice does not deduplicate, suppress, refuse, review, authorize,
   validate, or claim utility. Raw malformed claim graphs remain
   `schema.corrupt` or `store.corrupt`.
-- **Assessed recurrence governance is descriptive.** Every new Candidate has a
+- **Assessed recurrence receipts and views are descriptive.** Every new Candidate has a
   private review-history marker before its receipt; exact review refs append
   before Review receipts and latest means committed append order. Uncapped
   insight groups classify only the exact active frontier under one shared pure
@@ -180,10 +181,31 @@ between code and contract, open an issue — never silently drift either one.
   remain explicitly not assessed. Pack build/direct/page folds share bounded
   caches and fail above 50,000 governance work units. Current, historical,
   invalid, commit, registry, policy, and evidence-health dimensions stay
-  separate, and no classification changes `propose` or publication.
+  separate. A receipt/view classification grants nothing; admission separately
+  freezes the same pure classifier before a subject proposal writes facts.
   Candidate evidence/derivation revalidation still inherits global evidence
   revision/scanning work; do not claim fully scope-local assessment work until
   exact-reference source-receipt/health indexes replace that debt.
+- **Configured recurrence admission is serialized and receipt-last.** A
+  derivation-backed grouped Candidate under an exact configured policy must
+  pass two identical policy/registry/group/frontier reads before any proposed-
+  Candidate write. Empty groups admit once; revise and eligible rejection
+  branches require exact same-group supersession; deduplicated, ambiguous,
+  below-threshold, typed-incomplete, and recursively invalid subject frontiers
+  refuse generically. A sole exact non-subject pre-marker predecessor may
+  migrate only through mirrored supersession. One per-group CAS slot orders
+  contenders without a shared journal. Durable order is recurrence decision,
+  neutral content lock, review marker, snapshot, reservation, slot, binding,
+  group member, then Candidate receipt. Forward recovery may prove cached
+  presence but must reload cached absence; it never extends an unvalidated
+  tail. Slotted snapshot+reservation history is capped at an aggregate 64 MiB,
+  including the prospective pair before slot append. CandidateView exposes
+  closed admission lineage; invalid blocks review before and after callback,
+  while exact historical admission remains reviewable. The trusted host must
+  exclusively cut over the group/scope: concurrent old or policy-unconfigured
+  writers remain non-subject and are outside the enforcement claim. Admission
+  grants no publication, authority, validation, utility, or efficacy and adds
+  no root export.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

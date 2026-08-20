@@ -282,6 +282,42 @@ export async function loadIndexedCandidateReviews(
   };
 }
 
+export async function loadCandidateReviewMarker(
+  context: EngineContext,
+  candidate: Candidate,
+  workBudget?: { claimRefs: number },
+): Promise<{ readonly status: "unmarked" } | { readonly status: "ready"; readonly refCount: number }> {
+  const stored = await loadStoredRecord(context, "candidate-review", candidate.id);
+  if (stored === undefined) return { status: "unmarked" };
+  const entries = parseEntries(stored.value);
+  const refCount = entries.filter((indexed) => indexed.value.kind === "review").length;
+  if (workBudget !== undefined) {
+    workBudget.claimRefs += refCount;
+    if (workBudget.claimRefs > 50_000) {
+      throw new LearningLoopError("detector.limit_exceeded", [
+        {
+          code: "detector.limit_exceeded",
+          severity: "error",
+          message: "Candidate review marker work exceeds its ceiling",
+        },
+      ]);
+    }
+  }
+  const marker = entries[0]?.value;
+  const recurrenceClaim = await loadCandidateRecurrenceClaim(context, candidate.id);
+  if (
+    marker?.kind !== "marker" ||
+    marker.candidateId !== candidate.id ||
+    marker.candidateDigest !== candidate.contentDigest ||
+    marker.scopeDigest !== candidateScopeDigest(candidate.scope) ||
+    recurrenceClaim === undefined ||
+    marker.recurrenceClaimDigest !== recurrenceClaim.claimDigest
+  ) {
+    throw invalid("store.corrupt", "Candidate review marker does not match its Candidate", []);
+  }
+  return { status: "ready", refCount };
+}
+
 export async function verifyExistingCandidateReviewReference(
   context: EngineContext,
   candidate: Candidate,

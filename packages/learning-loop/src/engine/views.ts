@@ -23,6 +23,7 @@ import type { InsightDerivationView } from "./semantic-views.js";
 import type { CandidateRecurrenceLineage } from "./recurrence-claims.js";
 import { loadCandidateRecurrenceLineage } from "./recurrence-claims.js";
 import { loadIndexedCandidateReviews } from "./candidate-review-index.js";
+import { candidateAdmissionLineageRevision, loadCandidateAdmissionLineageRecords } from "./recurrence-admission.js";
 
 const MAX_GOVERNANCE_SNAPSHOT_ATTEMPTS = 3;
 
@@ -38,6 +39,76 @@ export interface CandidateGovernanceState {
         readonly derivation?: InsightDerivationView;
       };
   readonly recurrenceLineage: CandidateRecurrenceLineage;
+  readonly admissionLineage:
+    | {
+        readonly status: "not_subject";
+        readonly reason: "manual" | "recurrence_unbound" | "policy_unconfigured" | "historical_pre_admission";
+      }
+    | {
+        readonly status: "resolved";
+        readonly bindingDigest: string;
+        readonly reservationKeyDigest: string;
+        readonly reservationDigest: string;
+        readonly snapshotDigest: string;
+        readonly policyDigest: string;
+        readonly basis: "group_available" | "required_supersession" | "rejection_override" | "historical_supersession";
+      }
+    | {
+        readonly status: "historical";
+        readonly bindingDigest: string;
+        readonly reservationKeyDigest: string;
+        readonly reservationDigest: string;
+        readonly snapshotDigest: string;
+        readonly policyDigest: string;
+        readonly basis: "group_available" | "required_supersession" | "rejection_override" | "historical_supersession";
+        readonly diagnostics: readonly Diagnostic[];
+      }
+    | { readonly status: "invalid"; readonly diagnostics: readonly Diagnostic[] };
+}
+
+async function candidateAdmissionLineageOf(
+  context: EngineContext,
+  candidate: Candidate,
+): Promise<CandidateGovernanceState["admissionLineage"]> {
+  if (candidate.schemaVersion !== 2) {
+    return { status: "not_subject", reason: "recurrence_unbound" };
+  }
+  const admission = await loadCandidateAdmissionLineageRecords(context, candidate);
+  if (admission.status === "not_subject") {
+    return { status: "not_subject", reason: admission.reason };
+  }
+  if (admission.status === "invalid") {
+    return {
+      status: "invalid",
+      diagnostics: [
+        {
+          code: "candidate.admission_invalid",
+          severity: "error",
+          message: "Candidate admission lineage is structurally invalid",
+        },
+      ],
+    };
+  }
+  const projection = {
+    bindingDigest: admission.binding.bindingDigest,
+    reservationKeyDigest: admission.binding.reservationKeyDigest,
+    reservationDigest: admission.binding.reservationDigest,
+    snapshotDigest: admission.binding.snapshotDigest,
+    policyDigest: admission.binding.policyDigest,
+    basis: admission.reservation.basis,
+  };
+  if (admission.policyStatus === "configured") return { status: "resolved", ...projection };
+  return {
+    status: "historical",
+    ...projection,
+    diagnostics: [
+      {
+        code: "candidate.admission_policy_historical",
+        severity: "warning",
+        message: "Candidate admission binds a historical orchestration policy",
+      },
+    ],
+  };
 }
 
 /**
@@ -127,12 +198,25 @@ async function candidateGovernanceStateOnce(
 ): Promise<CandidateGovernanceState> {
   const derivation = await revalidateCandidateDerivation(context, candidate);
   const recurrenceLineage = await loadCandidateRecurrenceLineage(context, candidate);
+  const admissionLineage = await candidateAdmissionLineageOf(context, candidate);
   const reviews = await loadReviews(context, candidate, derivation);
-  const governance = computeGovernanceView({
+  const computedGovernance = computeGovernanceView({
     candidateDigest: candidate.contentDigest,
     requiresIndependentReview,
     reviews,
   });
+  const governance: GovernanceView =
+    admissionLineage.status === "invalid"
+      ? {
+          ...computedGovernance,
+          review: "blocked",
+          publication: "blocked",
+          reasons: [
+            ...admissionLineage.diagnostics,
+            ...computedGovernance.reasons.filter((reason) => reason.code !== "review.required"),
+          ],
+        }
+      : computedGovernance;
   const evidence = await revalidateCandidateEvidence(context, candidate);
   const lineageDiagnostics = await candidateLineageDiagnostics(context, candidate);
   const derivationDiagnostics = derivation.status === "invalid" ? derivation.diagnostics : [];
@@ -165,7 +249,7 @@ async function candidateGovernanceStateOnce(
     };
   }
   if (evidenceHealth.status === "ready" && lineageDiagnostics.length === 0 && derivationDiagnostics.length === 0) {
-    return { governance, evidenceHealth, derivationLineage, recurrenceLineage };
+    return { governance, evidenceHealth, derivationLineage, recurrenceLineage, admissionLineage };
   }
   const code =
     derivationDiagnostics.length > 0
@@ -197,6 +281,7 @@ async function candidateGovernanceStateOnce(
     evidenceHealth,
     derivationLineage,
     recurrenceLineage,
+    admissionLineage,
   };
 }
 
@@ -205,8 +290,10 @@ async function candidateGovernanceSnapshotRevision(context: EngineContext, candi
   const scopeIndexRevision = await semanticScopeIndexSnapshotRevision(context, scopeDigest(candidate.scope));
   const candidateRevision = await readRecordKindRevision(context.store, "candidate");
   const reviewRevision = await readRecordKindRevision(context.store, "review");
+  const admissionRevision =
+    candidate.schemaVersion === 2 ? await candidateAdmissionLineageRevision(context, candidate) : null;
   return sha256HexOfCanonicalJson(
-    toJsonValue({ graphRevision, scopeIndexRevision, candidateRevision, reviewRevision }),
+    toJsonValue({ graphRevision, scopeIndexRevision, candidateRevision, reviewRevision, admissionRevision }),
   );
 }
 

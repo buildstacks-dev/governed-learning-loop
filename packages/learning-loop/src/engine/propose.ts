@@ -12,7 +12,7 @@ import type { Candidate, CandidateIntervention, CandidateV2, RiskTier } from "..
 import { candidateContentDigest, candidateScopeDigest, parseCandidate } from "../records/candidate.js";
 import type { VerifiedPrincipal } from "../records/principal.js";
 import type { Scope } from "../records/scope.js";
-import { parseDigestAt, parseDurableId } from "../records/semantic-shared.js";
+import { parseDurableId } from "../records/semantic-shared.js";
 import type { EngineContext } from "./context.js";
 import {
   createOnly,
@@ -29,10 +29,14 @@ import type { CandidateView } from "./query.js";
 import { candidateGovernanceStateOf } from "./views.js";
 import { resolveCandidateEvidence } from "./evidence-binding.js";
 import { candidateDerivationSupersessionDiagnostics, resolveDerivedCandidateInput } from "./derivation-binding.js";
+import type { CandidateContentLock } from "./candidate-content-lock.js";
+import { loadCandidateContentLock, parseCandidateContentLock } from "./candidate-content-lock.js";
+import type { CandidateAdmissionPreparation } from "./recurrence-admission.js";
+import { admitCandidateByRecurrence, prepareCandidateAdmission } from "./recurrence-admission.js";
 import type { CandidateRecurrenceClaim } from "./recurrence-claims.js";
 import {
   loadCandidateRecurrenceClaim,
-  parseCandidateRecurrenceClaim,
+  loadCommittedDerivationRecurrenceClaims,
   persistCandidateRecurrenceClaim,
   persistCandidateRecurrenceDecision,
   prepareCandidateRecurrenceClaim,
@@ -80,58 +84,6 @@ const parseInterventionAt: Parse<CandidateIntervention> = (value, path) => {
   };
 };
 
-interface DigestIndexEntry {
-  readonly candidateId: string;
-  readonly contentDigest: string;
-  readonly recurrenceClaimDigest?: string;
-  readonly recurrenceClaim?: CandidateRecurrenceClaim;
-  readonly candidate?: CandidateV2;
-}
-
-function parseDigestIndexEntry(input: unknown): DigestIndexEntry {
-  const fields = readFields(input, ["candidate-by-digest"]);
-  const recurrenceClaimDigest = fields.opt("recurrenceClaimDigest", parseDigestAt);
-  const recurrenceClaim = fields.opt("recurrenceClaim", (value) => parseCandidateRecurrenceClaim(value));
-  const candidate = fields.opt("candidate", (value) => {
-    const parsed = parseCandidate(value);
-    if (parsed.schemaVersion !== 2) {
-      throw new LearningLoopError("store.corrupt", [
-        { code: "store.corrupt", severity: "error", message: "candidate content lock embeds a legacy Candidate" },
-      ]);
-    }
-    return parsed;
-  });
-  if (
-    (recurrenceClaimDigest === undefined) !== (recurrenceClaim === undefined) ||
-    (recurrenceClaimDigest === undefined) !== (candidate === undefined) ||
-    (recurrenceClaim !== undefined && recurrenceClaim.claimDigest !== recurrenceClaimDigest)
-  ) {
-    throw new LearningLoopError("store.corrupt", [
-      { code: "store.corrupt", severity: "error", message: "candidate content lock recurrence bytes are mismatched" },
-    ]);
-  }
-  const candidateId = fields.req("candidateId", parseNonEmptyText);
-  const contentDigest = fields.req("contentDigest", parseNonEmptyText);
-  if (
-    candidate !== undefined &&
-    (candidate.id !== candidateId ||
-      candidate.contentDigest !== contentDigest ||
-      recurrenceClaim === undefined ||
-      !recurrenceClaimMatchesCandidate(candidate, recurrenceClaim))
-  ) {
-    throw new LearningLoopError("store.corrupt", [
-      { code: "store.corrupt", severity: "error", message: "candidate content lock embedded bytes are mismatched" },
-    ]);
-  }
-  return {
-    candidateId,
-    contentDigest,
-    ...(recurrenceClaimDigest === undefined ? {} : { recurrenceClaimDigest }),
-    ...(recurrenceClaim === undefined ? {} : { recurrenceClaim }),
-    ...(candidate === undefined ? {} : { candidate }),
-  };
-}
-
 function hasOwnField(input: unknown, key: string): boolean {
   return typeof input === "object" && input !== null && Object.hasOwn(input, key);
 }
@@ -170,7 +122,7 @@ async function loadAnchoredRetryClaim(
   }
   const stored = await loadStoredRecord(context, "candidate-by-digest", claim.candidateDigest);
   if (stored === undefined) return { claim, candidate: claim.candidate };
-  const entry = parseDigestIndexEntry(stored.value);
+  const entry = parseCandidateContentLock(stored.value);
   if (entry.candidateId !== candidateId) {
     throw new LearningLoopError("store.conflict", [
       { code: "store.conflict", severity: "error", message: "candidate content is owned by another proposal" },
@@ -225,6 +177,7 @@ async function outcomeFor(
     evidenceHealth: state.evidenceHealth,
     derivationLineage: state.derivationLineage,
     recurrenceLineage: state.recurrenceLineage,
+    admissionLineage: state.admissionLineage,
   };
 }
 
@@ -441,22 +394,75 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
       { code: "store.corrupt", severity: "error", message: "Candidate recurrence decision is mismatched" },
     ]);
   }
+  const indexEntry: CandidateContentLock = {
+    candidateId: candidate.id,
+    contentDigest,
+    recurrenceClaimDigest: recurrenceClaim.claimDigest,
+    recurrenceClaim,
+    candidate,
+    ...(recurrenceClaim.status === "grouped" && context.detectorOrchestrationPolicy !== undefined
+      ? { admissionExpected: true }
+      : {}),
+  };
+  const preexistingContentLock = await loadCandidateContentLock(context, contentDigest);
+  const legacyInProgressLock =
+    preexistingContentLock !== undefined &&
+    preexistingContentLock.candidateId === candidate.id &&
+    preexistingContentLock.contentDigest === candidate.contentDigest &&
+    preexistingContentLock.recurrenceClaimDigest === recurrenceClaim.claimDigest &&
+    preexistingContentLock.admissionExpected !== true;
+  if (
+    legacyInProgressLock &&
+    recurrenceClaim.status === "grouped" &&
+    context.detectorOrchestrationPolicy !== undefined
+  ) {
+    throw new LearningLoopError("candidate.admission_refused", [
+      {
+        code: "candidate.admission_refused",
+        severity: "error",
+        message: "Candidate recurrence admission was refused",
+      },
+    ]);
+  }
+  let admissionPreparation: CandidateAdmissionPreparation | undefined;
+  if (context.detectorOrchestrationPolicy !== undefined && candidate.derivationRef !== undefined) {
+    if (recurrenceClaim.status === "grouped") {
+      admissionPreparation = await prepareCandidateAdmission(context, candidate, recurrenceClaim, indexEntry);
+      if (admissionPreparation.status === "completed") {
+        return outcomeFor(context, admissionPreparation.candidate, [
+          {
+            code: "candidate.duplicate_content",
+            severity: "info",
+            message: "Candidate recurrence admission was already completed",
+          },
+        ]);
+      }
+    } else {
+      const exactDerivationClaims = await loadCommittedDerivationRecurrenceClaims(
+        context,
+        candidate.derivationRef.id,
+        candidate.derivationRef.digest,
+      );
+      if (exactDerivationClaims.length > 0) {
+        throw new LearningLoopError("candidate.admission_refused", [
+          {
+            code: "candidate.admission_refused",
+            severity: "error",
+            message: "Candidate recurrence admission was refused",
+          },
+        ]);
+      }
+    }
+  }
   await persistCandidateRecurrenceDecision(context, recurrenceClaim);
   const operationId = `propose/${candidate.id}/${contentDigest}`;
 
   // Atomic private content-ownership/result lock: exactly one candidate id and
   // recurrence decision can own this content digest. It is audit lineage, not
   // a public authority or publication entitlement.
-  const indexEntry: DigestIndexEntry = {
-    candidateId: candidate.id,
-    contentDigest,
-    recurrenceClaimDigest: recurrenceClaim.claimDigest,
-    recurrenceClaim,
-    candidate,
-  };
   const indexStatus = await createOnly(context, "candidate-by-digest", contentDigest, indexEntry, operationId);
   if (indexStatus === "created") {
-    return createClaimedCandidate(context, candidate, recurrenceClaim, operationId);
+    return createClaimedCandidate(context, candidate, recurrenceClaim, operationId, admissionPreparation);
   }
 
   // exists_same or conflict: this content digest is already claimed.
@@ -470,7 +476,7 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
       },
     ]);
   }
-  const existingEntry = parseDigestIndexEntry(storedIndex.value);
+  const existingEntry = parseCandidateContentLock(storedIndex.value);
   const existing = await loadCandidate(context, existingEntry.candidateId);
   if (existing !== undefined && existing.contentDigest === contentDigest) {
     return outcomeFor(context, existing, [
@@ -500,7 +506,7 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
           },
         ]);
       }
-      return createClaimedCandidate(context, candidate, exactAnchoredClaim, operationId);
+      return createClaimedCandidate(context, candidate, exactAnchoredClaim, operationId, admissionPreparation);
     }
     if (anchoredClaim !== undefined || existingEntry.recurrenceClaim !== undefined) {
       throw new LearningLoopError("store.corrupt", [
@@ -583,18 +589,32 @@ export async function runPropose(context: EngineContext, input: CandidateInput):
       },
     ]);
   }
-  return createClaimedCandidate(context, candidate, recurrenceClaim, operationId);
+  return createClaimedCandidate(context, candidate, recurrenceClaim, operationId, admissionPreparation);
 }
 
 async function createClaimedCandidate(
   context: EngineContext,
-  candidate: Candidate,
+  candidate: CandidateV2,
   recurrenceClaim: CandidateRecurrenceClaim,
   operationId: string,
+  admissionPreparation?: CandidateAdmissionPreparation,
 ): Promise<ProposeOutcome> {
   const existing = await loadCandidate(context, candidate.id);
   if (existing !== undefined) {
-    if (existing.contentDigest === candidate.contentDigest) return outcomeFor(context, existing, []);
+    if (existing.contentDigest === candidate.contentDigest) {
+      const lock = await loadCandidateContentLock(context, candidate.contentDigest);
+      if (existing.schemaVersion === 2 && recurrenceClaim.status === "grouped" && lock?.admissionExpected === true) {
+        const completed = await admitCandidateByRecurrence(
+          context,
+          existing,
+          recurrenceClaim,
+          lock,
+          admissionPreparation,
+        );
+        return outcomeFor(context, completed, []);
+      }
+      return outcomeFor(context, existing, []);
+    }
     throw new LearningLoopError("store.conflict", [
       {
         code: "store.conflict",
@@ -604,6 +624,16 @@ async function createClaimedCandidate(
     ]);
   }
   await assertCandidateContentLock(context, candidate, recurrenceClaim);
+  const lock = await loadCandidateContentLock(context, candidate.contentDigest);
+  if (lock === undefined) {
+    throw new LearningLoopError("store.corrupt", [
+      { code: "store.corrupt", severity: "error", message: "candidate content lock disappeared before receipt" },
+    ]);
+  }
+  if (recurrenceClaim.status === "grouped" && lock.admissionExpected === true) {
+    const admitted = await admitCandidateByRecurrence(context, candidate, recurrenceClaim, lock, admissionPreparation);
+    return outcomeFor(context, admitted, []);
+  }
   await ensureCandidateReviewMarker(context, candidate);
   await persistCandidateRecurrenceClaim(context, recurrenceClaim);
   await assertCandidateContentLock(context, candidate, recurrenceClaim);
@@ -660,7 +690,7 @@ async function assertCandidateContentLock(
       { code: "store.corrupt", severity: "error", message: "candidate content lock disappeared before receipt" },
     ]);
   }
-  const entry = parseDigestIndexEntry(stored.value);
+  const entry = parseCandidateContentLock(stored.value);
   if (
     entry.candidateId !== candidate.id ||
     entry.contentDigest !== candidate.contentDigest ||

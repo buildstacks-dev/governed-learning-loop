@@ -167,9 +167,10 @@ Decision 0016 subsequently implements private derivation/Candidate recurrence
 claims and group-Candidate append lineage, derived only from exact qualified
 execution/derivation facts. Decision 0017 subsequently mints observational
 assessed receipt branches for exact post-marker active frontiers and resolves
-them current/historical/invalid. Enforced deduplication, suppression, override,
-and proposal admission remain deferred. Historical/manual/unbound Candidates
-are never auto-migrated.
+them current/historical/invalid. Decision 0018 separately freezes the same pure
+classifier into a serialized pre-write admission graph for subject grouped
+proposals. The receipt remains descriptive and non-enforcing;
+historical/manual/unbound Candidates are never auto-migrated.
 
 Reference detector contents remain #30d. Semantic/model workflows remain #13.
 Candidate-utility calibration and every quality/improvement claim remain #26.
@@ -188,5 +189,8 @@ activation remain outside this receipt.
   remain separate view dimensions.
 - Decision 0017 may resolve exact assessed governance bytes current or
   historical; the classification remains observational and non-enforcing.
+- Decision 0018 may use equivalent freshly materialized governance in a
+  separate snapshot/reservation/slot graph; no old receipt becomes an
+  admission entitlement.
 - No receipt creates a Candidate, grants review, suppression, publication,
   authorization, activation, validation, utility or efficacy.

@@ -5,6 +5,7 @@ import type { DetectorPackRunReceipt } from "../records/detector-pack-run-receip
 import { classifyAssessedRecurrenceGovernance } from "../records/detector-pack-run-receipt.js";
 import type { DetectorOrchestrationPolicy } from "../records/detector-orchestration-policy.js";
 import type { CandidateReview } from "../records/review.js";
+import type { Candidate } from "../records/candidate.js";
 import { candidateLineageDiagnostics } from "./candidate-lineage.js";
 import type { CandidateReviewIndexState } from "./candidate-review-index.js";
 import { loadIndexedCandidateReviews } from "./candidate-review-index.js";
@@ -117,6 +118,7 @@ export async function assessRecurrenceGroupGovernance(
     readonly workBudget: { claimRefs: number };
     readonly groupLineage: Awaited<ReturnType<typeof recurrenceReceiptLineage>>;
     readonly cache?: RecurrenceGovernanceReadCache;
+    readonly candidateAdmissionStatus?: (candidate: Candidate) => Promise<"not_subject" | "valid" | "invalid">;
   },
 ): Promise<GroupGovernance> {
   if (input.capped) {
@@ -158,11 +160,16 @@ export async function assessRecurrenceGroupGovernance(
   const frontier = allClaims.filter((current) => !superseded.has(current.claim.claimDigest));
   const assessed: AssessedCandidate[] = [];
   for (const current of frontier) {
+    const admissionStatus =
+      input.candidateAdmissionStatus === undefined
+        ? "not_subject"
+        : await input.candidateAdmissionStatus(current.candidate);
     const recurrence = await loadCandidateRecurrenceLineage(context, current.candidate, cache.recurrence);
     const derivation = await revalidateCandidateDerivation(context, current.candidate);
     const evidence = await revalidateCandidateEvidence(context, current.candidate);
     const lineageReasons = await candidateLineageDiagnostics(context, current.candidate);
     if (
+      admissionStatus === "invalid" ||
       recurrence.status !== "resolved" ||
       recurrence.claimDigest !== current.claim.claimDigest ||
       recurrence.groupKeyDigest !== input.groupKeyDigest ||
@@ -222,6 +229,7 @@ export async function embeddedAssessedGovernanceIsExact(
     readonly workBudget: { claimRefs: number };
     readonly groupLineage: Awaited<ReturnType<typeof recurrenceReceiptLineage>>;
     readonly cache: RecurrenceGovernanceReadCache;
+    readonly candidateAdmissionStatus?: (candidate: Candidate) => Promise<"not_subject" | "valid" | "invalid">;
   },
 ): Promise<boolean> {
   seedGroupLineage(input.cache, input.groupKeyDigest, input.groupLineage);
@@ -229,6 +237,12 @@ export async function embeddedAssessedGovernanceIsExact(
     const candidate = await loadCandidate(context, binding.candidateId);
     const claim = await loadCandidateRecurrenceClaim(context, binding.candidateId);
     if (candidate === undefined || claim?.status !== "grouped" || claim.claimDigest !== binding.claimDigest) {
+      return false;
+    }
+    if (
+      input.candidateAdmissionStatus !== undefined &&
+      (await input.candidateAdmissionStatus(candidate)) === "invalid"
+    ) {
       return false;
     }
     input.workBudget.claimRefs += 1 + claim.proposalMembers.length + claim.derivationClaimDigests.length;

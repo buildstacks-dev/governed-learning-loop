@@ -64,6 +64,8 @@ export type { CandidateInput, ProposeOutcome } from "./engine/propose.js";
 export type { CandidateView, EpisodeQuery, EpisodeView, EvidenceHealthQuery } from "./engine/query.js";
 export type { MeasurementQuery, ObservationQuery, QueryPage } from "./engine/query.js";
 export type { SourcePageReceiptQuery } from "./engine/query.js";
+export type { DetectorExecutionQuery, DetectorExecutionView } from "./engine/semantic-query.js";
+export type { InsightDerivationQuery, InsightDerivationView } from "./engine/semantic-query.js";
 export type { CandidateReviewer, CandidateReviewInput } from "./engine/review.js";
 export type { LearningReport, LearningReportQuery } from "./engine/report.js";
 export type { LearningLoop, LearningLoopConfig } from "./engine/loop.js";

@@ -90,11 +90,19 @@ excludes the result; the full execution digest includes it. There is no `pass`,
 and a detected condition still does not claim harm, authority, candidate
 utility, or improvement.
 
-These #30a/#30b1 records do not expose arbitrary execution persistence.
-Callable implementation pairing, kernel-controlled persistence and queries,
-and Candidate derivation resolution remain #30b2/#30c; the deterministic
-detector engine is #30c; reference packs/examples are #30d; optional semantic
-providers are #13; held-out candidate-utility calibration is #26.
+The implemented #30b2a seam persists semantic facts through a private
+receipt-last graph: durable registry snapshot, provenance links, derivations,
+scope-partitioned private indexes, then execution receipt. Public reads require
+exact scope, page only that scope's private index, and distinguish
+committed/orphaned/invalid lineage, current versus historical registry binding,
+and current evidence health. Historical and crash-interrupted facts stay
+auditable but never become authority. Learning lenses may require exact episode
+population evidence as well as observation or measurement evidence.
+
+There is deliberately no public execution-write method. Callable detector
+pairing and orchestration remain #30c; Candidate derivation resolution remains
+#30b2b; reference packs/examples are #30d; optional semantic providers are
+#13; held-out candidate-utility calibration is #26.
 Evidence-health findings stay separate from behavioral derivations, and only
 the verified `propose` path may turn a derivation into an inert Candidate.
 

@@ -581,6 +581,38 @@ describe("LearningLensRegistration invariants", () => {
     expect(otherProject.registrationDigest).not.toBe(SUPPORT_LENS.registrationDigest);
   });
 
+  it("registers episode population evidence as a distinct digest-bound requirement", () => {
+    const { schemaVersion: _schemaVersion, registrationDigest: _registrationDigest, ...supportBase } = SUPPORT_LENS;
+    const base: Omit<LearningLensRegistration, "schemaVersion" | "registrationDigest"> = {
+      ...supportBase,
+      evidenceRequirements: [{ kind: "episode", minimumTrust: "observed", minimumCompleteness: "complete" }],
+    };
+    const episodeLens = parseLearningLensRegistration({
+      schemaVersion: 1,
+      ...base,
+      registrationDigest: learningLensRegistrationDigest(base),
+    });
+    expect(parseLearningLensRegistration(episodeLens)).toEqual(episodeLens);
+    expect(episodeLens.registrationDigest).not.toBe(SUPPORT_LENS.registrationDigest);
+    expect(episodeLens.registrationDigest).toBe("5a1558a3807aed487fd95f6e3fd0cea999d0fe0916ff39979350c23502b5da47");
+
+    const duplicateRequirements: LearningLensRegistration["evidenceRequirements"] = [
+      { kind: "episode", minimumTrust: "advisory", minimumCompleteness: "partial" },
+      { kind: "episode", minimumTrust: "observed", minimumCompleteness: "complete" },
+    ];
+    const duplicateBase = {
+      ...base,
+      evidenceRequirements: duplicateRequirements,
+    };
+    expect(() =>
+      parseLearningLensRegistration({
+        schemaVersion: 1,
+        ...duplicateBase,
+        registrationDigest: learningLensRegistrationDigest(duplicateBase),
+      }),
+    ).toThrowError(expect.objectContaining({ code: "schema.invalid" }));
+  });
+
   it("verifies objective, rubric, validation, and exact scope digests", () => {
     expect(() => parseLearningLensRegistration({ ...SUPPORT_LENS, objective: "changed" })).toThrowError(
       expect.objectContaining({ code: "schema.corrupt" }),

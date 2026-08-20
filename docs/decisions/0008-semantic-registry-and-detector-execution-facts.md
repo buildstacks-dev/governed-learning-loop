@@ -163,3 +163,10 @@ ids or asserted effects.
   synthetic host consumers. **#13** owns optional semantic-provider workflows;
   **#26** owns held-out candidate-utility calibration. None is implied by this
   record slice.
+
+## 2026-08-20 implementation amendment
+
+Decision 0009 implements the kernel-private receipt-last persistence and
+scope-partitioned typed audit reads previously deferred to #30b2a. Candidate
+derivation resolution remains #30b2b and callable detector execution remains
+#30c.

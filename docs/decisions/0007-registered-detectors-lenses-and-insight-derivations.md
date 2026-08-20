@@ -62,6 +62,10 @@ hardcoding Cormidia roles, provider traces, or one threshold catalog.
    have adjacent recomputed digests. Support,
    Documentation, Cormidia roles, and personal projects are reference data, not
    enums.
+   Decision 0009 additively widens the closed evidence-requirement kind from
+   observation/measurement to observation/measurement/episode. Episode floors
+   apply to the exact reloaded EpisodeIdentityRecord population; existing lens
+   bytes and digests are unchanged.
 7. **InsightDerivation preserves the full uncertainty chain.** It separately
    records exact scope/lens/detector/pack/population lineage, a direct
    observation with a human-readable statement and machine-readable `JsonValue`
@@ -169,3 +173,9 @@ remain duplicate-free. Scope entries recompute `scopeDigest`.
   review.
 - **Deferred to #26:** held-out candidate-utility calibration and any
   default-quality claim.
+
+## 2026-08-20 implementation amendment
+
+Decision 0009 implements the private receipt-last persistence and typed audit
+reads previously deferred to #30b, while Candidate derivation resolution stays
+deferred to #30b2b and callable detector execution stays #30c.

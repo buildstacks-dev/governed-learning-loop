@@ -27,7 +27,7 @@ import {
   verifyJsonDigest,
 } from "./semantic-shared.js";
 
-const EVIDENCE_KINDS: readonly ["observation", "measurement"] = ["observation", "measurement"];
+const EVIDENCE_KINDS: readonly ["observation", "measurement", "episode"] = ["observation", "measurement", "episode"];
 const GENERATOR_KINDS = ["deterministic", "human", "semantic_judgment"] as const;
 const OUTBOUND_DISCLOSURE_POLICIES = ["forbidden", "explicit_disclosure_receipt"] as const;
 
@@ -42,7 +42,7 @@ export interface LearningLensRegistration {
   readonly episodeClasses: EpisodeClasses;
   readonly learningClasses: readonly LearningClass[];
   readonly evidenceRequirements: readonly {
-    readonly kind: EvidenceRef["kind"];
+    readonly kind: EvidenceRef["kind"] | "episode";
     readonly minimumTrust: TrustClass;
     readonly minimumCompleteness: Completeness;
   }[];

@@ -1,8 +1,12 @@
 import type {
+  DetectorExecutionQuery,
   DetectorExecutionRecord,
+  DetectorExecutionView,
   DetectorPackManifest,
   DetectorRegistration,
   EvidenceSource,
+  InsightDerivationQuery,
+  InsightDerivationView,
   SemanticRegistryConfig,
   SourceSemanticProfile,
 } from "@cormidia/learning-loop";
@@ -114,7 +118,7 @@ test("report announces its resolved state and remains read-only when state is ab
   }
 });
 
-test("strict consumer can construct and parse a host-neutral detector registration from the public root", () => {
+test("strict consumer can construct and parse host-neutral semantic records from the public root", async () => {
   const configuration = { detector: "strict-consumer-evidence-coverage", version: 1 };
   const falsePositivePolicy = { policy: "no-behavioral-denominator" };
   const validationCriterion = { criterion: "all selected pages available" };
@@ -269,4 +273,49 @@ test("strict consumer can construct and parse a host-neutral detector registrati
     outputKind: "evidence_health",
     result: { status: "applied", conditionDetected: false },
   });
+
+  const semanticLearning = createLearningLoop({
+    store: createInMemoryStore(),
+    policy: conservativePolicy(),
+    identity: createTestIdentityPort(),
+    scopePolicy: createExactScopePolicy(),
+    contentPolicies: [],
+    sources: [],
+    queryCursorScope: "strict-semantic-consumer",
+  });
+  const derivationQuery: InsightDerivationQuery = {
+    scope: executionScope,
+    detectorIds: [registration.id],
+    registryStatuses: ["configured", "historical_unconfigured"],
+    commitStatuses: ["committed", "orphaned", "invalid"],
+    limit: 10,
+  };
+  const derivationViews: InsightDerivationView[] = [];
+  for await (const page of semanticLearning.queryInsightDerivations(derivationQuery)) {
+    derivationViews.push(...page.items);
+  }
+  expect(derivationViews).toEqual([]);
+  await expect(
+    semanticLearning.getInsightDerivation({ derivationId: `insight-${"0".repeat(64)}`, scope: executionScope }),
+  ).resolves.toBeUndefined();
+
+  const executionQuery: DetectorExecutionQuery = {
+    scope: executionScope,
+    statuses: ["applied", "not_applicable", "incomplete"],
+    conditionDetected: false,
+    registryStatuses: ["configured", "historical_unconfigured"],
+    commitStatuses: ["committed", "invalid"],
+    limit: 10,
+  };
+  const executionViews: DetectorExecutionView[] = [];
+  for await (const page of semanticLearning.queryDetectorExecutions(executionQuery)) {
+    executionViews.push(...page.items);
+  }
+  expect(executionViews).toEqual([]);
+  await expect(
+    semanticLearning.getDetectorExecution({
+      executionId: `detector-execution-${"0".repeat(64)}`,
+      scope: executionScope,
+    }),
+  ).resolves.toBeUndefined();
 });

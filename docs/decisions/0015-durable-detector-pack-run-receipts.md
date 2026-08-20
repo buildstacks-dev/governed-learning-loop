@@ -172,7 +172,8 @@ classifier into a serialized pre-write admission graph for subject grouped
 proposals. The receipt remains descriptive and non-enforcing;
 historical/manual/unbound Candidates are never auto-migrated.
 
-Reference detector contents remain #30d. Semantic/model workflows remain #13.
+Decision 0019 implements #30d's reference detector contents without requiring
+or minting a durable pack receipt. Semantic/model workflows remain #13.
 Candidate-utility calibration and every quality/improvement claim remain #26.
 Scheduling, cost/time budgets, publication, authorization, exposure and
 activation remain outside this receipt.

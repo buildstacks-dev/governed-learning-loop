@@ -1,5 +1,5 @@
 // Export ratchet: every public symbol of @cormidia/learning-loop is an
-// explicit decision. This script extracts exported names from the three
+// explicit decision. This script extracts exported names from the four
 // entrypoints and compares them with docs/public-api.txt. To change the
 // public surface, update the snapshot in the same PR and say why in the body.
 import { readFileSync } from "node:fs";
@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 const entrypoints = [
   ["root", "packages/learning-loop/src/index.ts"],
   ["node", "packages/learning-loop/src/node/index.ts"],
+  ["reference", "packages/learning-loop/src/reference-detectors/index.ts"],
   ["testing", "packages/learning-loop/src/testing/index.ts"],
 ];
 

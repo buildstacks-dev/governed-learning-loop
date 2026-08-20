@@ -215,5 +215,6 @@ the separate decision-0018 admission snapshot enforces `propose`.
   classifier result into a private snapshot/reservation/per-group-slot graph.
   This decision's receipt/view bytes remain descriptive and never become an
   entitlement. Publication, authorization, validation, utility, and efficacy
-  remain outside admission. #30d owns detector packs, #13 semantic-provider
-  workflows, and #26 Candidate-utility calibration.
+  remain outside admission. Decision 0019 implements #30d detector packs with
+  recurrence disabled and therefore no assessed frontier; #13 owns semantic-
+  provider workflows, and #26 owns detector/Candidate-utility calibration.

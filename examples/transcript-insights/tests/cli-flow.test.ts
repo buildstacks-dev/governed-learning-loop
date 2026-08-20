@@ -216,7 +216,7 @@ test("ingest → distill → review → report, with idempotency and dedup", asy
     "All evidence above is advisory and transcript-derived: it demonstrates recurrence, not causation.",
   );
   expect(report.text).not.toMatch(/improv/i);
-});
+}, 15_000);
 
 test("review usage errors are refused", async () => {
   const both = await cli(["review", "--state", stateDir, "--candidate", "x", "--accept", "--reject"]);

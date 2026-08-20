@@ -315,6 +315,7 @@ The closed admission error family is:
   record type, writer, or façade method is added at the root; the public export
   snapshot remains 154.
 - Admission does not authorize, activate, publish, review, validate, measure,
-  establish utility, or prove efficacy. Reference detector packs remain #30d,
-  semantic-provider workflows remain #13, and Candidate-utility calibration
-  remains #26.
+  establish utility, or prove efficacy. Decision 0019 implements #30d reference
+  packs with recurrence locators disabled, so their outputs do not enter this
+  admission graph. Semantic-provider workflows remain #13, and detector/
+  Candidate-utility calibration remains #26.

@@ -205,8 +205,9 @@ type CandidateRecurrenceClaim =
 - Decision 0017 implements observational Candidate/review frontier assessment
   and assessed pack receipt views. Decision 0018 separately implements
   stable-snapshot, per-group serialized proposal admission for subject grouped
-  Candidates. #30d owns detector contents, #13 provider workflows, and #26
-  Candidate-utility calibration.
+  Candidates. Decision 0019 implements #30d detector contents with recurrence
+  disabled and non-proposable structural outputs; #13 owns provider workflows,
+  and #26 owns detector/Candidate-utility calibration.
 
 The original rulings above remain the exact claim-only boundary at the time
 0016 landed. Decision 0017 is additive: it reads those claims into immutable

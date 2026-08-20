@@ -143,6 +143,7 @@ Start with one package and subpath exports:
 ├── .             domain records, validators, policy, engine, ports
 ├── node          JSON Lines/filesystem store and journal adapters
 ├── testing       in-memory stores, deterministic fixtures, conformance suites
+├── reference-detectors  opt-in deterministic core/reference pack bundle
 └── workflows     optional distiller and reviewer workflows
 ```
 
@@ -158,7 +159,10 @@ Recommended packaging properties:
 - a tested Node support range chosen from maintained releases at publication time, rather than inheriting Cormidia's Node 26 floor accidentally;
 - browser-compatible pure records and decisions where possible, with filesystem behavior confined to `/node`.
 
-Transcript adapters should begin outside the root export. Provider formats have a different release cadence and privacy risk from the governed-learning protocol.
+Reference detector contents use their own opt-in subpath so a growing
+experimental catalog does not become root protocol policy. Transcript adapters
+remain outside the root package. Provider formats have a different release
+cadence and privacy risk from the governed-learning protocol.
 
 ## Core vocabulary and records
 
@@ -1363,6 +1367,76 @@ export declare function defineDetectorImplementation(input: {
 }): RegisteredDetectorImplementation;
 ```
 
+The opt-in `@cormidia/learning-loop/reference-detectors` subpath adds exactly:
+
+```ts
+type ReferenceDetectorFamily =
+  | "coordination_attribution_integrity"
+  | "repeated_status_polling"
+  | "context_pressure_compaction"
+  | "tool_use_concentration"
+  | "coordination_fanout"
+  | "attributed_human_redirection";
+
+interface ReferenceDetectorFixtureDescriptor {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly detectorFamily: ReferenceDetectorFamily;
+  readonly control: "positive" | "negative";
+  readonly complexLegitimate: boolean;
+  readonly input: JsonValue;
+  readonly expected: { readonly conditionDetected: boolean };
+  readonly fixtureDigest: string;
+}
+
+interface ReferenceDetectorPackFragment {
+  readonly pack: DetectorPackManifest;
+  readonly detectors: readonly DetectorRegistration[];
+  readonly implementations: readonly RegisteredDetectorImplementation[];
+}
+
+interface ReferenceDetectorSourceRequirement {
+  readonly detectorId: string;
+  readonly requiredCapabilities: readonly string[];
+  readonly acceptedObservationKinds: readonly string[];
+}
+
+export interface ReferenceDetectorBundle {
+  readonly schemaVersion: 1;
+  readonly catalogVersion: "0.1.0";
+  readonly registrationNamespace: string;
+  readonly hostBindingDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly lenses: readonly LearningLensRegistration[];
+  readonly sourceRequirements: {
+    readonly observationVocabularyDigest: string;
+    readonly detectors: readonly ReferenceDetectorSourceRequirement[];
+  };
+  readonly coreStructural: ReferenceDetectorPackFragment;
+  readonly referenceOperational: ReferenceDetectorPackFragment;
+  readonly fixtures: readonly ReferenceDetectorFixtureDescriptor[];
+}
+
+export declare function createReferenceDetectorBundle(
+  input: unknown,
+): ReferenceDetectorBundle;
+```
+
+The named helper shapes above explain `ReferenceDetectorBundle`; only the
+bundle type and factory are subpath exports. The root exports none of them.
+The factory input is unknown-first exact
+`{ schemaVersion: 1, registrationNamespace, scopePolicyDigest, lenses }`.
+As with the other record parsers, unknown fields are ignored in the fresh
+output. Malformed digests, duplicate lens id/versions, foreign scope policies,
+and an empty lens set are rejected. Lens input order is canonicalized by exact
+ref. Every lens must permit deterministic generation, use observation-only
+evidence, require no runtime calibration or producer fingerprint other than
+`implementation`, and include `human_agent_interaction`,
+`mechanical_execution`, and `system_meta`.
+`registrationNamespace` is public detector/pack id material, is capped at 850
+code units so generated ids remain within protocol bounds, and must not contain
+a raw tenant, project, path, account, or other private identifier.
+
 All ids, versions, capability names, observation kinds, episode classes,
 destination values, learning classes, reason codes, and method names are
 bounded and control-free. Versions use canonical SemVer. Host learning classes
@@ -1888,15 +1962,190 @@ additionally caps aggregate receipt bytes at 64 MiB, receipt items, child refs
 and population episodes at 5,000 each, and unique group folds at 100. No digest
 helper or receipt writer is public.
 
+#### Host-bound reference detector bundles
+
+Decision 0019 implements #30d through the opt-in
+`@cormidia/learning-loop/reference-detectors` subpath. The unknown-first factory
+does not extend LearningLoop and performs no read, execution or write. It parses
+and snapshots one registration namespace, exact scope-policy digest, and exact
+purpose-lens set. `hostBindingDigest` is the SHA-256 of canonical exact
+`{ domain:"reference-detector-host-binding:v1", registrationNamespace,
+scopePolicyDigest, lenses }`, with lenses projected to sorted exact refs.
+Detector ids are
+`<namespace>.reference.<family>.<hostBindingDigest>`; pack ids use the same
+formula with family `core_structural` or `reference_operational`. All generated
+registrations and manifests use fixed catalog version `0.1.0`, and detector
+registrations have experimental maturity. A shipped code, threshold,
+configuration, vocabulary, fixture
+or policy change requires a future catalog version and exact supersession;
+changing host binding creates a parallel instance rather than a conflicting
+same-id/version record.
+
+Each implementation reparses its exact DetectorRegistration configuration and
+thresholds into a frozen callback policy. A malformed digest, family mismatch,
+missing threshold or inconsistent fixed algorithm field is
+`detector.implementation_invalid`; the callback never substitutes a hidden
+threshold.
+
+Insight registrations use exact allowlists containing the supplied lenses, and
+both packs contain those exact lens refs. A host may therefore install Support
+and Documentation as ordinary LearningLensRegistration values and obtain
+distinct lens-bound derivations over the same exact evidence without adding a
+role enum to the kernel. The returned `sourceRequirements` object is only an
+inert description of the vocabulary digest, required capabilities and accepted
+observation kinds. It is not a SourceSemanticProfile, capability grant,
+registered source, registry fragment or selection. Current transcript adapters
+do not claim the reference vocabulary capabilities.
+
+The core structural pack contains coordination-attribution integrity. The
+reference operational pack contains repeated status polling, context
+pressure/explicit compaction, tool repetition/concentration, coordination
+fan-out and attributed human redirection. Every callback reparses its targeted
+normalized data, is synchronous and bounded by the existing 5,000-evidence and
+500-episode window ceilings, and emits at most one fixed structural derivation.
+The core integrity output has
+null interpretation; operational outputs use one fixed `unknown`-confidence,
+review-required interpretation. Every output keeps impact hypothesis, Candidate
+intervention, validation and supersession null. Negative conditions emit no
+draft. All reference registrations forbid recurrence locators; neither pack can
+enter recurrence grouping or serialized recurrence admission.
+
+The exact `0.1.0` matrix is:
+
+| Family | Positive condition |
+| --- | --- |
+| Coordination attribution integrity | One delegated asserted-closed population has any broken root, missing parent, or cycle |
+| Repeated status polling | At least 4 consecutive primary `status_poll` observations remain `unchanged` for one tenant-keyed target |
+| Context pressure/explicit compaction | At least 3 consecutive primary utilization samples are at least 9,000 basis points, or at least 2 primary explicit compactions occur |
+| Tool repetition/concentration | At least 12 primary tool operations and either one tenant-keyed signature appears at least 4 times or one operation class reaches 7,500 basis points |
+| Coordination fan-out | One exact acyclic delegated closed population has at least 4 direct children and 6 total descendants |
+| Attributed human redirection | At least 2 primary human-correction turns cite exact agent-turn sequences across at least 2 episodes |
+
+The shipped positive/negative fixture matrix is exact:
+
+| Family | Positive | Negative |
+| --- | --- | --- |
+| Coordination attribution integrity | Missing-parent child in a delegated closed graph | Exact root→child graph |
+| Repeated status polling | 4 consecutive unchanged same-target polls | Longest run 2 around a changed state |
+| Context pressure/explicit compaction | 9,100/9,300/9,500 basis-point run plus 2 explicit 9,500→4,000 compactions | Interrupted high samples plus 1 compaction |
+| Tool repetition/concentration | 12 tools, 9/3 classes and 4 repeated signatures | Complex legitimate 48 successful tools, 24/12/12 classes and 48 unique signatures |
+| Coordination fan-out | 4 direct children and 6 descendants | 3 direct children and 6 descendants |
+| Attributed human redirection | 2 exact pairs across 2 episodes | Only 1 eligible primary pair; second target is replay traffic |
+
+Separate hermetic boundary controls pin polling episode/sequence gaps, both
+context OR branches and interruption, both tool OR branches and the minimum
+denominator, fan-out 4/5, redirection 2 pairs/1 episode, every excluded traffic
+class, missing/self/forward cited-target refusal, open-episode refusal,
+duplicate coordination markers, repeated-citation deduplication, and explicit-
+compaction refusal when `after >= before`.
+
+The vocabulary kinds are `reference.operation.completed.v1`,
+`reference.context.utilization.v1`, `reference.context.compaction.v1`,
+`reference.coordination.population.v1`, and `reference.interaction.turn.v1`.
+The exact per-family source requirements are:
+
+| Family | Required capabilities | Accepted kinds |
+| --- | --- | --- |
+| Coordination attribution integrity | `reference.coordination.attribution.v1`, `reference.traffic.classification.v1` | `reference.coordination.population.v1` |
+| Repeated status polling | `reference.operation.sequence.v1`, `reference.traffic.classification.v1` | `reference.operation.completed.v1` |
+| Context pressure/explicit compaction | `reference.context.pressure.v1`, `reference.traffic.classification.v1` | `reference.context.compaction.v1`, `reference.context.utilization.v1` |
+| Tool repetition/concentration | `reference.operation.sequence.v1`, `reference.traffic.classification.v1` | `reference.operation.completed.v1` |
+| Coordination fan-out | `reference.coordination.attribution.v1`, `reference.traffic.classification.v1` | `reference.coordination.population.v1` |
+| Attributed human redirection | `reference.interaction.cited-redirection.v1`, `reference.traffic.classification.v1` | `reference.interaction.turn.v1` |
+
+Operation data binds a unique nonnegative per-episode sequence, closed
+`status_poll | wait | tool | progress` intent, closed
+`unchanged | changed | succeeded | failed | unknown` state, bounded operation
+class, tenant-keyed target/signature digests and closed traffic class. Context
+utilization uses integer basis points from 0 through 10,000; explicit
+compaction binds before/after utilization basis points with `after < before`.
+Coordination population
+markers assert closedness and delegated traffic while parent lineage comes from
+exact resolved episode identities. Interaction turns bind sequence,
+`human | agent`, correction Boolean, nullable cited reply sequence and traffic
+class. The vocabulary's sorted traffic-class set is `automated`, `benchmark`,
+`delegated`, `guardian`, `primary`, `replay`, and `reviewer`.
+
+The vocabulary content identifies itself as
+`cormidia.reference-observation-vocabulary@0.1.0`; its exact digest is
+`e8f396b7b5e4bad4ee67d1737c144c92d2ca1ecf8f4f59d1835b91ef9b9dec4f`.
+It binds the schemas below. Unknown data fields are ignored in the callback's
+fresh narrowed value.
+
+| Kind | Required data | Constraints |
+| --- | --- | --- |
+| `reference.operation.completed.v1` | `sequence` nonnegative safe integer; `intent` = `progress | status_poll | tool | wait`; `state` = `changed | failed | succeeded | unchanged | unknown`; bounded control-free `operationClass`; tenant-keyed lower-case SHA-256 `targetKeyedDigest` and `signatureKeyedDigest`; closed `trafficClass` | Sequence unique per episode |
+| `reference.context.utilization.v1` | `sequence`; `utilizationBasisPoints` integer 0–10,000; closed `trafficClass` | Sequence unique per episode |
+| `reference.context.compaction.v1` | `sequence`; `beforeUtilizationBasisPoints`; `afterUtilizationBasisPoints`; closed `trafficClass` | Sequence unique per episode and `after < before` |
+| `reference.coordination.population.v1` | `closedPopulation:true`; `trafficClass:"delegated"` | Exactly one marker whose episode is the root |
+| `reference.interaction.turn.v1` | `sequence`; `actor` = `agent | human`; Boolean `correction`; nullable nonnegative `replyToSequence`; closed `trafficClass` | Sequence unique per episode; cited target earlier and in that episode |
+
+The vocabulary also binds population rule `single_source_closed_episodes`.
+Every selected episode must resolve to the one exact window source and carry
+`closedAt`; an open episode is a callback refusal, not an applied negative.
+
+Every registration has advisory minimum trust, complete minimum evidence, any
+episode class, invocation scope, null comparability/calibration, exact supplied
+lens allowlist, `insight_derivation` output, forbidden transient content and no
+recurrence signature treatment. Its exact configuration binds
+`closedEpisodePopulation:true`. It binds one exact positive and one exact
+negative fixture; the tool-concentration negative is additionally marked
+complex-legitimate.
+
+Positive direct observations use fixed text and structural data:
+
+| Family | Exact statement | Data after `family` |
+| --- | --- | --- |
+| Coordination attribution integrity | `A closed coordination population contains structurally invalid attribution lineage.` | `brokenRootCount`, `missingParentCount`, `cycleCount` |
+| Repeated status polling | `The configured consecutive unchanged status-poll condition was observed.` | `longestConsecutiveRun` |
+| Context pressure/explicit compaction | `The configured explicit context-pressure or compaction condition was observed.` | `longestHighPressureRun`, `explicitCompactions`, `maximumUtilizationBasisPoints` |
+| Tool repetition/concentration | `The configured repeated or concentrated tool-use condition was observed.` | `completedOperations`, `maximumRepeatedSignatureCount`, `dominantOperationClassBasisPoints` |
+| Coordination fan-out | `The configured coordination fan-out condition was observed in a closed attributed population.` | `directChildren`, `descendants`, `maximumDepth` |
+| Attributed human redirection | `The configured exact human-to-agent cited redirection condition was observed across distinct episodes.` | `citedPairCount`, `distinctEpisodeCount` |
+
+Every operational output has exact interpretation `This structural condition
+requires purpose-specific review before any behavioral conclusion.`, confidence
+`unknown`, and uncertainty `The condition alone does not establish harm,
+inefficiency, preference, utility, or efficacy.` The core integrity output has
+null interpretation. Every output uses exact applicability `Applies only to the
+exact normalized single-source population supplied to this execution.` and
+exclusion `No causal, quality, authority, preference, or utility conclusion is
+included.` Human redirection also
+records missing capability `interaction.cited_turn_review`, reason
+`interpretation.review_required`, effect `limits_claims`.
+
+The conditions are descriptive only. A polling count is not inefficiency;
+context pressure or explicit compaction is not harm; a tool distribution is not
+waste; fan-out is not poor coordination; and an attributed redirection signal
+is not a durable human preference. Automated, delegated, reviewer, guardian,
+benchmark and replay traffic is excluded before the human-redirection condition
+is evaluated. A complex legitimate high-tool fixture is an exact negative
+control.
+
+Unavailable source coverage deliberately stays outside the detector catalog.
+Missing, unreadable and unsupported pages have no projections or episode
+population and therefore cannot enter DetectorWindow. Their synthetic controls
+assert native SourcePageReceipt and `blocks_use` EvidenceHealthFinding values,
+distinct from a complete observed-empty page. There is no coverage detector or
+behavioral derivation for source unavailability. Positive evidence-health
+callback recovery remains outside this slice rather than being treated as
+implicitly solved.
+
+#30d supplies only L1 contract checks and L2 hermetic synthetic validation. It
+ships no L3 live-source evidence, L4 semantic/model eval, L5 operational/SLO
+evidence, or L6 longitudinal acceptance evidence. #13 owns provider-mediated
+semantic workflows and disclosure. #26 owns detector calibration, held-out
+candidate utility and every default-quality or improvement claim.
+
 Private derivation/Candidate recurrence claims are implemented by decision
 0016, observational receipt assessment by decision 0017, and serialized
 proposal admission by decision 0018. Pack receipt classifications remain
 descriptive; admission separately freezes and enforces the same pure classifier
 before a subject Candidate writes any facts. Automatic population discovery
-and scheduling/routing remain outside this receipt. Core/reference/host pack
-contents and reference consumers are #30d. Optional semantic-provider
-generation and disclosure are #13. Default-quality and candidate-utility
-claims remain #26.
+and scheduling/routing remain outside this receipt. Decision 0019 implements
+the opt-in core/reference contents; host packs remain host data. Optional
+semantic-provider generation and disclosure are #13. Default-quality and
+candidate-utility claims remain #26.
 
 #### Private derivation and Candidate recurrence claims
 
@@ -4329,6 +4578,25 @@ The core suite should prove at least:
   windows invoke no callback and never become applied false, zero, or pass;
 - callback drafts cannot mint lifecycle status, scope, EvidenceRefs, trust,
   producer attribution, ids, digests, Candidates, or authority;
+- the reference-detector factory is unknown-first, snapshots exact host binding,
+  is stable under exact replay, changes every host-bound detector/pack id and
+  registration/manifest digest for a changed namespace/scope/lens binding while
+  retaining catalog-semantic digests, and exports no profile, registry or
+  selection;
+- every reference registration resolves its pinned positive and negative
+  fixture digests, emits at most one fixed non-proposable structural derivation,
+  carries no recurrence locator, and performs no provider, Candidate, Review or
+  effect operation;
+- literal `0.1.0` vectors pin reference host-binding/vocabulary,
+  registration/pack/fixture and positive derivation/execution identities, and a
+  changed vector requires a catalog version bump;
+- reference cases keep two project scopes isolated, treat an explicit
+  cross-project craft population separately, produce distinct Support and
+  Documentation lens derivations, exclude non-human traffic before attributed
+  redirection, and keep a complex legitimate high-tool case negative;
+- missing, unreadable and unsupported reference pages remain native
+  `blocks_use` source-health findings, distinct from complete observed-empty,
+  and invoke no reference detector;
 - detector-pack input rejects foreign packs, non-canonical episode ids, and
   more than 5,000 exact detector/lens combinations before callback invocation;
 - detector-pack fan-out uses protocol code-unit ordering, reports every bounded
@@ -4466,6 +4734,10 @@ The first release should expose no more than:
 - one structured error and diagnostic model;
 - the `/node` adapters actually supported;
 - testing builders and conformance runners.
+
+Decision 0019 keeps that root budget at 154 symbols and adds exactly two names
+on the opt-in `/reference-detectors` subpath: `ReferenceDetectorBundle` and
+`createReferenceDetectorBundle`. The all-entrypoint snapshot is therefore 156.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 

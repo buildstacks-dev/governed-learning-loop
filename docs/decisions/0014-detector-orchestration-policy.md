@@ -124,11 +124,12 @@ separate stable-snapshot/per-group-slot admission graph. It never infers claims
 for historical/manual/unbound Candidates, and the policy record itself remains
 non-enforcing.
 
-Reference detector contents remain #30d. Optional semantic/model workflows
-remain #13. Candidate-utility calibration and every quality or improvement
-claim remain #26. Scheduling, provider routing, cost/time budgets,
-publication, authorization, exposure, and activation remain outside this
-policy.
+Decision 0019 implements #30d's reference detector contents without installing
+an orchestration policy or granting admission authority. Optional
+semantic/model workflows remain #13. Candidate-utility calibration and every
+quality or improvement claim remain #26. Scheduling, provider routing,
+cost/time budgets, publication, authorization, exposure, and activation remain
+outside this policy.
 
 ## Migration consequences
 

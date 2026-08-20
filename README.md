@@ -34,6 +34,7 @@ the issue backlog and are orthogonal capabilities, not implied by the first two.
 ├── .          domain records, unknown-first parsers, deterministic engine, ports
 ├── /node      local filesystem (JSON Lines) store adapters
 ├── /testing   in-memory stores, deterministic clocks/ids, builders, conformance suites
+├── /reference-detectors  opt-in host-bound deterministic pack bundle
 └── adapters/  transcript source adapters (Claude Code, Codex) — explicit input only
 ```
 
@@ -211,8 +212,25 @@ writers remain non-subject and can bypass the stream. Candidate evidence checks
 also retain the documented global revision/source-receipt scan debt, so the
 library still does not claim completely scope-local assessment work.
 
-Reference packs/examples are #30d; optional semantic providers are #13;
-held-out candidate-utility calibration is #26.
+#30d adds the opt-in `/reference-detectors` subpath. Its unknown-first factory
+content-addresses one exact host namespace, scope policy and sorted purpose-lens
+set into host-bound ids for experimental detector registrations and pack
+manifests at catalog version `0.1.0`. The returned bundle
+contains a core coordination-attribution integrity detector plus operational
+polling, context-pressure/explicit-compaction, tool-concentration,
+coordination-fan-out and attributed-redirection detectors. Source requirements
+are inert descriptions, not SourceSemanticProfiles or capability grants; the
+current transcript adapters do not claim them. Positive callbacks emit at most
+one fixed structural derivation with no recurrence locator and null
+intervention/validation. They create no Candidate, Review, provider call or
+effect and claim no harm, inefficiency, preference, utility or efficacy.
+
+Missing, unreadable and unsupported evidence stays in the native
+SourcePageReceipt/EvidenceHealthFinding path because unavailable pages have no
+episode population for a DetectorWindow. The shipped reference cases are L1
+contract plus L2 hermetic controls only. Optional semantic providers remain
+#13; held-out detector/candidate-utility calibration and every default-quality
+claim remain #26.
 Evidence-health findings stay separate from behavioral derivations, and only
 the verified `propose` path may turn a derivation into an inert Candidate.
 

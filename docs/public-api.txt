@@ -143,6 +143,8 @@ root:LearningLoopConfig
 root:createLearningLoop
 node:FileStoreOptions
 node:createFileStore
+reference:ReferenceDetectorBundle
+reference:createReferenceDetectorBundle
 testing:createInMemoryStore
 testing:FixedClock
 testing:createFixedClock

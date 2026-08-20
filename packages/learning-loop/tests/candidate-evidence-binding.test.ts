@@ -92,8 +92,9 @@ async function overwriteRecord(
 function snapshotChangingStore(
   base: LearningStore,
   mode: "once" | "always",
-): { readonly store: LearningStore; readonly mutationCount: () => number } {
+): { readonly store: LearningStore; readonly enable: () => void; readonly mutationCount: () => number } {
   let mutations = 0;
+  let active = false;
   const store: LearningStore = {
     get: (key) => base.get(key),
     create: (key, value, digest, operationId) => base.create(key, value, digest, operationId),
@@ -104,7 +105,12 @@ function snapshotChangingStore(
     tombstone: (input) => base.tombstone(input),
     list: async (query) => {
       const page = await base.list(query);
-      if (query.kind === "source-page-receipt" && query.limit === 100 && (mode === "always" || mutations === 0)) {
+      if (
+        active &&
+        query.kind === "source-page-receipt" &&
+        query.limit === 100 &&
+        (mode === "always" || mutations === 0)
+      ) {
         const finding = buildHealthFinding({
           code: "source.partial",
           effect: "limits_claims",
@@ -128,7 +134,7 @@ function snapshotChangingStore(
       return page;
     },
   };
-  return { store, mutationCount: () => mutations };
+  return { store, enable: () => (active = true), mutationCount: () => mutations };
 }
 
 function page(input: {
@@ -559,22 +565,50 @@ describe("Candidate-v2 exact evidence binding", () => {
     await expectNoCandidateWrites(store, "blocks-use-candidate");
   });
 
-  it("refuses measurement evidence until #31c ownership rules land", async () => {
-    const { learning, store, proposer } = await createCandidateHarness();
-    await expect(
-      learning.propose(
-        candidateInput(proposer, {
-          id: "measurement-candidate",
-          evidenceIds: ["manual-evidence/measure-42-typecheck"],
-        }),
-      ),
-    ).rejects.toMatchObject({ code: "candidate.evidence_invalid" });
-    await expectNoCandidateWrites(store, "measurement-candidate");
+  it("accepts a measurement only through its latest qualified outcome and exact supporting observations", async () => {
+    const { learning, proposer } = await createCandidateHarness();
+    const outcome = await learning.propose(
+      candidateInput(proposer, {
+        id: "measurement-candidate",
+        evidenceIds: ["manual-evidence/measure-42-typecheck"],
+      }),
+    );
+    const reference = outcome.candidate.evidenceRefs[0];
+    expect(reference).toMatchObject({
+      schemaVersion: 2,
+      kind: "measurement",
+      recordId: "manual-evidence/measure-42-typecheck",
+      completeness: "complete",
+    });
+    if (reference?.schemaVersion !== 2) throw new Error("expected qualified measurement evidence");
+    expect(reference.supportingEvidenceRefs.map((support) => support.recordId)).toEqual([
+      "manual-evidence/obs-42-typecheck",
+    ]);
+    expect(outcome.evidenceHealth.status).toBe("ready");
   });
 
   it("retries one composite evidence snapshot change and commits only the stable result", async () => {
     const changing = snapshotChangingStore(createInMemoryStore(), "once");
-    const { learning, proposer } = await createCandidateHarness([], { store: changing.store });
+    const { learning, manual, proposer } = await createHarness([], { store: changing.store });
+    await learning.ingest(manual, {
+      observations: [
+        {
+          id: "obs-42-typecheck",
+          episodeId: "change-42",
+          kind: "tool.process.completed",
+          data: { exitCode: 1 },
+        },
+      ],
+      episodes: [
+        {
+          id: "change-42",
+          scope: SCOPE,
+          openedAt: "2026-08-12T16:00:00.000Z",
+          closedAt: "2026-08-12T16:12:00.000Z",
+        },
+      ],
+    });
+    changing.enable();
 
     const outcome = await learning.propose(candidateInput(proposer, { id: "snapshot-retry-candidate" }));
     expect(changing.mutationCount()).toBe(1);
@@ -586,7 +620,26 @@ describe("Candidate-v2 exact evidence binding", () => {
 
   it("fails after three unstable evidence snapshots without writing a candidate or digest index", async () => {
     const changing = snapshotChangingStore(createInMemoryStore(), "always");
-    const { learning, store, proposer } = await createCandidateHarness([], { store: changing.store });
+    const { learning, store, manual, proposer } = await createHarness([], { store: changing.store });
+    await learning.ingest(manual, {
+      observations: [
+        {
+          id: "obs-42-typecheck",
+          episodeId: "change-42",
+          kind: "tool.process.completed",
+          data: { exitCode: 1 },
+        },
+      ],
+      episodes: [
+        {
+          id: "change-42",
+          scope: SCOPE,
+          openedAt: "2026-08-12T16:00:00.000Z",
+          closedAt: "2026-08-12T16:12:00.000Z",
+        },
+      ],
+    });
+    changing.enable();
 
     await expect(learning.propose(candidateInput(proposer, { id: "snapshot-never-stable" }))).rejects.toMatchObject({
       code: "evidence.snapshot_changed",

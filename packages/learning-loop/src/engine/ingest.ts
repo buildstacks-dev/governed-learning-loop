@@ -5,14 +5,22 @@
 // same input is idempotent: existing identical records are `exists_same` and
 // not net-new; a same-id/different-digest record is a diagnostic, never an
 // overwrite.
+import { canonicalJsonText } from "../canonical/canonical-json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
 import type { JsonValue } from "../canonical/json.js";
 import type { Diagnostic } from "../diagnostics.js";
 import { LearningLoopError } from "../diagnostics.js";
-import { parseArrayOf, parseJson, parseNonEmptyText, readFields } from "../parse/toolkit.js";
-import type { EvidenceSource, ProjectedEpisode, ProjectedObservation, RegisteredSource } from "../ports/evidence.js";
-import type { EpisodeRecord, MeasurementRecord } from "../records/episode.js";
-import { parseEpisodeRecord, parseMeasurementRecord } from "../records/episode.js";
+import { invalid, parseArrayOf, parseJson, parseNonEmptyText, parseScalar, readFields } from "../parse/toolkit.js";
+import type {
+  EvidenceSource,
+  ProjectedEpisode,
+  ProjectedMeasurement,
+  ProjectedObservation,
+  RegisteredSource,
+} from "../ports/evidence.js";
+import type { EpisodeRecord, MeasurementRecord, MetricDefinition } from "../records/episode.js";
+import { parseEpisodeRecord, parseMeasurementRecord, parseMetricDefinition } from "../records/episode.js";
+import type { MeasurementEvidenceRefV2 } from "../records/evidence-ref.js";
 import type { Observation } from "../records/observation.js";
 import { parseObservation } from "../records/observation.js";
 import type { Completeness, ContentPolicy, Provenance } from "../records/provenance.js";
@@ -22,9 +30,27 @@ import type {
   SourcePageReceipt,
   SourcePageState,
 } from "../records/source-health.js";
+import { parseSourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
-import { conflictDiagnostic, createOnly, derivedRecordId, errorDiagnostics, recordDigest } from "./context.js";
-import { episodeIdentityRecord, parseEpisodeIdentityRecord, persistEpisodeIdentity } from "./episode-identity.js";
+import {
+  conflictDiagnostic,
+  createOnly,
+  derivedRecordId,
+  errorDiagnostics,
+  iterateRecordPages,
+  loadStoredRecord,
+  recordDigest,
+} from "./context.js";
+import type { DerivativePageOwner } from "./derivative-owner.js";
+import { claimDerivativePage } from "./derivative-owner.js";
+import {
+  episodeIdentityRecord,
+  loadEpisodeIdentityState,
+  parseEpisodeIdentityRecord,
+  persistEpisodeIdentity,
+} from "./episode-identity.js";
+import { buildEpisodeOutcomeClaim, persistEpisodeOutcomeClaim } from "./episode-outcome.js";
+import { resolveOutcomeMeasurementEvidence } from "./evidence-binding.js";
 import {
   parseEvidencePageEnvelope,
   parseDiagnosticAt,
@@ -118,8 +144,144 @@ interface PageTally {
   readonly derivatives: Array<SourcePageReceipt["derivatives"][number]>;
   readonly derivativeKeys: Set<string>;
   readonly healthFindings: EvidenceHealthFinding[];
+  readonly committedReceiptsByDerivative: ReadonlyMap<string, readonly SourcePageReceipt[]>;
+  readonly pageOwner: DerivativePageOwner;
   rejected: number;
+  reused: number;
   contentPolicyRefused: number;
+  ownershipMismatch: number;
+}
+
+interface PendingOutcome {
+  readonly episodeRecordId: string;
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly sourceRef: string;
+  readonly sourceRevision: string;
+  readonly episodeId: string;
+  readonly scope: EpisodeRecord["scope"];
+  readonly status: NonNullable<EpisodeRecord["outcome"]>["status"];
+  readonly measurementIds: readonly string[];
+}
+
+interface IngestedEpisode {
+  readonly episodeRecordId: string;
+  readonly episodeRecordDigest: string;
+  readonly episodeId: string;
+  readonly scope: EpisodeRecord["scope"];
+  readonly pendingOutcome?: PendingOutcome;
+}
+
+function derivativeKey(derivative: SourcePageReceipt["derivatives"][number]): string {
+  return canonicalJsonText([derivative.kind, derivative.id, derivative.digest]);
+}
+
+async function loadCommittedDerivativeIndex(
+  context: EngineContext,
+): Promise<ReadonlyMap<string, readonly SourcePageReceipt[]>> {
+  const receiptsByDerivative = new Map<string, SourcePageReceipt[]>();
+  for await (const page of iterateRecordPages(context.store, "source-page-receipt", { limit: 100 })) {
+    for (const stored of page.records) {
+      const receipt = parseSourcePageReceipt(stored.value);
+      if (receipt.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored source page receipt id does not match its key", ["id"]);
+      }
+      for (const derivative of receipt.derivatives) {
+        const key = derivativeKey(derivative);
+        const receipts = receiptsByDerivative.get(key) ?? [];
+        if (!receipts.some((candidate) => candidate.id === receipt.id)) receipts.push(receipt);
+        receiptsByDerivative.set(key, receipts);
+      }
+    }
+  }
+  return receiptsByDerivative;
+}
+
+async function claimPageForDerivative(
+  context: EngineContext,
+  pageTally: PageTally,
+  derivative: SourcePageReceipt["derivatives"][number],
+): Promise<"owned" | "reused"> {
+  const key = derivativeKey(derivative);
+  const receipts = pageTally.committedReceiptsByDerivative.get(key) ?? [];
+  if (receipts.length > 1) {
+    throw invalid("store.corrupt", "a durable derivative belongs to more than one committed source page", [
+      "derivatives",
+    ]);
+  }
+  return claimDerivativePage(context, derivative, pageTally.pageOwner, receipts[0]);
+}
+
+function recordAcceptedDerivative(
+  pageTally: PageTally,
+  derivative: SourcePageReceipt["derivatives"][number],
+  disposition: "owned" | "reused",
+): void {
+  if (disposition === "owned") {
+    pageTally.derivatives.push(derivative);
+  } else {
+    pageTally.reused += 1;
+  }
+}
+
+function hasOwnedCommittedOrPendingDerivative(
+  pageTally: PageTally,
+  derivative: SourcePageReceipt["derivatives"][number],
+  registration: RegisteredSource<unknown>,
+  sourceRef: string,
+  sourceRevision: string,
+): boolean {
+  const key = derivativeKey(derivative);
+  if (pageTally.derivatives.some((candidate) => derivativeKey(candidate) === key)) return true;
+  const receipts = pageTally.committedReceiptsByDerivative.get(key) ?? [];
+  if (receipts.length !== 1) return false;
+  const receipt = receipts[0];
+  return (
+    receipt !== undefined &&
+    receipt.sourceId === registration.id &&
+    receipt.sourceRegistrationRevision === registration.registryRevision &&
+    receipt.sourceRef === sourceRef &&
+    receipt.state.status === "available" &&
+    receipt.state.sourceRevision === sourceRevision
+  );
+}
+
+async function findOwnedEpisode(
+  context: EngineContext,
+  registration: RegisteredSource<unknown>,
+  episodeId: string,
+): Promise<IngestedEpisode | undefined> {
+  const matches = new Map<string, IngestedEpisode>();
+  for await (const page of iterateRecordPages(context.store, "episode", { limit: 100 })) {
+    for (const stored of page.records) {
+      const episode = parseEpisodeRecord(stored.value);
+      if (episode.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored episode id does not match its key", ["id"]);
+      }
+      const identity = await loadEpisodeIdentityState(context, episode.id);
+      if (
+        identity.status !== "resolved" ||
+        identity.identity.sourceId !== registration.id ||
+        identity.identity.registryRevision !== registration.registryRevision ||
+        identity.identity.episodeId !== episodeId ||
+        !episode.sourceRefs.includes(registration.id)
+      ) {
+        continue;
+      }
+      matches.set(episode.id, {
+        episodeRecordId: episode.id,
+        episodeRecordDigest: stored.digest,
+        episodeId,
+        scope: episode.scope,
+      });
+    }
+  }
+  if (matches.size > 1) {
+    throw invalid("evidence.ownership_mismatch", "logical episode resolves to more than one durable episode", [
+      "episodeId",
+    ]);
+  }
+  return matches.values().next().value;
 }
 
 function reserveDerivative(
@@ -204,6 +366,8 @@ async function ingestObservation(
   };
   const parsed = parseObservation(record);
   const digest = recordDigest(toJsonValue(parsed));
+  const derivative = { kind: "observation" as const, id, digest };
+  const disposition = await claimPageForDerivative(context, pageTally, derivative);
   const status = await createOnly(context, "observation", id, parsed, operationId);
   if (status === "created") tally.observationIds.push(id);
   else if (status === "exists_same") tally.duplicates += 1;
@@ -212,17 +376,189 @@ async function ingestObservation(
     pageTally.rejected += 1;
     return;
   }
-  pageTally.derivatives.push({ kind: "observation", id, digest });
+  recordAcceptedDerivative(pageTally, derivative, disposition);
+}
+
+function parseAcceptedMeasurementContent(input: unknown): {
+  readonly metric: MetricDefinition;
+  readonly value: MeasurementRecord["value"];
+} {
+  const fields = readFields(input, ["contentPolicyResult", "accepted"]);
+  return {
+    metric: fields.req("metric", (value) => parseMetricDefinition(value)),
+    value: fields.req("value", parseScalar),
+  };
+}
+
+async function ingestMeasurement(
+  context: EngineContext,
+  registration: RegisteredSource<unknown>,
+  adapter: EvidenceSource<unknown>,
+  contentPolicy: ContentPolicy,
+  projected: ProjectedMeasurement,
+  sourceRef: string,
+  sourceRevision: string,
+  operationId: string,
+  tally: IngestTally,
+  pageTally: PageTally,
+): Promise<void> {
+  if (projected.evidenceSourceRecordIds.length === 0) {
+    throw invalid("evidence.ownership_mismatch", "measurement requires at least one cited observation", [
+      "evidenceSourceRecordIds",
+    ]);
+  }
+  const episode = await findOwnedEpisode(context, registration, projected.episodeId);
+  if (
+    episode === undefined ||
+    !hasOwnedCommittedOrPendingDerivative(
+      pageTally,
+      { kind: "episode", id: episode.episodeRecordId, digest: episode.episodeRecordDigest },
+      registration,
+      sourceRef,
+      sourceRevision,
+    )
+  ) {
+    throw invalid("evidence.ownership_mismatch", "measurement does not belong to one committed source episode", [
+      "episodeId",
+    ]);
+  }
+
+  const evidenceIds: string[] = [];
+  const completeness: Completeness[] = [];
+  const seen = new Set<string>();
+  for (const [index, sourceRecordId] of projected.evidenceSourceRecordIds.entries()) {
+    const id = derivedRecordId(registration.id, sourceRecordId);
+    if (seen.has(id)) {
+      throw invalid("evidence.ownership_mismatch", "measurement cited the same observation more than once", [
+        "evidenceSourceRecordIds",
+        index,
+      ]);
+    }
+    seen.add(id);
+    const stored = await loadStoredRecord(context, "observation", id);
+    if (stored === undefined) {
+      throw invalid("evidence.ownership_mismatch", "measurement cited observation is missing", [
+        "evidenceSourceRecordIds",
+        index,
+      ]);
+    }
+    const observation = parseObservation(stored.value);
+    const derivative = { kind: "observation" as const, id, digest: stored.digest };
+    if (
+      observation.id !== id ||
+      observation.episodeId !== projected.episodeId ||
+      observation.provenance.sourceId !== registration.id ||
+      observation.provenance.adapterVersion !== adapter.descriptor.adapterVersion ||
+      observation.provenance.sourceRef !== sourceRef ||
+      observation.provenance.sourceRevision !== sourceRevision ||
+      observation.provenance.recordRef !== sourceRecordId ||
+      observation.provenance.trust !== registration.trustCeiling ||
+      !hasOwnedCommittedOrPendingDerivative(pageTally, derivative, registration, sourceRef, sourceRevision)
+    ) {
+      throw invalid("evidence.ownership_mismatch", "measurement cited observation has foreign ownership", [
+        "evidenceSourceRecordIds",
+        index,
+      ]);
+    }
+    evidenceIds.push(id);
+    completeness.push(observation.provenance.completeness);
+  }
+
+  const rawTransformed: unknown = await contentPolicy.transform({ metric: projected.metric, value: projected.value });
+  const transformed = parseContentPolicyResult(rawTransformed);
+  pageTally.diagnostics.push(...transformed.diagnostics);
+  if (transformed.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+    pageTally.contentPolicyRefused += 1;
+    throw invalid("policy.blocked", "content policy refused measurement content", ["measurement"]);
+  }
+  const accepted = parseAcceptedMeasurementContent(transformed.accepted);
+  const id = derivedRecordId(registration.id, projected.sourceRecordId);
+  const record: MeasurementRecord = {
+    schemaVersion: 1,
+    id,
+    episodeId: projected.episodeId,
+    metric: accepted.metric,
+    value: accepted.value,
+    evidenceIds,
+    ...(projected.measuredAt !== undefined ? { measuredAt: projected.measuredAt } : {}),
+    provenance: provenanceFor(
+      registration,
+      adapter,
+      sourceRef,
+      sourceRevision,
+      projected.sourceRecordId,
+      recordDigest({ metric: { ...accepted.metric }, value: accepted.value }),
+      foldCompleteness(completeness, "unknown"),
+    ),
+  };
+  const parsed = parseMeasurementRecord(record);
+  const digest = recordDigest(toJsonValue(parsed));
+  const derivative = { kind: "measurement" as const, id, digest };
+  const disposition = await claimPageForDerivative(context, pageTally, derivative);
+  const status = await createOnly(context, "measurement", id, parsed, operationId);
+  if (status === "created") tally.measurementIds.push(id);
+  else if (status === "exists_same") tally.duplicates += 1;
+  else {
+    pageTally.diagnostics.push(conflictDiagnostic("measurement", id));
+    pageTally.rejected += 1;
+    return;
+  }
+  recordAcceptedDerivative(pageTally, derivative, disposition);
+}
+
+async function validatePendingOutcomeMeasurements(
+  context: EngineContext,
+  registration: RegisteredSource<unknown>,
+  pending: PendingOutcome,
+  pageTally: PageTally,
+): Promise<void> {
+  const seen = new Set<string>();
+  for (const [index, id] of pending.measurementIds.entries()) {
+    if (seen.has(id)) {
+      throw invalid("evidence.ownership_mismatch", "episode outcome repeated one measurement", [
+        "measurementIds",
+        index,
+      ]);
+    }
+    seen.add(id);
+    const stored = await loadStoredRecord(context, "measurement", id);
+    if (stored === undefined) {
+      throw invalid("evidence.ownership_mismatch", "episode outcome measurement is missing", ["measurementIds", index]);
+    }
+    const measurement = parseMeasurementRecord(stored.value);
+    if (
+      measurement.id !== id ||
+      measurement.episodeId !== pending.episodeId ||
+      measurement.provenance.sourceId !== registration.id ||
+      measurement.provenance.sourceRef !== pending.sourceRef ||
+      measurement.provenance.sourceRevision !== pending.sourceRevision ||
+      measurement.provenance.trust !== registration.trustCeiling ||
+      !hasOwnedCommittedOrPendingDerivative(
+        pageTally,
+        { kind: "measurement", id, digest: stored.digest },
+        registration,
+        pending.sourceRef,
+        pending.sourceRevision,
+      )
+    ) {
+      throw invalid("evidence.ownership_mismatch", "episode outcome measurement has foreign ownership", [
+        "measurementIds",
+        index,
+      ]);
+    }
+  }
 }
 
 async function ingestEpisode(
   context: EngineContext,
   registration: RegisteredSource<unknown>,
   projected: ProjectedEpisode,
+  sourceRef: string,
+  sourceRevision: string,
   operationId: string,
   tally: IngestTally,
   pageTally: PageTally,
-): Promise<void> {
+): Promise<IngestedEpisode | undefined> {
   const scope = context.scopePolicy.validate(projected.scope);
   const id = derivedRecordId(registration.id, projected.sourceRecordId);
   const record: EpisodeRecord = {
@@ -232,25 +568,48 @@ async function ingestEpisode(
     openedAt: projected.openedAt,
     ...(projected.closedAt !== undefined ? { closedAt: projected.closedAt } : {}),
     sourceRefs: [registration.id],
-    ...(projected.status !== undefined
-      ? {
-          outcome: {
-            status: projected.status,
-            measurementIds: projected.measurementSourceRecordIds.map((ref) => derivedRecordId(registration.id, ref)),
-          },
-        }
-      : {}),
     exposureIds: [],
   };
-  const parsed = parseEpisodeRecord(record);
-  const digest = recordDigest(toJsonValue(parsed));
-  const status = await createOnly(context, "episode", id, parsed, operationId);
+  const parsedBase = parseEpisodeRecord(record);
+  let digest = recordDigest(toJsonValue(parsedBase));
+  let status: "created" | "exists_same" | "conflict";
+  const stored = await loadStoredRecord(context, "episode", id);
+  if (stored === undefined) {
+    status = "created";
+  } else {
+    const existing = parseEpisodeRecord(stored.value);
+    if (existing.id !== id) throw invalid("store.corrupt", "stored episode id does not match its key", ["id"]);
+    const withoutOutcome = (episode: EpisodeRecord): JsonValue =>
+      toJsonValue({
+        schemaVersion: episode.schemaVersion,
+        id: episode.id,
+        scope: episode.scope,
+        openedAt: episode.openedAt,
+        ...(episode.closedAt !== undefined ? { closedAt: episode.closedAt } : {}),
+        sourceRefs: episode.sourceRefs,
+        ...(episode.fingerprintId !== undefined ? { fingerprintId: episode.fingerprintId } : {}),
+        exposureIds: episode.exposureIds,
+      });
+    status =
+      canonicalJsonText(withoutOutcome(existing)) === canonicalJsonText(withoutOutcome(parsedBase))
+        ? "exists_same"
+        : "conflict";
+    digest = stored.digest;
+  }
+  if (status === "conflict") {
+    pageTally.diagnostics.push(conflictDiagnostic("episode", id));
+    pageTally.rejected += 1;
+    return undefined;
+  }
+  const derivative = { kind: "episode" as const, id, digest };
+  const disposition = await claimPageForDerivative(context, pageTally, derivative);
+  if (stored === undefined) status = await createOnly(context, "episode", id, parsedBase, operationId);
   if (status === "created") tally.episodeIds.push(id);
   else if (status === "exists_same") tally.duplicates += 1;
   else {
     pageTally.diagnostics.push(conflictDiagnostic("episode", id));
     pageTally.rejected += 1;
-    return;
+    return undefined;
   }
 
   // The projection's logical episodeId is a join key for observations, while
@@ -267,9 +626,30 @@ async function ingestEpisode(
       details: { episodeRecordId: id },
     });
     pageTally.rejected += 1;
-    return;
+    return undefined;
   }
-  pageTally.derivatives.push({ kind: "episode", id, digest });
+  recordAcceptedDerivative(pageTally, derivative, disposition);
+  const pendingOutcome: PendingOutcome | undefined =
+    projected.status === undefined
+      ? undefined
+      : {
+          episodeRecordId: id,
+          sourceId: registration.id,
+          sourceRegistrationRevision: registration.registryRevision,
+          sourceRef,
+          sourceRevision,
+          episodeId: projected.episodeId,
+          scope,
+          status: projected.status,
+          measurementIds: projected.measurementSourceRecordIds.map((ref) => derivedRecordId(registration.id, ref)),
+        };
+  return {
+    episodeRecordId: id,
+    episodeRecordDigest: digest,
+    episodeId: projected.episodeId,
+    scope,
+    ...(pendingOutcome !== undefined ? { pendingOutcome } : {}),
+  };
 }
 
 function queuePageHealthFinding(
@@ -346,13 +726,27 @@ export async function runIngest(
   for await (const rawPage of adapter.read(sourceInput, options?.cursor)) {
     const pagePath = ["pages", pageIndex] as const;
     const page = parseEvidencePageEnvelope(rawPage, pagePath);
+    const committed = await loadCommittedDerivativeIndex(context);
     const pageTally: PageTally = {
       diagnostics: [...page.diagnostics],
       derivatives: [],
       derivativeKeys: new Set(),
       healthFindings: [],
+      committedReceiptsByDerivative: committed,
+      pageOwner: {
+        sourceId: registration.id,
+        sourceRegistrationRevision: registration.registryRevision,
+        contentPolicyId: contentPolicy.id,
+        contentPolicyDigest: contentPolicy.digest,
+        loopRegistryRevision: context.registryRevision,
+        sourceRef: page.sourceRef,
+        pageRef: page.pageRef,
+        state: page.state,
+      },
       rejected: 0,
+      reused: 0,
       contentPolicyRefused: 0,
+      ownershipMismatch: 0,
     };
     const pageCompleteness = completenessOfState(page.state);
     tally.pageCompleteness.push(pageCompleteness);
@@ -422,7 +816,33 @@ export async function runIngest(
       });
     }
 
+    const pendingOutcomes: PendingOutcome[] = [];
+    const validatedOutcomes: PendingOutcome[] = [];
     if (acceptDerivatives && page.state.status === "available") {
+      for (const [index, raw] of page.episodes.entries()) {
+        try {
+          const projected = parseProjectedEpisodeAt(raw, [...pagePath, "episodes", index]);
+          const id = derivedRecordId(registration.id, projected.sourceRecordId);
+          if (!reserveDerivative(pageTally, "episode", id, [...pagePath, "episodes", index])) continue;
+          const operationId = `${attemptId}/pages/${pageIndex}/episodes/${projected.sourceRecordId}`;
+          const ingestedEpisode = await ingestEpisode(
+            context,
+            registration,
+            projected,
+            page.sourceRef,
+            page.state.sourceRevision,
+            operationId,
+            tally,
+            pageTally,
+          );
+          if (ingestedEpisode !== undefined) {
+            if (ingestedEpisode.pendingOutcome !== undefined) pendingOutcomes.push(ingestedEpisode.pendingOutcome);
+          }
+        } catch (error) {
+          pageTally.diagnostics.push(...errorDiagnostics(error));
+          pageTally.rejected += 1;
+        }
+      }
       for (const [index, raw] of page.observations.entries()) {
         try {
           const projected = parseProjectedObservationAt(raw, [...pagePath, "observations", index]);
@@ -447,59 +867,41 @@ export async function runIngest(
         }
       }
 
-      // Full cited-evidence completeness lands in #31c. This interim value is
-      // page-local, so unrelated pages can no longer change it.
-      const pageFold = page.state.completeness;
       for (const [index, raw] of page.measurements.entries()) {
         try {
           const projected = parseProjectedMeasurementAt(raw, [...pagePath, "measurements", index]);
           const id = derivedRecordId(registration.id, projected.sourceRecordId);
           if (!reserveDerivative(pageTally, "measurement", id, [...pagePath, "measurements", index])) continue;
-          const record: MeasurementRecord = {
-            schemaVersion: 1,
-            id,
-            episodeId: projected.episodeId,
-            metric: projected.metric,
-            value: projected.value,
-            evidenceIds: projected.evidenceSourceRecordIds.map((ref) => derivedRecordId(registration.id, ref)),
-            ...(projected.measuredAt !== undefined ? { measuredAt: projected.measuredAt } : {}),
-            provenance: provenanceFor(
-              registration,
-              adapter,
-              page.sourceRef,
-              page.state.sourceRevision,
-              projected.sourceRecordId,
-              recordDigest({ metric: { ...projected.metric }, value: projected.value }),
-              pageFold,
-            ),
-          };
-          const parsed = parseMeasurementRecord(record);
-          const digest = recordDigest(toJsonValue(parsed));
           const operationId = `${attemptId}/pages/${pageIndex}/measurements/${projected.sourceRecordId}`;
-          const status = await createOnly(context, "measurement", id, parsed, operationId);
-          if (status === "created") tally.measurementIds.push(id);
-          else if (status === "exists_same") tally.duplicates += 1;
-          else {
-            pageTally.diagnostics.push(conflictDiagnostic("measurement", id));
-            pageTally.rejected += 1;
-            continue;
-          }
-          pageTally.derivatives.push({ kind: "measurement", id, digest });
+          await ingestMeasurement(
+            context,
+            registration,
+            adapter,
+            contentPolicy,
+            projected,
+            page.sourceRef,
+            page.state.sourceRevision,
+            operationId,
+            tally,
+            pageTally,
+          );
         } catch (error) {
+          if (error instanceof LearningLoopError && error.code === "evidence.ownership_mismatch") {
+            pageTally.ownershipMismatch += 1;
+          }
           pageTally.diagnostics.push(...errorDiagnostics(error));
           pageTally.rejected += 1;
         }
       }
-      for (const [index, raw] of page.episodes.entries()) {
+      for (const pending of pendingOutcomes) {
         try {
-          const projected = parseProjectedEpisodeAt(raw, [...pagePath, "episodes", index]);
-          const id = derivedRecordId(registration.id, projected.sourceRecordId);
-          if (!reserveDerivative(pageTally, "episode", id, [...pagePath, "episodes", index])) continue;
-          const operationId = `${attemptId}/pages/${pageIndex}/episodes/${projected.sourceRecordId}`;
-          await ingestEpisode(context, registration, projected, operationId, tally, pageTally);
+          await validatePendingOutcomeMeasurements(context, registration, pending, pageTally);
+          validatedOutcomes.push(pending);
         } catch (error) {
+          if (error instanceof LearningLoopError && error.code === "evidence.ownership_mismatch") {
+            pageTally.ownershipMismatch += 1;
+          }
           pageTally.diagnostics.push(...errorDiagnostics(error));
-          pageTally.rejected += 1;
         }
       }
     } else {
@@ -514,6 +916,16 @@ export async function runIngest(
         pageRef: page.pageRef,
         completeness: pageCompleteness,
         affectedRecords: pageTally.contentPolicyRefused,
+      });
+    }
+    if (pageTally.ownershipMismatch > 0) {
+      queuePageHealthFinding(registration, pageTally, {
+        code: "source.ownership_mismatch",
+        effect: "blocks_use",
+        sourceRef: page.sourceRef,
+        pageRef: page.pageRef,
+        completeness: pageCompleteness,
+        affectedRecords: pageTally.ownershipMismatch,
       });
     }
     if (pageTally.rejected > 0) {
@@ -546,11 +958,42 @@ export async function runIngest(
         measurements: page.measurements.length,
         episodes: page.episodes.length,
         rejected: pageTally.rejected,
+        ...(pageTally.reused > 0 ? { reused: pageTally.reused } : {}),
       },
       diagnostics: pageTally.diagnostics,
       healthFindingIds,
     });
     await persistSourcePageReceipt(context, pageReceipt);
+    for (const pending of validatedOutcomes) {
+      const measurementRefs: MeasurementEvidenceRefV2[] = [];
+      if (pending.measurementIds.length > 0) {
+        const resolved = await resolveOutcomeMeasurementEvidence(context, pending.measurementIds, pending.scope);
+        if (resolved.health.status === "invalid" || resolved.refs.length !== pending.measurementIds.length) {
+          throw invalid("evidence.ownership_mismatch", "validated outcome measurements did not resolve exactly", [
+            "measurementIds",
+          ]);
+        }
+        for (const reference of resolved.refs) {
+          if (reference.schemaVersion !== 2 || reference.kind !== "measurement") {
+            throw invalid("schema.corrupt", "outcome measurement resolver returned an unqualified reference", [
+              "measurementRefs",
+            ]);
+          }
+          measurementRefs.push(reference);
+        }
+      }
+      const claim = buildEpisodeOutcomeClaim({
+        episodeRecordId: pending.episodeRecordId,
+        sourceId: pending.sourceId,
+        sourceRegistrationRevision: pending.sourceRegistrationRevision,
+        sourceRef: pending.sourceRef,
+        sourceRevision: pending.sourceRevision,
+        episodeId: pending.episodeId,
+        status: pending.status,
+        measurementRefs,
+      });
+      await persistEpisodeOutcomeClaim(context, claim);
+    }
     tally.pageReceiptIds.push(pageReceipt.id);
     tally.healthFindingIds.push(...healthFindingIds);
     pageIndex += 1;

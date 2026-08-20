@@ -89,12 +89,17 @@ export function parseMeasurementRecord(input: unknown): MeasurementRecord {
   const fields = readFields(input, []);
   const schemaVersion = fields.schemaVersion1();
   const measuredAt = fields.opt("measuredAt", parseText);
+  const metric = fields.req("metric", parseMetricDefinitionAt);
+  const value = fields.req("value", parseScalar);
+  if (typeof value !== metric.valueType) {
+    throw invalid("schema.invalid", `measurement value must have runtime type ${metric.valueType}`, ["value"]);
+  }
   return {
     schemaVersion,
     id: fields.req("id", parseNonEmptyText),
     episodeId: fields.req("episodeId", parseNonEmptyText),
-    metric: fields.req("metric", parseMetricDefinitionAt),
-    value: fields.req("value", parseScalar),
+    metric,
+    value,
     evidenceIds: fields.req("evidenceIds", parseArrayOf(parseNonEmptyText)),
     ...(measuredAt !== undefined ? { measuredAt } : {}),
     provenance: fields.req("provenance", parseProvenanceAt),

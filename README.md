@@ -56,6 +56,12 @@ evidence health. Historical Candidate v1 records remain byte-stable audit
 history, permanently `legacy_unbound`; later receipts never auto-migrate or
 make them review-eligible.
 
+Measurements enforce their declared runtime value type and bind exact
+same-source, same-revision observation support before they can enter a v2
+measurement reference. Episode outcomes append retained claims rather than
+rewriting episodes; typed episode views expose the latest claim, full attempt
+history, and closed evidence health. Raw legacy outcomes remain unqualified.
+
 ## The demo: transcript insights
 
 `examples/transcript-insights` is a small local CLI that ingests your own

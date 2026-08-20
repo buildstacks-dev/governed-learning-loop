@@ -10,6 +10,7 @@ import type { Diagnostic } from "../diagnostics.js";
 import { invalid, parseFiniteNumber, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
 import type { Candidate } from "../records/candidate.js";
+import type { MeasurementEvidenceRefV2 } from "../records/evidence-ref.js";
 import type { EpisodeOutcome, EpisodeRecord, MeasurementRecord } from "../records/episode.js";
 import { parseEpisodeRecord, parseMeasurementRecord } from "../records/episode.js";
 import type { Observation } from "../records/observation.js";
@@ -21,6 +22,7 @@ import type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "..
 import { parseEvidenceHealthFinding, parseImportReceipt, parseSourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
 import type { EvidenceHealthView } from "./evidence-binding.js";
+import { resolveOutcomeMeasurementEvidence } from "./evidence-binding.js";
 import {
   effectiveRisk,
   iterateRecordPages,
@@ -29,6 +31,7 @@ import {
   readRecordKindRevision,
 } from "./context.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
+import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import type { GovernanceView } from "./governance.js";
 import type { LearningReportQuery } from "./report.js";
 import { candidateGovernanceStateOf } from "./views.js";
@@ -51,6 +54,7 @@ const EVIDENCE_HEALTH_CODES = [
   "source.record_rejected",
   "source.content_policy_refused",
   "source.adapter_diagnostic",
+  "source.ownership_mismatch",
 ] as const;
 const EVIDENCE_HEALTH_EFFECTS = ["limits_claims", "blocks_audit", "blocks_use"] as const;
 
@@ -139,6 +143,16 @@ export interface EpisodeView {
     | {
         readonly status: "unresolved";
         readonly diagnostics: readonly Diagnostic[];
+      };
+  readonly outcomeLineage:
+    | { readonly status: "absent" }
+    | { readonly status: "legacy_unbound"; readonly diagnostics: readonly Diagnostic[] }
+    | {
+        readonly status: "resolved";
+        readonly claimDigest: string;
+        readonly historyDigests: readonly string[];
+        readonly measurementRefs: readonly MeasurementEvidenceRefV2[];
+        readonly evidenceHealth: EvidenceHealthView;
       };
 }
 
@@ -652,7 +666,13 @@ export async function* runObservationQuery(
     ...(cursor !== undefined ? { cursor } : {}),
   })) {
     const items = page.records
-      .map((record) => parseObservation(record.value))
+      .map((record) => {
+        const observation = parseObservation(record.value);
+        if (observation.id !== record.key.id) {
+          throw invalid("store.corrupt", "stored observation id does not match its record key", ["id"]);
+        }
+        return observation;
+      })
       .filter((item) => observationMatches(item, query));
     const nextCursor = nextQueryCursor(
       page.nextCursor,
@@ -687,7 +707,13 @@ export async function* runMeasurementQuery(
     ...(cursor !== undefined ? { cursor } : {}),
   })) {
     const items = page.records
-      .map((record) => parseMeasurementRecord(record.value))
+      .map((record) => {
+        const measurement = parseMeasurementRecord(record.value);
+        if (measurement.id !== record.key.id) {
+          throw invalid("store.corrupt", "stored measurement id does not match its record key", ["id"]);
+        }
+        return measurement;
+      })
       .filter((item) => measurementMatches(item, query));
     const nextCursor = nextQueryCursor(
       page.nextCursor,
@@ -716,10 +742,111 @@ function episodeRecordMatches(episode: EpisodeRecord, query: ParsedEpisodeQuery)
   return (
     includesValue(query.recordIds, episode.id) &&
     (query.scope === undefined || scopesEqual(query.scope, episode.scope)) &&
-    (query.statuses === undefined ||
-      (episode.outcome !== undefined && query.statuses.includes(episode.outcome.status))) &&
     insideWindow(episode.openedAt, query)
   );
+}
+
+function withoutEpisodeOutcome(episode: EpisodeRecord): EpisodeRecord {
+  return {
+    schemaVersion: 1,
+    id: episode.id,
+    scope: episode.scope,
+    openedAt: episode.openedAt,
+    ...(episode.closedAt !== undefined ? { closedAt: episode.closedAt } : {}),
+    sourceRefs: episode.sourceRefs,
+    ...(episode.fingerprintId !== undefined ? { fingerprintId: episode.fingerprintId } : {}),
+    exposureIds: episode.exposureIds,
+  };
+}
+
+interface OutcomeViewResult extends Pick<EpisodeView, "episode" | "outcomeLineage"> {
+  readonly claimIdentity?: {
+    readonly sourceId: string;
+    readonly sourceRegistrationRevision: string;
+    readonly episodeId: string;
+  };
+}
+
+async function outcomeView(context: EngineContext, storedEpisode: EpisodeRecord): Promise<OutcomeViewResult> {
+  const base = withoutEpisodeOutcome(storedEpisode);
+  const state = await loadLatestEpisodeOutcomeClaim(context, storedEpisode.id);
+  if (state.status === "missing") {
+    if (storedEpisode.outcome === undefined) return { episode: base, outcomeLineage: { status: "absent" } };
+    return {
+      episode: base,
+      outcomeLineage: {
+        status: "legacy_unbound",
+        diagnostics: [
+          {
+            code: "episode.outcome_legacy_unbound",
+            severity: "error",
+            message: "inline legacy episode outcome has no receipt-bound measurement lineage",
+          },
+        ],
+      },
+    };
+  }
+
+  let evidenceHealth: EvidenceHealthView;
+  if (state.latest.measurementRefs.length === 0) {
+    evidenceHealth = {
+      status: "incomplete",
+      diagnostics: [
+        {
+          code: "episode.outcome_measurement_missing",
+          severity: "warning",
+          message: "episode outcome has no measurement evidence and cannot support efficacy claims",
+        },
+      ],
+    };
+  } else {
+    const resolved = await resolveOutcomeMeasurementEvidence(
+      context,
+      state.latest.measurementRefs.map((reference) => reference.recordId),
+      base.scope,
+    );
+    const exact =
+      resolved.refs.length === state.latest.measurementRefs.length &&
+      resolved.refs.every(
+        (reference, index) =>
+          canonicalJsonText(toJsonValue(reference)) ===
+          canonicalJsonText(toJsonValue(state.latest.measurementRefs[index])),
+      );
+    evidenceHealth = exact
+      ? resolved.health
+      : {
+          status: "invalid",
+          diagnostics: [
+            ...resolved.health.diagnostics,
+            {
+              code: "episode.outcome_reference_mismatch",
+              severity: "error",
+              message: "latest episode outcome measurement lineage no longer matches durable evidence",
+            },
+          ],
+        };
+  }
+  return {
+    episode: {
+      ...base,
+      outcome: {
+        status: state.latest.status,
+        measurementIds: state.latest.measurementRefs.map((reference) => reference.recordId),
+      },
+    },
+    outcomeLineage: {
+      status: "resolved",
+      claimDigest: state.latest.claimDigest,
+      historyDigests: state.historyDigests,
+      measurementRefs: state.latest.measurementRefs,
+      evidenceHealth,
+    },
+    claimIdentity: {
+      sourceId: state.latest.sourceId,
+      sourceRegistrationRevision: state.latest.sourceRegistrationRevision,
+      episodeId: state.latest.episodeId,
+    },
+  };
 }
 
 export async function* runEpisodeQuery(
@@ -741,9 +868,19 @@ export async function* runEpisodeQuery(
   })) {
     const items: EpisodeView[] = [];
     for (const record of page.records) {
-      const episode = parseEpisodeRecord(record.value);
-      if (!episodeRecordMatches(episode, query)) continue;
-      const identityState = await loadEpisodeIdentityState(context, episode.id);
+      const storedEpisode = parseEpisodeRecord(record.value);
+      if (storedEpisode.id !== record.key.id) {
+        throw invalid("store.corrupt", "stored episode id does not match its record key", ["id"]);
+      }
+      if (!episodeRecordMatches(storedEpisode, query)) continue;
+      const viewedOutcome = await outcomeView(context, storedEpisode);
+      if (
+        query.statuses !== undefined &&
+        (viewedOutcome.episode.outcome === undefined || !query.statuses.includes(viewedOutcome.episode.outcome.status))
+      ) {
+        continue;
+      }
+      const identityState = await loadEpisodeIdentityState(context, storedEpisode.id);
       if (identityState.status !== "resolved") {
         if (
           query.sourceIds !== undefined ||
@@ -754,11 +891,28 @@ export async function* runEpisodeQuery(
           throw invalid(
             "query.incomplete",
             "episode identity is missing, so identity-filtered results cannot be complete",
-            ["episode", episode.id],
+            ["episode", storedEpisode.id],
           );
         }
+        const unresolvedOutcomeLineage: EpisodeView["outcomeLineage"] =
+          viewedOutcome.outcomeLineage.status === "resolved"
+            ? {
+                ...viewedOutcome.outcomeLineage,
+                evidenceHealth: {
+                  status: "invalid",
+                  diagnostics: [
+                    ...viewedOutcome.outcomeLineage.evidenceHealth.diagnostics,
+                    {
+                      code: "episode.outcome_identity_unresolved",
+                      severity: "error",
+                      message: "episode outcome cannot be qualified without a resolved episode identity",
+                    },
+                  ],
+                },
+              }
+            : viewedOutcome.outcomeLineage;
         items.push({
-          episode,
+          episode: viewedOutcome.episode,
           identity: {
             status: "unresolved",
             diagnostics: [
@@ -769,18 +923,19 @@ export async function* runEpisodeQuery(
                   identityState.status === "conflict"
                     ? "episode identity conflicts with a later projection and cannot be resolved"
                     : "episode identity is unavailable; explicitly re-ingest its source to repair the sidecar",
-                details: { episodeRecordId: episode.id },
+                details: { episodeRecordId: storedEpisode.id },
               },
             ],
           },
+          outcomeLineage: unresolvedOutcomeLineage,
         });
         continue;
       }
       const identity = identityState.identity;
-      if (!episode.sourceRefs.includes(identity.sourceId)) {
+      if (!storedEpisode.sourceRefs.includes(identity.sourceId)) {
         throw invalid("schema.corrupt", "episode identity source is absent from EpisodeRecord.sourceRefs", [
           "episode",
-          episode.id,
+          storedEpisode.id,
           "sourceRefs",
         ]);
       }
@@ -794,8 +949,18 @@ export async function* runEpisodeQuery(
       ) {
         continue;
       }
+      if (
+        viewedOutcome.claimIdentity !== undefined &&
+        (viewedOutcome.claimIdentity.sourceId !== identity.sourceId ||
+          viewedOutcome.claimIdentity.sourceRegistrationRevision !== identity.registryRevision ||
+          viewedOutcome.claimIdentity.episodeId !== identity.episodeId)
+      ) {
+        throw invalid("store.corrupt", "episode outcome claim does not match resolved episode identity", [
+          "outcomeLineage",
+        ]);
+      }
       items.push({
-        episode,
+        episode: viewedOutcome.episode,
         identity: {
           status: "resolved",
           sourceId: identity.sourceId,
@@ -807,6 +972,7 @@ export async function* runEpisodeQuery(
           trustCeiling: identity.trustCeiling,
           completeness: identity.completeness,
         },
+        outcomeLineage: viewedOutcome.outcomeLineage,
       });
     }
     const compositeRevision = await readRecordKindRevision(context.store, "episode");
@@ -862,7 +1028,13 @@ export async function* runSourcePageReceiptQuery(
     ...(cursor !== undefined ? { cursor } : {}),
   })) {
     const items = page.records
-      .map((record) => parseSourcePageReceipt(record.value))
+      .map((record) => {
+        const receipt = parseSourcePageReceipt(record.value);
+        if (receipt.id !== record.key.id) {
+          throw invalid("store.corrupt", "stored source page receipt id does not match its record key", ["id"]);
+        }
+        return receipt;
+      })
       .filter((receipt) => sourcePageReceiptMatches(receipt, query));
     const nextCursor = nextQueryCursor(
       page.nextCursor,
@@ -908,7 +1080,13 @@ export async function* runEvidenceHealthQuery(
     ...(cursor !== undefined ? { cursor } : {}),
   })) {
     const items = page.records
-      .map((record) => parseEvidenceHealthFinding(record.value))
+      .map((record) => {
+        const finding = parseEvidenceHealthFinding(record.value);
+        if (finding.id !== record.key.id) {
+          throw invalid("store.corrupt", "stored evidence health id does not match its record key", ["id"]);
+        }
+        return finding;
+      })
       .filter((finding) => evidenceHealthMatches(finding, query));
     const nextCursor = nextQueryCursor(
       page.nextCursor,
@@ -933,7 +1111,11 @@ export async function runGetImportReceipt(
   const fields = readFields(input, ["importReceipt"]);
   const id = fields.req("importReceiptId", parseFilterText);
   const value = await loadRecordValue(context, "import-receipt", id);
-  return value === undefined ? undefined : parseImportReceipt(value);
+  if (value === undefined) return undefined;
+  const receipt = parseImportReceipt(value);
+  if (receipt.id !== id)
+    throw invalid("store.corrupt", "stored import receipt id does not match its record key", ["id"]);
+  return receipt;
 }
 
 export async function runGetCandidateView(

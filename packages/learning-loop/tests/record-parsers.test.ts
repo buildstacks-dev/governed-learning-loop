@@ -280,7 +280,7 @@ describe.each(parserCases)("$name", ({ name, parse, fixture, requiredField, wron
 
   if (versioned) {
     it("rejects a wrong schemaVersion as schema.unsupported_version", () => {
-      const wrongVersion = name === "parseCandidate" ? 3 : 2;
+      const wrongVersion = name === "parseCandidate" || name === "parseEvidenceRef" ? 3 : 2;
       expect(errorFrom(() => parse({ ...fixture, schemaVersion: wrongVersion })).code).toBe(
         "schema.unsupported_version",
       );

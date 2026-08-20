@@ -17,6 +17,8 @@ import {
   parseEvidenceHealthFinding,
   parseImportReceipt,
   parseSourcePageReceipt,
+  sha256HexOfCanonicalJson,
+  toJsonValue,
 } from "../src/index.js";
 import {
   createExactScopePolicy,
@@ -165,6 +167,42 @@ function failBeforeFirstPageReceiptCreate(base: LearningStore): LearningStore {
   };
 }
 
+function loseFirstDerivativeOwnerAcknowledgement(base: LearningStore): LearningStore {
+  let failed = false;
+  return {
+    get: (key) => base.get(key),
+    create: async (key, value, digest, operationId) => {
+      const result = await base.create(key, value, digest, operationId);
+      if (!failed && key.kind === "derivative-owner") {
+        failed = true;
+        throw new Error("simulated lost derivative owner acknowledgement");
+      }
+      return result;
+    },
+    compareAndSet: (key, expectedRevision, value, digest, operationId) =>
+      base.compareAndSet(key, expectedRevision, value, digest, operationId),
+    append: (stream, expectedRevision, entries, operationId) =>
+      base.append(stream, expectedRevision, entries, operationId),
+    tombstone: (input) => base.tombstone(input),
+    list: (query) => base.list(query),
+  };
+}
+
+function concurrentObservationSource(): EvidenceSource<string> {
+  return {
+    descriptor: { id: "concurrent-owner-source", adapterVersion: "1.0.0" },
+    probe: () => Promise.resolve({ supported: true, sourceRevision: "concurrent-revision", diagnostics: [] }),
+    read: async function* (pageRef): AsyncIterable<EvidencePage> {
+      yield evidencePage({
+        sourceRef: "concurrent-artifact",
+        pageRef,
+        state: { status: "available", sourceRevision: "concurrent-revision", completeness: "complete" },
+        observations: [observation("shared-observation")],
+      });
+    },
+  };
+}
+
 describe("durable source and import receipts", () => {
   it("pins canonical digest golden vectors for page, import, and evidence-health records", () => {
     const health = buildHealthFinding({
@@ -214,6 +252,76 @@ describe("durable source and import receipts", () => {
     expect(health.findingDigest).toBe("96f7b71986dc873acaace5d965c7240258e311bee57b2361455a3ddb0256e189");
     expect(page.receiptDigest).toBe("31d3f3dbceb0390bb3c2e4cb11270de63b887be2cd379a17cfc180337eaaca88");
     expect(importReceipt.receiptDigest).toBe("2ccd6e9418db49d8f13581b083fabe5b712c1ea5436a3ebd74d0b190be696e39");
+  });
+
+  it("preserves historical omitted reused counts while binding explicit reused accounting", () => {
+    const common = {
+      sourceId: "reused-source",
+      sourceRegistrationRevision: "a".repeat(64),
+      adapterVersion: "1.0.0",
+      contentPolicyId: "reused-policy",
+      contentPolicyDigest: "b".repeat(64),
+      loopRegistryRevision: "c".repeat(64),
+      sourceRef: "reused-artifact",
+      pageRef: "reused-page",
+      state: { status: "available" as const, sourceRevision: "reused-revision", completeness: "complete" as const },
+      derivatives: [
+        {
+          kind: "observation" as const,
+          id: "reused-source/observation-1",
+          digest: "d".repeat(64),
+        },
+      ],
+      diagnostics: [],
+      healthFindingIds: [],
+    };
+    const historical = buildSourcePageReceipt({
+      ...common,
+      projectionCounts: { observations: 1, measurements: 0, episodes: 0, rejected: 0 },
+    });
+    expect("reused" in historical.projectionCounts).toBe(false);
+    expect(parseSourcePageReceipt(historical)).toEqual(historical);
+
+    const explicitZero = buildSourcePageReceipt({
+      ...common,
+      projectionCounts: { observations: 1, measurements: 0, episodes: 0, rejected: 0, reused: 0 },
+    });
+    expect(explicitZero.projectionCounts.reused).toBe(0);
+    expect(explicitZero.receiptDigest).not.toBe(historical.receiptDigest);
+    expect(explicitZero.receiptDigest).toBe("f27e2894d35101d67cdb7c9693dc7f06dc63127bc18c04e2d34e9435f083a791");
+
+    const reused = buildSourcePageReceipt({
+      ...common,
+      projectionCounts: { observations: 2, measurements: 0, episodes: 0, rejected: 0, reused: 1 },
+    });
+    expect(reused.projectionCounts.reused).toBe(1);
+
+    expect(() =>
+      buildSourcePageReceipt({
+        ...common,
+        projectionCounts: { observations: 2, measurements: 0, episodes: 0, rejected: 0, reused: 0 },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "schema.corrupt" }));
+    expect(() =>
+      buildSourcePageReceipt({
+        ...common,
+        projectionCounts: {
+          observations: 1,
+          measurements: 0,
+          episodes: 0,
+          rejected: 0,
+          reused: Number.MAX_SAFE_INTEGER + 1,
+        },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "schema.invalid" }));
+    expect(() =>
+      buildSourcePageReceipt({
+        ...common,
+        state: { status: "missing" },
+        derivatives: [],
+        projectionCounts: { observations: 1, measurements: 0, episodes: 0, rejected: 0, reused: 1 },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "schema.corrupt" }));
   });
 
   it("re-ingests identical pages to the exact same receipt bytes with no net-new derivatives", async () => {
@@ -896,6 +1004,119 @@ describe("durable source and import receipts", () => {
     expect(await storedValues(base, "evidence-health")).toHaveLength(1);
     expect(await storedValues(base, "source-page-receipt")).toHaveLength(1);
     expect(await storedValues(base, "import-receipt")).toHaveLength(1);
+  });
+
+  it("atomically assigns one owner when different pages concurrently ingest the same unreceipted derivative", async () => {
+    const source = defineSourceRegistration({
+      source: concurrentObservationSource(),
+      trustCeiling: "observed",
+      contentPolicyId: CONTENT_POLICY_ID,
+    });
+    const { learning } = await createHarness([source]);
+
+    await Promise.all([learning.ingest(source, "page-a"), learning.ingest(source, "page-b")]);
+    const receipts = [
+      ...itemsOf(await collectPages(learning.querySourcePageReceipts({ sourceIds: [source.id], limit: 10 }))),
+    ].sort((left, right) => (left.pageRef < right.pageRef ? -1 : left.pageRef > right.pageRef ? 1 : 0));
+
+    expect(receipts.map((receipt) => receipt.pageRef)).toEqual(["page-a", "page-b"]);
+    expect(receipts.flatMap((receipt) => receipt.derivatives)).toEqual([
+      expect.objectContaining({ kind: "observation", id: `${source.id}/shared-observation` }),
+    ]);
+    expect(receipts.filter((receipt) => receipt.derivatives.length === 1)).toHaveLength(1);
+    expect(receipts.filter((receipt) => receipt.projectionCounts.reused === 1)).toHaveLength(1);
+    expect(receipts.every((receipt) => receipt.projectionCounts.rejected === 0)).toBe(true);
+
+    await learning.ingest(source, "page-a");
+    await learning.ingest(source, "page-b");
+    const retried = itemsOf(
+      await collectPages(learning.querySourcePageReceipts({ sourceIds: [source.id], limit: 10 })),
+    );
+    expect(retried).toHaveLength(2);
+    expect(retried.flatMap((receipt) => receipt.derivatives)).toHaveLength(1);
+    expect(retried.filter((receipt) => receipt.projectionCounts.reused === 1)).toHaveLength(1);
+  });
+
+  it("recovers idempotently when the derivative owner committed but its acknowledgement was lost", async () => {
+    const base = createInMemoryStore();
+    const store = loseFirstDerivativeOwnerAcknowledgement(base);
+    const source = defineSourceRegistration({
+      source: concurrentObservationSource(),
+      trustCeiling: "observed",
+      contentPolicyId: CONTENT_POLICY_ID,
+    });
+    const { learning } = await createHarness([source], { store });
+
+    await expect(learning.ingest(source, "owner-page")).rejects.toThrow("lost derivative owner acknowledgement");
+    expect(await storedValues(base, "derivative-owner")).toHaveLength(1);
+    expect(await storedValues(base, "observation")).toEqual([]);
+    expect(await storedValues(base, "source-page-receipt")).toEqual([]);
+
+    const retry = await learning.ingest(source, "owner-page");
+    expect(retry.observationIds).toEqual([`${source.id}/shared-observation`]);
+    expect(await storedValues(base, "derivative-owner")).toHaveLength(1);
+    expect(await storedValues(base, "observation")).toHaveLength(1);
+    expect(await storedValues(base, "source-page-receipt")).toHaveLength(1);
+    const replay = await learning.ingest(source, "owner-page");
+    expect(replay.pageReceiptIds).toEqual(retry.pageReceiptIds);
+  });
+
+  it("rejects a self-consistent derivative owner claim that disagrees with its committed page receipt", async () => {
+    const base = createInMemoryStore();
+    const source = defineSourceRegistration({
+      source: concurrentObservationSource(),
+      trustCeiling: "observed",
+      contentPolicyId: CONTENT_POLICY_ID,
+    });
+    const { learning } = await createHarness([source], { store: base });
+    await learning.ingest(source, "committed-page");
+    const receipts = itemsOf(
+      await collectPages(learning.querySourcePageReceipts({ sourceIds: [source.id], limit: 10 })),
+    );
+    const receipt = receipts[0];
+    const derivative = receipt?.derivatives[0];
+    if (receipt === undefined || derivative === undefined) throw new Error("missing derivative owner fixtures");
+    const owners = await base.list({ namespace: "learning", kind: "derivative-owner", limit: 10 });
+    const storedOwner = owners.records[0];
+    if (storedOwner === undefined) throw new Error("missing stored derivative owner");
+    const foreignOwner = {
+      sourceId: source.id,
+      sourceRegistrationRevision: source.registryRevision,
+      contentPolicyId: receipt.contentPolicyId,
+      contentPolicyDigest: receipt.contentPolicyDigest,
+      loopRegistryRevision: receipt.loopRegistryRevision,
+      sourceRef: receipt.sourceRef,
+      pageRef: "foreign-owner-page",
+      state: receipt.state,
+    };
+    const ownerDigest = sha256HexOfCanonicalJson(toJsonValue(foreignOwner));
+    const bound = { derivative, owner: foreignOwner, ownerDigest };
+    const forged = {
+      schemaVersion: 1,
+      ...bound,
+      claimDigest: sha256HexOfCanonicalJson(toJsonValue(bound)),
+    };
+    const value = toJsonValue(forged);
+    await expect(
+      base.compareAndSet(
+        storedOwner.key,
+        storedOwner.revision,
+        value,
+        sha256HexOfCanonicalJson(value),
+        "forge-derivative-owner",
+      ),
+    ).resolves.toMatchObject({ status: "updated" });
+
+    const refused = await learning.ingest(source, "committed-page");
+    expect(refused.observationIds).toEqual([]);
+    expect(refused.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "store.corrupt" })]));
+    const refusedReceipt = itemsOf(
+      await collectPages(learning.querySourcePageReceipts({ receiptIds: refused.pageReceiptIds, limit: 10 })),
+    )[0];
+    expect(refusedReceipt).toMatchObject({
+      derivatives: [],
+      projectionCounts: { observations: 1, rejected: 1 },
+    });
   });
 
   it("rejects tampering in every durable receipt parser", async () => {

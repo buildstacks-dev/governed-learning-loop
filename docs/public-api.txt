@@ -61,6 +61,9 @@ root:DetectorWindow
 root:DetectorResultDraft
 root:DetectorRunInput
 root:DetectorRunResult
+root:DetectorOrchestrationDisposition
+root:DetectorPackRunInput
+root:DetectorPackRunResult
 root:EvidenceRef
 root:EvidenceRefV1
 root:ObservationEvidenceRef

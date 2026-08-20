@@ -73,6 +73,8 @@ import type { RegisteredDetectorImplementation } from "./detector-implementation
 import { detectorImplementationRegistration } from "./detector-implementation.js";
 import type { DetectorRunInput, DetectorRunResult } from "./detector-run.js";
 import { runDetector } from "./detector-run.js";
+import type { DetectorPackRunInput, DetectorPackRunResult } from "./detector-pack-run.js";
+import { runDetectorPack } from "./detector-pack-run.js";
 
 export interface LearningLoopConfig {
   readonly store: LearningStore;
@@ -112,6 +114,7 @@ export interface LearningLoop {
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
   report(input: LearningReportQuery): Promise<LearningReport>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
+  runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
 }
 
 const systemClock: Clock = { now: () => new Date().toISOString() };
@@ -385,5 +388,6 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     getCandidateView: (input) => runGetCandidateView(context, input),
     report: (input) => runReport(context, input),
     runDetector: (input) => runDetector(context, input),
+    runDetectorPack: (input) => runDetectorPack(context, input),
   };
 }

@@ -3,7 +3,10 @@ import type {
   DetectorExecutionQuery,
   DetectorExecutionRecord,
   DetectorExecutionView,
+  DetectorOrchestrationDisposition,
   DetectorPackManifest,
+  DetectorPackRunInput,
+  DetectorPackRunResult,
   DetectorRegistration,
   DetectorResultDraft,
   DetectorRunInput,
@@ -385,6 +388,14 @@ test("strict consumer can construct and parse host-neutral semantic records from
   };
   const acceptsRunResult = (result: DetectorRunResult): string =>
     `${result.mode}/${result.status}/${result.persistence}`;
+  const strictPackRunInput: DetectorPackRunInput = {
+    mode: "dry_run",
+    pack: packRef,
+    scope: executionScope,
+    episodeRecordIds: [],
+  };
+  const acceptsPackRunResult = (result: DetectorPackRunResult): readonly DetectorOrchestrationDisposition[] =>
+    result.items.map((item) => item.disposition);
   expect(strictImplementation).toMatchObject({
     detector: detectorRef,
     implementationDigest: registration.implementationDigest,
@@ -392,4 +403,9 @@ test("strict consumer can construct and parse host-neutral semantic records from
   });
   expect(strictRunInput.mode).toBe("dry_run");
   expect(typeof acceptsRunResult).toBe("function");
+  expect(typeof acceptsPackRunResult).toBe("function");
+  expect(typeof semanticLearning.runDetectorPack).toBe("function");
+  await expect(semanticLearning.runDetectorPack(strictPackRunInput)).rejects.toMatchObject({
+    code: "detector.input_invalid",
+  });
 });

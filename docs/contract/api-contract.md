@@ -1080,6 +1080,41 @@ export interface DetectorRunResult {
   readonly diagnostics: readonly Diagnostic[];
 }
 
+export type DetectorOrchestrationDisposition =
+  | "executed"
+  | "existing"
+  | "not_applicable"
+  | "incomplete"
+  | "capped"
+  | "refused";
+
+export interface DetectorPackRunInput {
+  readonly mode: "dry_run" | "commit";
+  readonly pack: {
+    readonly id: string;
+    readonly version: string;
+    readonly manifestDigest: string;
+  };
+  readonly scope: Scope;
+  readonly episodeRecordIds: readonly string[];
+}
+
+export interface DetectorPackRunResult {
+  readonly mode: "dry_run" | "commit";
+  readonly status: "completed" | "partial";
+  readonly pack: DetectorPackRunInput["pack"];
+  readonly scope: Scope;
+  readonly items: readonly {
+    readonly detector: DetectorRunInput["detector"];
+    readonly lens: DetectorRunInput["lens"];
+    readonly disposition: DetectorOrchestrationDisposition;
+    readonly callbackInvoked: boolean;
+    readonly result?: DetectorRunResult;
+    readonly diagnostics: readonly Diagnostic[];
+  }[];
+  readonly diagnostics: readonly Diagnostic[];
+}
+
 export declare function defineDetectorImplementation(input: {
   readonly registration: DetectorRegistration;
   readonly evaluate: (window: DetectorWindow) => unknown;
@@ -1368,11 +1403,58 @@ insight drafts or 100 health findings according to output kind, 16 MiB of
 canonical window bytes, and 16 MiB of canonical callback-output bytes. Limits
 fail or produce incomplete without silent truncation.
 
-Multi-detector/pack orchestration, automatic windows, recurrence, clustering,
-deduplication, suppression, scheduling/routing, batch dry runs, and policy caps
-beyond c1 hard ceilings remain #30c2. Core/reference/host pack contents and
-reference consumers are #30d. Optional semantic-provider generation and
-disclosure are #13. Default-quality and candidate-utility claims remain #26.
+#30c2a adds `runDetectorPack` as a bounded transient orchestration façade over
+the same c1 child facts. Its input names one exact selected pack, mandatory
+exact scope, canonical sorted-unique episode record ids, and mode. Callers do
+not submit detector/lens pairs, windows, caps, results, dispositions, plans, or
+persistence bytes. The kernel considers exact selected detectors from that
+pack. Evidence-health detectors use `lens: null`; insight detectors fan out
+over every compatible exact selected lens contained in the same pack. Exact
+pair ordering uses protocol code-unit ordering of detector then lens reference
+keys, never locale ordering. A coherent selected insight detector with no
+compatible lens in this pack produces an explicit `not_applicable` item;
+missing exact registry content is corruption and fails the call.
+
+Every considered item carries its detector/lens pair, a closed
+DetectorOrchestrationDisposition, `callbackInvoked`, an optional exact
+DetectorRunResult, and sanitized diagnostics. `not_applicable` and `incomplete`
+take precedence over `existing`, so durable missingness is not hidden by
+idempotency. Pack status `completed | partial` describes orchestration only. It
+is never a detector pass, utility result, authorization, or efficacy verdict.
+
+Pack execution retains c1's 500-episode input ceiling. More than 5,000
+detector/lens selections fails before callbacks. At most 100 child invocations
+are admitted. Across one call, at most 100 unique new content-addressed output
+records—derivations plus detector-output evidence-health findings—and 64 MiB
+of canonical, mode-normalized child-result bytes are retained. Repeated exact
+output ids inside the plan count once. Existing exact outputs do not count as
+new, but their returned bytes count toward the byte ceiling. A child that would
+cross an aggregate ceiling is discarded whole and reported
+`capped`; its callback attempt remains explicit. Every later runnable item is
+also reported capped without callback. Results, derivations, and findings are
+never silently truncated.
+
+The kernel plans all children through the c1 unknown-first dry runner under one
+stable before/after semantic-graph snapshot. Public dry-run writes nothing. A
+commit call independently constructs one private exact plan and then persists
+retained child graphs sequentially through private receipt-last persistence;
+it never accepts an earlier public dry-run and does not evaluate a child twice
+within the same pack call. A snapshot change refuses the non-capped plan with
+no pack write. Corrupt store or registry state remains fatal rather than a
+normal item refusal. Earlier exact child commits may survive a later refusal,
+so the batch is deliberately not atomic; retries rely on child-level
+idempotency.
+
+C2a creates no durable pack-run receipt, id/digest, store kind, query, or public
+writer. Its fixed caps are per-call safety ceilings rather than durable rate,
+deduplication, or suppression policy. Privacy-treated recurrence locators,
+comparable recurrence groups, clustering, deduplication, decisive-rejection
+suppression, host-configured digested lower caps, and durable exact-scope
+pack-run audit receipts remain immediate #30c2b. Automatic population
+discovery and scheduling/routing remain outside c2a. Core/reference/host pack
+contents and reference consumers are #30d. Optional semantic-provider
+generation and disclosure are #13. Default-quality and candidate-utility
+claims remain #26.
 
 ### Candidate
 
@@ -2689,6 +2771,7 @@ export interface LearningLoop {
   propose(input: CandidateInput): Promise<ProposeOutcome>;
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
+  runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
 
   queryObservations(input: ObservationQuery): AsyncIterable<QueryPage<Observation>>;
   queryMeasurements(input: MeasurementQuery): AsyncIterable<QueryPage<MeasurementRecord>>;
@@ -3302,6 +3385,16 @@ The core suite should prove at least:
   windows invoke no callback and never become applied false, zero, or pass;
 - callback drafts cannot mint lifecycle status, scope, EvidenceRefs, trust,
   producer attribution, ids, digests, Candidates, or authority;
+- detector-pack input rejects foreign packs, non-canonical episode ids, and
+  more than 5,000 exact detector/lens combinations before callback invocation;
+- detector-pack fan-out uses protocol code-unit ordering, reports every bounded
+  cap/refusal explicitly, keeps `not_applicable`/`incomplete` status visible
+  ahead of `existing`, and records whether a discarded child callback ran;
+- detector-pack aggregate output and retained-byte ceilings discard whole
+  children without truncation, dry-run writes nothing, and snapshot or corrupt
+  graph failures never leave a caller-minted pack receipt;
+- detector-pack commit persists only retained exact child graphs through the
+  private receipt-last path and documents sequential partial-commit behavior;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

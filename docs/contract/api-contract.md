@@ -144,7 +144,7 @@ Start with one package and subpath exports:
 ├── node          JSON Lines/filesystem store and journal adapters
 ├── testing       runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── reference-detectors  opt-in deterministic core/reference pack bundle
-└── workflows     planned optional distiller and reviewer workflows (not exported by #13a)
+└── workflows     provider-neutral semantic generation; advisory review remains #13c
 ```
 
 Recommended packaging properties:
@@ -1569,11 +1569,12 @@ provider fields and principal/attestation to be null. `disclosure` is optional
 only for local or otherwise non-outbound production; any outbound semantic
 workflow binds the exact durable receipt, minimized-byte digest, and receipt
 digest. Validation comparable-population content and digest are paired.
-Decision 0021 does not yet mint that producer lineage or an InsightDerivation:
-its private noncompleted turn receipts are substrate only. #13b must add a
-typed completed workflow execution and require the producer disclosure
-projection to resolve the exact turn/request lineage; the three disclosure
-fields are not sufficient as an unchecked dangling assertion.
+Decision 0021 alone does not mint that producer lineage or an InsightDerivation:
+its private noncompleted turn receipts are substrate only. Decision 0022's
+typed completed generation now requires the producer disclosure projection to
+resolve the exact durable result binding, request digest and complete workflow/
+execution/derivation sidecar graph. The three disclosure fields remain
+insufficient as an unchecked dangling assertion in any generic path.
 
 Digest inclusion is exact:
 
@@ -2162,13 +2163,13 @@ callback recovery remains outside this slice rather than being treated as
 implicitly solved.
 
 #30d supplies only L1 contract checks and L2 hermetic synthetic validation.
-Decision 0021's #13a provider-turn substrate likewise supplies L1 records/
-goldens and L2 deterministic crash, concurrency, privacy and scope controls
-only. Both ship no L3 live-source/provider evidence, L4 semantic/model eval, L5
-operational/SLO evidence, or L6 longitudinal acceptance evidence. #13b owns
-typed prepared generation and provider handoff; #13c owns advisory review plus
-the L4/L6 scaffold. #26 owns detector/reviewer calibration, held-out candidate
-utility and every default-quality or improvement claim.
+Decisions 0021/0022 likewise supply only L1 records/schema/goldens and L2
+deterministic crash, concurrency, provider-boundary, privacy and scope controls.
+They ship no L3 live-source/provider evidence, L4 semantic/model evaluation, L5
+operational/SLO evidence, or L6 longitudinal acceptance evidence. #13c owns
+advisory review plus its non-decisive evaluation scaffold. #26 owns detector/
+reviewer calibration, held-out Candidate utility and every default-quality or
+improvement claim.
 
 Private derivation/Candidate recurrence claims are implemented by decision
 0016, observational receipt assessment by decision 0017, and serialized
@@ -2178,8 +2179,9 @@ before a subject Candidate writes any facts. Automatic population discovery
 and scheduling/routing remain outside this receipt. Decision 0019 implements
 the opt-in core/reference contents; host packs remain host data. Decision 0021
 implements only the private, no-egress #13a turn substrate. Typed generation/
-provider handoff is #13b and advisory review is #13c. Default-quality and
-candidate-utility claims remain #26.
+provider handoff and process recovery are implemented by Decision 0022 for
+#13b; advisory review is #13c. Default-quality and Candidate-utility claims
+remain #26.
 
 #### Private derivation and Candidate recurrence claims
 
@@ -3487,7 +3489,8 @@ boundary. Decision 0007 and issue #30 established `InsightDerivation` as the
 provider-neutral seam: a future distiller consumes a kernel-materialized exact
 detector window and may produce an inert typed derivation, never a Candidate,
 verified proposer, review, or effect. The sketch remains directional host-port
-context until #13b ratifies the actual `/workflows` API.
+context and is superseded for generation by the #13b `/workflows` contract
+below. It is not the advisory-review API reserved for #13c.
 
 ```ts
 export interface CandidateGenerator {
@@ -3518,11 +3521,11 @@ export interface CandidateReviewer {
 }
 ```
 
-The planned optional `/workflows` package validates both results and records
-exact provider, model, prompt, tool policy, and budget fingerprints. The kernel
-does not label an uncalibrated reviewer trustworthy merely because it returned
-valid JSON. Decision 0021 implements only the private #13a substrate; no
-`/workflows` export or provider callback exists yet.
+The optional `/workflows` package validates both results and records exact
+provider, model, prompt, tool policy, and budget fingerprints. The kernel does
+not label generation correct or an uncalibrated reviewer trustworthy merely
+because a provider returned valid JSON. Decision 0021 supplies the private
+#13a substrate; Decision 0022 supplies only the #13b generation lane.
 
 #### Private semantic provider-turn substrate (#13a)
 
@@ -3552,9 +3555,9 @@ framing or unverifiable SDK wire bytes.
 Outbound intent requires one exact authorization record before a dispatch
 claim; local intent requires null. Authorization binds the exact request,
 reservation, provider registration, authorizer attribution, policy and bounded
-time window. It proves only that those content bytes were authorized. #13b must
-verify a loop/plan-bound capability minted by a host disclosure-authority port;
-the bare record is insufficient.
+time window. It proves only that those content bytes were authorized. The #13b
+factory verifies a loop/plan-bound capability minted by the configured host
+disclosure-authority port; the bare record remains insufficient.
 
 `claimSemanticDispatch` is private and performs no egress. For a new generation
 claim it reloads exact prerequisites, uses the kernel clock, derives one
@@ -3562,10 +3565,10 @@ provider operation/idempotency key, and revalidates current loop/semantic
 registry, source ownership/content policies, selected detector/pack/lens,
 workflow-definition/implementation binding, public producer fingerprints,
 calibration absence and transport-specific privacy. It refuses advisory-review
-dispatch. `created` is necessary but not sufficient for a later provider call:
-#13b must also authenticate the exact prepared-plan/provider/workflow/
-disclosure-authority capabilities, revalidate the kernel-materialized window
-and recheck expiry at the actual handoff. `existing` is never permission to
+dispatch. `created` is necessary but not sufficient for a provider call: the
+#13b bundle also authenticates the exact prepared-plan/provider/workflow/
+disclosure-authority capabilities, revalidates the kernel-materialized window
+and rechecks expiry at the actual handoff. `existing` is never permission to
 redispatch.
 
 The closed result statuses are `completed`, `provider_refused`,
@@ -3578,12 +3581,11 @@ normalized output and exactly `workflow.<status>`; unreported usage is exactly
 reason bytes. A `result_limit` may record a safe-integer observed response
 length above 16 MiB and a keyed digest while retaining no response body.
 
-Completed shapes are parser/golden reservations only. #13a persistence and
-reads reject completed results/terminal graphs with
-`semantic.workflow_output_unavailable`, because typed minimized generation
-execution/derivation and advisory-assessment sidecars do not exist. #13b/#13c
-must add and reload those exact records before completed persistence becomes
-legal.
+The generic #13a persistence and read paths still reject completed
+results/terminal graphs with `semantic.workflow_output_unavailable`. Decision
+0022 enables completed generation only through its fixed typed result schema,
+completion intent, workflow-execution binding, and exact ordinary
+DetectorExecution/InsightDerivation sidecars. Advisory completion remains #13c.
 
 The fixed staged order is global private reservation, outbound authorization,
 dispatch, sanitized noncompleted result, exact-scope private index, then the
@@ -3602,6 +3604,246 @@ preflight and fails closed above depth 100, 100,000 nodes or 16 MiB. Definitions
 cap populations at 500 episodes, disclosed evidence at 5,000 refs and attempts
 at one. No record grants trust, disclosure proof, Candidate/Review authority,
 publication, validation, utility, efficacy or calibration.
+
+#### Provider-neutral semantic generation (#13b)
+
+`@cormidia/learning-loop/workflows` exports exactly two names:
+
+```ts
+export interface SemanticWorkflowBundle {
+  readonly schemaVersion: 1;
+  readonly definitionDigest: string;
+
+  prepareGeneration(input: {
+    readonly detector: DetectorRunInput["detector"];
+    readonly pack: DetectorRunInput["pack"];
+    readonly lens: NonNullable<DetectorRunInput["lens"]>;
+    readonly scope: Scope;
+    readonly episodeRecordIds: readonly string[];
+    readonly expiresAt: string;
+  }): Promise<
+    | {
+        readonly status: "prepared";
+        readonly plan: object;
+        readonly attemptId: string;
+        readonly preview: {
+          readonly mediaType: "application/json";
+          readonly encoding: "utf-8";
+          readonly bytes: Uint8Array;
+          readonly byteLength: number;
+          readonly estimatedInputTokens: number;
+          readonly minimizedBytesDigest: string;
+          readonly keyPolicyDigest: string;
+        };
+        readonly windowDigest: string;
+        readonly executionKeyDigest: string;
+      }
+    | {
+        readonly status: "execution_existing";
+        readonly preview: null;
+        readonly windowDigest: string;
+        readonly executionKeyDigest: string;
+        readonly execution: DetectorExecutionView;
+        readonly derivations: readonly InsightDerivationView[];
+      }
+    | {
+        readonly status: "not_applicable" | "incomplete";
+        readonly preview: null;
+        readonly diagnostics: readonly Diagnostic[];
+      }
+  >;
+
+  authorizeGeneration(input: {
+    readonly plan: object;
+    readonly evidence: unknown;
+  }): Promise<{
+    readonly authorization: object;
+    readonly authorizedAt: string;
+    readonly expiresAt: string;
+  }>;
+
+  runGeneration(input: {
+    readonly plan: object;
+    readonly authorization: object | null;
+  }): Promise<{
+    readonly status:
+      | "completed"
+      | "provider_refused"
+      | "provider_failed"
+      | "result_invalid"
+      | "result_limit"
+      | "outcome_unknown";
+    readonly persistence: "committed" | "existing" | "dispatch_only";
+    readonly callbackInvoked: boolean;
+    readonly turnId: string | null;
+    readonly execution?: DetectorExecutionRecord;
+    readonly derivations: readonly InsightDerivation[];
+  }>;
+
+  recoverGeneration(input: {
+    readonly attemptId: string;
+    readonly scope: Scope;
+  }): Promise<{
+    readonly status:
+      | "completed"
+      | "provider_refused"
+      | "provider_failed"
+      | "result_invalid"
+      | "result_limit"
+      | "outcome_unknown"
+      | "not_dispatched";
+    readonly persistence:
+      | "committed"
+      | "existing"
+      | "dispatch_only"
+      | "not_dispatched";
+    readonly callbackInvoked: boolean; // always false for the shipped recovery path
+    readonly turnId: string | null;
+    readonly execution?: DetectorExecutionRecord;
+    readonly derivations: readonly InsightDerivation[];
+  }>;
+
+  getTurn(input: {
+    readonly turnId: string;
+    readonly scope: Scope;
+  }): Promise<SemanticWorkflowTurnView | undefined>;
+
+  queryTurns(input: {
+    readonly scope: Scope;
+    readonly limit: number;
+    readonly cursor?: string;
+  }): AsyncIterable<{
+    readonly items: readonly SemanticWorkflowTurnView[];
+    readonly nextCursor?: string;
+    readonly snapshotRevision: string;
+  }>;
+}
+
+export declare const createSemanticWorkflowBundle: {
+  (input: SemanticWorkflowBundleConfig): SemanticWorkflowBundle;
+  readonly defineGeneration: (input: DefineGenerationInput) => SemanticWorkflowDefinition;
+  readonly generationResultSchema: {
+    readonly schemaVersion: 1;
+    readonly id: "cormidia.semantic-generation-result";
+    readonly version: "1.0.0";
+    readonly schemaDigest: string;
+  };
+};
+```
+
+`SemanticWorkflowBundleConfig`, `DefineGenerationInput`, the definition and
+turn-view helper names above describe structural inferred types; they are not
+additional exports. A strict consumer calls the factory statics without naming
+those helper types. `defineGeneration` fixes lane `generation`, calibration
+null, maximum attempts one, tool mode `none`, the kernel result schema, and all
+definition digests. The caller supplies exact implementation, provider/model,
+prompt, renderer, budgets, disclosure policy and producer attribution. It must
+bind the resulting `definitionDigest` into the selected detector configuration
+before constructing the LearningLoop.
+
+Bundle configuration pairs that exact definition and loop with a loop-verified
+producer and host capabilities for rendering, minimization, tenant-keyed
+digestion, input-token estimation and provider invocation. Outbound transport
+also requires a disclosure-authority capability with the exact authorization-
+policy digest; local transport forbids one. Renderer, minimizer, keyed digester
+and estimator are synchronous and thenable-free. The provider is the sole async
+model boundary. No provider SDK is part of this contract.
+
+Preparation is zero-write and zero-provider-call. It resolves a stable complete
+DetectorWindow and constructs the final canonical request envelope itself:
+definition identity, prompt binding, minimized host instructions, complete
+window population, evidence and evidence-health facts are all present. The
+preview is a copy of the exact UTF-8 application bytes privately retained for
+the provider callback. It does not prove credentials, headers, SDK or HTTP
+serialization, compression, TLS framing, network delivery or other wire bytes.
+The tenant-keyed digest and token estimate are computed once over those exact
+application bytes.
+
+The exact pre-call order is reservation, execution-plan lock, outbound
+authorization when required, scope-and-definition attempt index, second stable
+current-window/policy check, then one create-only dispatch claim. Only a new
+claim invokes the provider, immediately and at most once. Same exact request
+bytes converge; a different request for the DetectorExecution key conflicts.
+An authorization is permission for the bound content, not proof that the
+provider received it.
+
+The provider callback receives a fresh byte copy, exact operation/idempotency
+key, model fingerprint, deny-all tool policy, budgets and AbortSignal. Provider
+output is descriptor-snapshotted once. Exact canonical escaping and punctuation
+count toward the absolute 16 MiB response ceiling; accessors, symbols, cycles,
+non-JSON values, depth above 100 and more than 100,000 nodes fail closed. The
+kernel measures response length, applies tenant-keyed digestion, binds the
+request attestation and mints the durable receipt. Provider-reported
+measurements and native receipt identity do not persist.
+
+The closed result/usage matrix is:
+
+| Status | Exact response metadata | Usage | Output/reason |
+| --- | --- | --- | --- |
+| `completed` | required | reported and inside every configured ceiling | typed DetectorResultDraft; no reason |
+| `provider_refused`, `provider_failed` | required | reported or `usage.not_reported` | no output; exact `workflow.<status>` |
+| `result_invalid` | present only when canonical response bytes were measurable | reported only if structurally safe, otherwise `usage.not_reported` | no output; `workflow.result_invalid` |
+| `result_limit` | present for a measured lower-policy overrun, null when the absolute hard bound prevents retention | reported if safely parsed, otherwise `usage.not_reported` | no output; `workflow.result_limit` |
+| `outcome_unknown` | no synthesized result record | unknown | dispatch-only runtime classification; never an automatic retry |
+
+Missing usage is not zero. Explicit reported zero remains valid. Completed cost
+must include the configured currency and minor units when a cost ceiling exists.
+Provider-native refusal/error prose never becomes a durable reason.
+
+Completed provider output must parse as the fixed DetectorResultDraft. It
+cannot provide ids, digests, principals, trust, findings, recurrence locator,
+Candidate, Review or effects. It may populate the existing typed candidate-
+intervention hypothesis field, which remains inert derivation content and does
+not mint a Candidate. Evidence and health citations must be subsets of the
+exact disclosed window. The kernel assembles the existing
+DetectorExecutionRecord and InsightDerivation graph, including exact producer,
+implementation, model, prompt, tool, budget and result-disclosure lineage. A
+positive result records recurrence as locator unavailable; a negative result
+has no recurrence binding.
+
+Completed persistence is available only through the typed generation path. Its
+receipt order is completion intent first after synchronous response validation,
+then result and workflow-execution bindings, ordinary semantic registry/links/
+derivations/index/recurrence, DetectorExecution receipt last in the child graph,
+general scope turn index, and scope-and-definition terminal receipt last. The
+generic #13a completed writer remains closed.
+
+`recoverGeneration` exists because a process restart loses WeakMap plan and
+authorization handles. A safe `attemptId` plus exact scope lets a reconstructed
+bundle consult its definition-local attempt index before global facts. Recovery
+invokes no host callback, does not redispatch, and may ignore current
+window/expiry only to forward-complete an already durable result or completion
+intent. No dispatch returns `not_dispatched`; dispatch without either known
+fact returns `outcome_unknown` and `dispatch_only`.
+
+`getTurn` and `queryTurns` require exact scope and are bound to the bundle's
+definition. Get probes the scope-and-definition terminal before any global
+target. Query lists only that terminal namespace; its cursor binds scope,
+definition, loop registry and query-cursor store scope, and its revision is
+definition-local. Page limits are 1 through 100, with at most four terminal
+graphs per store page under 64 MiB and 5,000 child-reference work ceilings.
+Legacy #13a indexes without a definition remain private direct-get history and
+do not enter public workflow pages.
+
+`SemanticWorkflowTurnView` is a minimized projection: definition identity,
+transport, scope digest, closed status, request length/token estimate/keyed
+digest policy, dispatch-claim time, authorization status, result-attested
+kernel response receipt, reported/unreported usage, and either exact child
+execution/derivation views or a closed no-output reason. Authorization and
+observed result disclosure stay separate. It contains no preview/request bytes,
+raw response, provider-native receipt, provider error, Candidate, Review,
+publication, effect, authority, utility or efficacy field.
+
+Detector-window evidence resolution admits at most 5,000 exact references by a
+bounded shared batch fold. Candidate proposal keeps its independent 1,000-ref
+cap. No generation method creates a Candidate or Review, runs admission,
+publishes, activates, validates or applies an effect. Schema validity is not
+model quality, calibration, utility, efficacy or improvement. #13c owns
+advisory review; #26 owns decisive calibrated review and held-out utility.
+
+#13b validation is L1 contract/schema/golden evidence plus L2 deterministic
+hermetic callback/store evidence only. L3 live provider, L4 semantic/model, L5
+operational/SLO and L6 longitudinal evidence are empty.
 
 ### Replay and outcomes
 
@@ -4870,6 +5112,11 @@ names on the opt-in `/reference-detectors` subpath:
 all-entrypoint snapshot therefore remains 156.
 Decision 0021 adds only private workflow-turn records and persistence; it adds
 no `/workflows` entrypoint or public name, so the snapshot remains 156.
+Decision 0022 adds the `/workflows` entrypoint with exactly
+`SemanticWorkflowBundle` and `createSemanticWorkflowBundle`. Typed static
+definition/schema properties and all bundle methods are members of those two
+symbols, not separate exports. The all-entrypoint snapshot is therefore 158;
+the root snapshot is unchanged.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 
@@ -4927,7 +5174,9 @@ It must not compare Codex, Claude Code, and Cursor from ordinary self-selected d
 4. Are `T0`–`T3` public protocol tiers or only a conservative default policy? This proposal makes them public because destination authority must be portable.
 5. Is the low-level `LearningStore` contract sufficient for database and filesystem adapters without requiring distributed transactions?
 6. Which publication destinations, if any, ship in the first package? This proposal favors inert examples and a local versioned text-context destination only after its host-protection limitations are explicit.
-7. Does `/workflows` ship with `0.x`, or remain example code until distiller and reviewer calibration exists?
+7. Which advisory-review methods, if any, join the shipped `/workflows` bundle
+   in #13c before decisive reviewer calibration exists? #13b generation is
+   already ratified; no review method is implied by it.
 8. Which exact fields enter candidate, plan, policy, and authorization digests?
 9. What historical Cormidia bytes and schemas must remain compatible?
 10. Which Node releases, module formats, and license serve the intended community?

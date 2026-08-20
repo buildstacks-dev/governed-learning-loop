@@ -225,3 +225,40 @@ default-quality or improvement claim.
   companion adapters and may not leak SDK types into the protocol.
 - Campaign order is refined to `#13a → #13b → #13c → #26`; #13a completion
   does not close the model-mediated workflow issue.
+
+## #13b amendment — Decision 0022
+
+Decision 0022 completes the typed generation slice without weakening these
+#13a facts:
+
+- `/workflows` now exports exactly `SemanticWorkflowBundle` and
+  `createSemanticWorkflowBundle`; the root remains unchanged and the public
+  snapshot is 158. The factory's static definition/schema properties do not add
+  names.
+- The bare #13a records and `claimSemanticDispatch` remain private and
+  insufficient for egress. Only a factory-minted prepared plan, exact
+  plan-bound authorization when outbound, two current-window/policy checks, and
+  a newly created dispatch claim can reach the one provider callback.
+- New generation runs persist reservation, execution-plan lock, outbound
+  authorization when required, and a scope-and-definition-private attempt
+  index before dispatch. Different request bytes for one DetectorExecution key
+  conflict; exact retries converge.
+- Completed result shapes are now legal only through the typed #13b completion
+  intent and exact workflow-execution/DetectorExecution/InsightDerivation
+  sidecars. The generic completed writer/read guard from #13a stays closed.
+- A completion intent or noncompleted result may be forward-completed after a
+  process crash through `recoverGeneration`. Recovery is exact-attempt and
+  scope/definition-index first, performs no callback, and does not require
+  current expiry/window status. Dispatch without either known fact remains
+  `outcome_unknown`; provider throw, timeout, or a crash before the first
+  post-callback intent cannot be retried automatically.
+- New terminal receipts are written last in a scope-and-definition namespace;
+  the general scope index remains for private compatibility. Legacy #13a
+  indexes without `definitionDigest` remain byte-valid for generic direct get
+  but are invisible to public definition-local queries.
+- Response application content is detached once, hard-bounded by exact
+  canonical UTF-8 bytes, measured and tenant-key-digested by the kernel. This
+  still proves neither provider wire bytes nor network delivery.
+
+All authority, Candidate/Review, effect, calibration, and validation exclusions
+in this decision remain in force.

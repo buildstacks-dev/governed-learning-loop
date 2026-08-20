@@ -34,6 +34,7 @@ import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import { adapterFor } from "./source-registration.js";
 
 const MAX_EVIDENCE_IDS = 1_000;
+const MAX_DETECTOR_EVIDENCE_IDS = 5_000;
 const MAX_DURABLE_ID_LENGTH = 4_096;
 const SCAN_PAGE_LIMIT = 100;
 const MAX_SNAPSHOT_ATTEMPTS = 3;
@@ -55,6 +56,12 @@ interface ResolveOptions {
   readonly allowMeasurements: boolean;
   readonly requireOutcomeClaim: boolean;
 }
+
+export type DetectorEvidenceInput =
+  | { readonly kind: "observation"; readonly recordId: string }
+  | { readonly kind: "measurement"; readonly recordId: string }
+  | { readonly kind: "observation"; readonly record: Observation }
+  | { readonly kind: "measurement"; readonly record: MeasurementRecord };
 
 export interface EvidenceHealthView {
   readonly status: "ready" | "incomplete" | "invalid" | "legacy_unbound";
@@ -107,6 +114,10 @@ function evidenceDiagnostic(
 function markHealth(health: MutableHealth, status: "incomplete" | "invalid", diagnostic: Diagnostic): void {
   if (status === "invalid" || health.status === "ready") health.status = status;
   health.diagnostics.push(diagnostic);
+}
+
+function hasInvalidHealth(health: MutableHealth): boolean {
+  return health.status === "invalid";
 }
 
 function result(
@@ -249,6 +260,174 @@ async function loadEvidenceRecord(
   return undefined;
 }
 
+function detectorInputRecordId(input: DetectorEvidenceInput): string {
+  return "record" in input ? input.record.id : input.recordId;
+}
+
+function validateDetectorInputs(
+  inputs: readonly DetectorEvidenceInput[],
+  health: MutableHealth,
+): readonly DetectorEvidenceInput[] | undefined {
+  if (!Array.isArray(inputs) || inputs.length === 0) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic("evidence.ids_invalid", "error", "detector evidence requires at least one exact durable id"),
+    );
+    return undefined;
+  }
+  if (inputs.length > MAX_DETECTOR_EVIDENCE_IDS) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ids_invalid",
+        "error",
+        `detector evidence exceeds the ${MAX_DETECTOR_EVIDENCE_IDS}-record ceiling`,
+      ),
+    );
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const kindsById = new Map<string, EvidenceKind>();
+  for (const [index, input] of inputs.entries()) {
+    const id = detectorInputRecordId(input);
+    const separator = typeof id === "string" ? id.indexOf("/") : -1;
+    if (
+      typeof id !== "string" ||
+      id.length === 0 ||
+      id.length > MAX_DURABLE_ID_LENGTH ||
+      containsControlCharacter(id) ||
+      separator <= 0 ||
+      separator === id.length - 1
+    ) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.id_invalid",
+          "error",
+          "detector evidence id is not an exact bounded source-qualified durable id",
+          ["evidenceIds", index],
+        ),
+      );
+      continue;
+    }
+    if (seen.has(id)) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic("evidence.id_duplicate", "error", "detector evidence ids must be unique", [
+          "evidenceIds",
+          index,
+        ]),
+      );
+      continue;
+    }
+    seen.add(id);
+    kindsById.set(id, input.kind);
+  }
+  if (health.status === "invalid") return undefined;
+
+  const aggregateIds = new Set(seen);
+  let duplicateSupport = false;
+  let missingSupport = false;
+  let emptySupport = false;
+  for (const input of inputs) {
+    if (!("record" in input) || input.kind !== "measurement") continue;
+    const supportingIds = new Set<string>();
+    if (input.record.evidenceIds.length === 0) emptySupport = true;
+    for (const supportingId of input.record.evidenceIds) {
+      aggregateIds.add(supportingId);
+      if (supportingIds.has(supportingId)) duplicateSupport = true;
+      supportingIds.add(supportingId);
+      if (kindsById.get(supportingId) !== "observation") missingSupport = true;
+    }
+  }
+  if (emptySupport) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ownership_mismatch",
+        "error",
+        "measurement evidence requires at least one disclosed supporting observation",
+      ),
+    );
+  }
+  if (duplicateSupport) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ownership_mismatch",
+        "error",
+        "measurement supporting observation ids must be unique",
+      ),
+    );
+  }
+  if (missingSupport) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.support_outside_window",
+        "error",
+        "measurement support must be an observation in the exact detector window",
+      ),
+    );
+  }
+  if (aggregateIds.size > MAX_DETECTOR_EVIDENCE_IDS) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ids_invalid",
+        "error",
+        `detector evidence and support exceed the ${MAX_DETECTOR_EVIDENCE_IDS}-record ceiling`,
+      ),
+    );
+  }
+  return hasInvalidHealth(health) ? undefined : inputs;
+}
+
+async function loadDetectorEvidenceRecord(
+  context: EngineContext,
+  input: DetectorEvidenceInput,
+  index: number,
+  health: MutableHealth,
+): Promise<LoadedEvidence | undefined> {
+  const id = detectorInputRecordId(input);
+  const stored = await loadStoredRecord(context, input.kind, id);
+  if (stored === undefined) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic("evidence.not_found", "error", "exact durable detector evidence was not found", [
+        "evidenceIds",
+        index,
+      ]),
+    );
+    return undefined;
+  }
+  const record = input.kind === "observation" ? parseObservation(stored.value) : parseMeasurementRecord(stored.value);
+  if (record.id !== id) throw invalid("store.corrupt", "stored detector evidence id does not match its key", ["id"]);
+  if ("record" in input && canonicalJsonText(toJsonValue(input.record)) !== canonicalJsonText(toJsonValue(record))) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.record_mismatch",
+        "error",
+        "queried detector evidence no longer matches the exact durable record",
+        ["evidenceIds", index],
+      ),
+    );
+    return undefined;
+  }
+  return { kind: input.kind, record, digest: stored.digest };
+}
+
 function derivativeKey(kind: "observation" | "measurement" | "episode", id: string, digest: string): string {
   return canonicalJsonText([kind, id, digest]);
 }
@@ -282,9 +461,11 @@ function configuredSource(
   receipt: SourcePageReceipt,
   index: number,
   health: MutableHealth,
+  registrationsById?: ReadonlyMap<string, RegisteredSource<unknown>>,
 ): RegisteredSource<unknown> | undefined {
   const provenance = loaded.record.provenance;
-  const registration = [...context.sources].find((source) => source.id === receipt.sourceId);
+  const registration =
+    registrationsById?.get(receipt.sourceId) ?? [...context.sources].find((source) => source.id === receipt.sourceId);
   if (registration === undefined || registration.registryRevision !== receipt.sourceRegistrationRevision) {
     markHealth(
       health,
@@ -542,6 +723,102 @@ async function foldReceiptHealth(
     }
   }
 
+  for (const finding of findings.values()) {
+    if (finding.effect === "blocks_use") {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic("evidence.health_blocks_use", "error", "current source health blocks evidence use"),
+      );
+    } else {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic(
+          "evidence.health_incomplete",
+          "warning",
+          "current source health limits evidence claims or audit use",
+        ),
+      );
+    }
+    if (finding.completeness !== "complete") {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic("evidence.health_incomplete", "warning", "evidence-health finding is not complete"),
+      );
+    }
+  }
+}
+
+async function foldDetectorReceiptHealth(
+  context: EngineContext,
+  receipts: readonly SourcePageReceipt[],
+  health: MutableHealth,
+): Promise<void> {
+  const uniqueReceipts = new Map(receipts.map((receipt) => [receipt.id, receipt]));
+  const pageIdentities = new Set([...uniqueReceipts.values()].map(pageIdentity));
+  const requiredFindingReceipts = new Map<string, SourcePageReceipt[]>();
+  const findings = new Map<string, EvidenceHealthFinding>();
+
+  for (const receipt of uniqueReceipts.values()) {
+    if (receipt.state.status !== "available") {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic("evidence.receipt_unavailable", "error", "evidence receipt is not available"),
+      );
+    } else if (receipt.state.completeness !== "complete") {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic("evidence.receipt_incomplete", "warning", "evidence receipt is not complete"),
+      );
+    }
+    for (const findingId of receipt.healthFindingIds) {
+      const findingReceipts = requiredFindingReceipts.get(findingId) ?? [];
+      findingReceipts.push(receipt);
+      requiredFindingReceipts.set(findingId, findingReceipts);
+    }
+  }
+
+  for await (const page of iterateRecordPages(context.store, "evidence-health", { limit: SCAN_PAGE_LIMIT })) {
+    for (const stored of page.records) {
+      const finding = parseEvidenceHealthFinding(stored.value);
+      if (finding.id !== stored.key.id) {
+        throw invalid("store.corrupt", "stored evidence-health id does not match its key", ["id"]);
+      }
+      const requiredReceipts = requiredFindingReceipts.get(finding.id) ?? [];
+      if (requiredReceipts.some((receipt) => findingIdentity(finding) !== pageIdentity(receipt))) {
+        markHealth(
+          health,
+          "invalid",
+          evidenceDiagnostic(
+            "evidence.health_mismatch",
+            "error",
+            "source page receipt references evidence health for another source page",
+          ),
+        );
+        continue;
+      }
+      if (requiredReceipts.length > 0 || pageIdentities.has(findingIdentity(finding))) {
+        findings.set(finding.id, finding);
+      }
+    }
+  }
+
+  for (const findingId of requiredFindingReceipts.keys()) {
+    if (findings.has(findingId)) continue;
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.health_missing",
+        "error",
+        "source page receipt references a missing evidence-health finding",
+      ),
+    );
+  }
   for (const finding of findings.values()) {
     if (finding.effect === "blocks_use") {
       markHealth(
@@ -882,6 +1159,296 @@ async function resolveCandidateEvidenceOnce(
   return result(references, records, health);
 }
 
+async function resolveDetectorEvidenceOnce(
+  context: EngineContext,
+  exactInputs: readonly DetectorEvidenceInput[],
+  scope: Scope,
+): Promise<CandidateEvidenceResolution> {
+  const health: MutableHealth = { status: "ready", diagnostics: [] };
+  const inputs = validateDetectorInputs(exactInputs, health);
+  if (inputs === undefined) return result([], [], health);
+  const detectorScope = context.scopePolicy.validate(scope);
+  const expectedScopeDigest = candidateScopeDigest(detectorScope);
+
+  const loadedByIndex: Array<LoadedEvidence | undefined> = [];
+  for (const [index, input] of inputs.entries()) {
+    loadedByIndex.push(await loadDetectorEvidenceRecord(context, input, index, health));
+  }
+
+  const inputKindsById = new Map<string, EvidenceKind>();
+  const aggregateIds = new Set<string>();
+  for (const input of inputs) {
+    const id = detectorInputRecordId(input);
+    inputKindsById.set(id, input.kind);
+    aggregateIds.add(id);
+  }
+  let duplicateSupport = false;
+  let missingSupport = false;
+  let emptySupport = false;
+  for (const [index] of inputs.entries()) {
+    const loaded = loadedByIndex[index];
+    if (loaded === undefined || loaded.kind !== "measurement") continue;
+    const measurement = parseMeasurementRecord(toJsonValue(loaded.record));
+    const supportingIds = new Set<string>();
+    if (measurement.evidenceIds.length === 0) emptySupport = true;
+    for (const supportingId of measurement.evidenceIds) {
+      aggregateIds.add(supportingId);
+      if (supportingIds.has(supportingId)) duplicateSupport = true;
+      supportingIds.add(supportingId);
+      if (inputKindsById.get(supportingId) !== "observation") missingSupport = true;
+    }
+  }
+  if (emptySupport) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ownership_mismatch",
+        "error",
+        "measurement evidence requires at least one disclosed supporting observation",
+      ),
+    );
+  }
+  if (duplicateSupport) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ownership_mismatch",
+        "error",
+        "measurement supporting observation ids must be unique",
+      ),
+    );
+  }
+  if (missingSupport) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.support_outside_window",
+        "error",
+        "measurement support must be an observation in the exact detector window",
+      ),
+    );
+  }
+  if (aggregateIds.size > MAX_DETECTOR_EVIDENCE_IDS) {
+    markHealth(
+      health,
+      "invalid",
+      evidenceDiagnostic(
+        "evidence.ids_invalid",
+        "error",
+        `detector evidence and support exceed the ${MAX_DETECTOR_EVIDENCE_IDS}-record ceiling`,
+      ),
+    );
+  }
+  if (health.status === "invalid") return result([], [], health);
+
+  const wantedEpisodes = new Set<string>();
+  const wantedSources = new Set<string>();
+  for (const loaded of loadedByIndex) {
+    if (loaded === undefined) continue;
+    wantedEpisodes.add(logicalEpisodeKey(loaded.record.provenance.sourceId, loaded.record.episodeId));
+    wantedSources.add(loaded.record.provenance.sourceId);
+  }
+  const episodeMatches = await findEpisodes(context, wantedEpisodes, wantedSources);
+  const derivativeKeys = new Set<string>();
+  for (const loaded of loadedByIndex) {
+    if (loaded !== undefined) derivativeKeys.add(derivativeKey(loaded.kind, loaded.record.id, loaded.digest));
+  }
+  for (const matches of episodeMatches.values()) {
+    for (const episode of matches) {
+      derivativeKeys.add(derivativeKey("episode", episode.episode.id, episode.episodeDigest));
+    }
+  }
+  const receiptMatches = await findDerivativeReceipts(context, derivativeKeys);
+  const registrationsById = new Map([...context.sources].map((registration) => [registration.id, registration]));
+  const fullyBoundByIndex: Array<FullyBoundEvidence | undefined> = [];
+  for (const [index, loaded] of loadedByIndex.entries()) {
+    if (loaded === undefined) {
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const evidenceReceipts = receiptMatches.get(derivativeKey(loaded.kind, loaded.record.id, loaded.digest)) ?? [];
+    if (evidenceReceipts.length !== 1) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          evidenceReceipts.length === 0 ? "evidence.receipt_missing" : "evidence.receipt_ambiguous",
+          "error",
+          evidenceReceipts.length === 0
+            ? "evidence record has no exact committed source page receipt"
+            : "evidence record has more than one committed source page receipt",
+          ["evidenceIds", index],
+        ),
+      );
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const receipt = evidenceReceipts[0];
+    if (receipt === undefined) {
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const registration = configuredSource(context, loaded, receipt, index, health, registrationsById);
+    if (registration === undefined) {
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const receiptBound: ReceiptBoundEvidence = { ...loaded, receipt, registration };
+    const episodes = episodeMatches.get(logicalEpisodeKey(registration.id, loaded.record.episodeId)) ?? [];
+    if (episodes.length !== 1) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          episodes.length === 0 ? "evidence.episode_missing" : "evidence.episode_ambiguous",
+          "error",
+          episodes.length === 0
+            ? "evidence does not resolve to one committed episode identity"
+            : "evidence resolves to more than one episode identity",
+          ["evidenceIds", index],
+        ),
+      );
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const episode = episodes[0];
+    if (episode === undefined || !validateEpisode(receiptBound, episode, expectedScopeDigest, index, health)) {
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const episodeReceipts =
+      receiptMatches.get(derivativeKey("episode", episode.episode.id, episode.episodeDigest)) ?? [];
+    if (episodeReceipts.length !== 1) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          episodeReceipts.length === 0 ? "evidence.episode_receipt_missing" : "evidence.episode_receipt_ambiguous",
+          "error",
+          episodeReceipts.length === 0
+            ? "resolved episode has no exact committed source page receipt"
+            : "resolved episode has more than one committed source page receipt",
+          ["evidenceIds", index],
+        ),
+      );
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    const episodeReceipt = episodeReceipts[0];
+    if (
+      episodeReceipt === undefined ||
+      !validateEpisodeReceipt(context, receiptBound, episode, episodeReceipt, index, health)
+    ) {
+      fullyBoundByIndex.push(undefined);
+      continue;
+    }
+    fullyBoundByIndex.push({ ...receiptBound, episode, episodeReceipt });
+  }
+
+  const fullyBound = fullyBoundByIndex.flatMap((item) => (item === undefined ? [] : [item]));
+  for (const item of fullyBound) {
+    if (item.record.provenance.completeness !== "complete" || item.episode.identity.completeness !== "complete") {
+      markHealth(
+        health,
+        "incomplete",
+        evidenceDiagnostic("evidence.incomplete", "warning", "evidence or episode identity is not complete"),
+      );
+    }
+  }
+  await foldDetectorReceiptHealth(
+    context,
+    fullyBound.flatMap((item) => [item.receipt, item.episodeReceipt]),
+    health,
+  );
+
+  const observationRefsById = new Map<string, ObservationEvidenceRef>();
+  for (const item of fullyBound) {
+    if (item.kind === "observation") observationRefsById.set(item.record.id, buildObservationEvidenceRef(item));
+  }
+  const outcomeMeasurementRefsByEpisode = new Map<string, ReadonlySet<string> | undefined>();
+  const references: EvidenceRef[] = [];
+  const records: EvidenceRecord[] = [];
+  for (const item of fullyBoundByIndex) {
+    if (item === undefined) continue;
+    if (item.kind === "observation") {
+      const reference = observationRefsById.get(item.record.id);
+      if (reference !== undefined) {
+        references.push(reference);
+        records.push(item.record);
+      }
+      continue;
+    }
+    const measurement = parseMeasurementRecord(toJsonValue(item.record));
+    const supportingEvidenceRefs: ObservationEvidenceRef[] = [];
+    let ownershipMatches = measurement.evidenceIds.length > 0;
+    for (const supportingId of measurement.evidenceIds) {
+      const reference = observationRefsById.get(supportingId);
+      if (reference === undefined) {
+        ownershipMatches = false;
+        continue;
+      }
+      if (
+        reference.sourceId !== item.record.provenance.sourceId ||
+        reference.sourceRegistrationRevision !== item.registration.registryRevision ||
+        reference.sourceRef !== item.record.provenance.sourceRef ||
+        reference.sourceRevision !== item.record.provenance.sourceRevision ||
+        reference.loopRegistryRevision !== item.receipt.loopRegistryRevision ||
+        reference.episode.episodeId !== item.record.episodeId ||
+        reference.episode.episodeRecordId !== item.episode.episode.id
+      ) {
+        ownershipMatches = false;
+      }
+      supportingEvidenceRefs.push(reference);
+    }
+    if (
+      !ownershipMatches ||
+      supportingEvidenceRefs.length !== measurement.evidenceIds.length ||
+      measurement.provenance.completeness !== worstCompleteness(supportingEvidenceRefs)
+    ) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.ownership_mismatch",
+          "error",
+          "measurement evidence does not bind exact same-source observations and completeness",
+        ),
+      );
+      continue;
+    }
+    const reference = buildMeasurementEvidenceRef(item, supportingEvidenceRefs);
+    const episodeRecordId = reference.episode.episodeRecordId;
+    let claimedMeasurements = outcomeMeasurementRefsByEpisode.get(episodeRecordId);
+    if (!outcomeMeasurementRefsByEpisode.has(episodeRecordId)) {
+      const outcome = await loadLatestEpisodeOutcomeClaim(context, episodeRecordId);
+      claimedMeasurements =
+        outcome.status === "resolved"
+          ? new Set(outcome.latest.measurementRefs.map((claimed) => canonicalJsonText(toJsonValue(claimed))))
+          : undefined;
+      outcomeMeasurementRefsByEpisode.set(episodeRecordId, claimedMeasurements);
+    }
+    if (claimedMeasurements === undefined || !claimedMeasurements.has(canonicalJsonText(toJsonValue(reference)))) {
+      markHealth(
+        health,
+        "invalid",
+        evidenceDiagnostic(
+          "evidence.outcome_unbound",
+          "error",
+          "measurement evidence is not bound by the latest episode outcome claim",
+        ),
+      );
+      continue;
+    }
+    references.push(reference);
+    records.push(measurement);
+  }
+
+  return result(references, records, health);
+}
+
 /**
  * Retries the composite read unless every evidence-bearing namespace retained
  * one stable revision across the full record/receipt/identity/health fold.
@@ -916,6 +1483,35 @@ export function resolveCandidateEvidence(
     allowMeasurements: true,
     requireOutcomeClaim: true,
   });
+}
+
+/**
+ * Internal detector/window path. Unlike Candidate evidence resolution, this
+ * binds the complete disclosed window as one batch and never recursively
+ * loads measurement support that was absent from that window.
+ */
+export async function resolveDetectorEvidence(
+  context: EngineContext,
+  exactInputs: readonly DetectorEvidenceInput[],
+  scope: Scope,
+): Promise<CandidateEvidenceResolution> {
+  const preflightHealth: MutableHealth = { status: "ready", diagnostics: [] };
+  if (validateDetectorInputs(exactInputs, preflightHealth) === undefined) {
+    return result([], [], preflightHealth);
+  }
+  for (let attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const before = await evidenceSnapshotRevision(context);
+    const resolved = await resolveDetectorEvidenceOnce(context, exactInputs, scope);
+    const after = await evidenceSnapshotRevision(context);
+    if (before === after) return resolved;
+  }
+  throw new LearningLoopError("evidence.snapshot_changed", [
+    {
+      code: "evidence.snapshot_changed",
+      severity: "error",
+      message: "evidence changed repeatedly while resolving detector lineage; retry the operation",
+    },
+  ]);
 }
 
 /** Internal outcome-ingest path: mint exact measurement refs before the claim exists. */

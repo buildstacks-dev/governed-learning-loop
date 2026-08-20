@@ -149,6 +149,7 @@ export interface SemanticTurnScopeIndex {
   readonly turnId: string;
   readonly turnKeyDigest: string;
   readonly turnDigest: string;
+  readonly definitionDigest?: string;
   readonly indexDigest: string;
 }
 
@@ -348,9 +349,6 @@ function assertResultPairing(
     reasonCodes[0] !== `workflow.${status}`
   ) {
     throw invalid("schema.corrupt", "non-completed semantic result reason does not match its exact status", []);
-  }
-  if ((status === "result_invalid" || status === "result_limit") && response === null) {
-    throw invalid("schema.corrupt", "invalid or oversized results require known response metadata", []);
   }
   if (status === "provider_refused" && response === null) {
     throw invalid("schema.corrupt", "provider refusal requires known response metadata", []);
@@ -617,11 +615,13 @@ export function parseSemanticTurnScopeIndex(input: unknown): SemanticTurnScopeIn
   const fields = readFields(input, []);
   const schemaVersion = fields.schemaVersion1();
   const turnKeyDigest = fields.req("turnKeyDigest", parseDigestAt);
+  const definitionDigest = fields.opt("definitionDigest", parseDigestAt);
   const base = {
     scopeDigest: fields.req("scopeDigest", parseDigestAt),
     turnId: fields.req("turnId", parseDurableId),
     turnKeyDigest,
     turnDigest: fields.req("turnDigest", parseDigestAt),
+    ...(definitionDigest === undefined ? {} : { definitionDigest }),
   };
   if (base.turnId !== turnId(turnKeyDigest)) {
     throw invalid("schema.corrupt", "semantic turn scope index id does not match its turn key", ["turnId"]);

@@ -152,7 +152,10 @@ const parseEpisodeMemberAt: Parse<RecurrenceEpisodeMember> = (input, path) => {
   };
 };
 
-function parseBindingAt(input: unknown, path: readonly (string | number)[]): ExecutionRecurrenceBinding {
+export function parseExecutionRecurrenceBinding(
+  input: unknown,
+  path: readonly (string | number)[] = [],
+): ExecutionRecurrenceBinding {
   const fields = readFields(input, path);
   const schemaVersion = fields.schemaVersion1();
   const detector = fields.req("detector", parseDetectorProjectionAt);
@@ -332,7 +335,23 @@ function buildBinding(
     groupKeyDigest: locator === null ? null : detectorRecurrenceGroupKeyDigest(execution, locator),
     memberEpisodes: episodesForExecution(execution),
   };
-  return parseBindingAt({ schemaVersion: 1, ...base, bindingDigest: sha256HexOfCanonicalJson(toJsonValue(base)) }, []);
+  return parseExecutionRecurrenceBinding(
+    { schemaVersion: 1, ...base, bindingDigest: sha256HexOfCanonicalJson(toJsonValue(base)) },
+    [],
+  );
+}
+
+export function buildUnavailableExecutionRecurrenceBinding(
+  execution: DetectorExecutionRecord,
+): ExecutionRecurrenceBinding {
+  if (execution.result.status !== "applied" || !execution.result.conditionDetected) {
+    throw invalid(
+      "semantic.workflow_output_invalid",
+      "only a positive applied execution has recurrence unavailability",
+      [],
+    );
+  }
+  return buildBinding(execution, null);
 }
 
 function memberForBinding(binding: ExecutionRecurrenceBinding): RecurrenceGroupMember {
@@ -375,6 +394,7 @@ function assertBindingMatchesExecution(
 }
 
 function assertBindingPrivacy(context: EngineContext, binding: ExecutionRecurrenceBinding): void {
+  if (binding.locator === null) return;
   const detector = context.semanticDetectorsByRef?.get(detectorRefKey(binding.detector));
   if (detector === undefined) throw invalid("store.corrupt", "recurrence detector registration is unavailable", []);
   try {
@@ -409,7 +429,7 @@ export async function loadExecutionRecurrenceBinding(
 ): Promise<ExecutionRecurrenceBinding | undefined> {
   const stored = await loadStoredRecord(context, "detector-recurrence-binding", executionId);
   if (stored === undefined) return undefined;
-  const binding = parseBindingAt(stored.value, []);
+  const binding = parseExecutionRecurrenceBinding(stored.value, []);
   if (binding.executionId !== executionId) {
     throw invalid("store.corrupt", "recurrence binding belongs to another execution", []);
   }

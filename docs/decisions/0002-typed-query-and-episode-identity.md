@@ -23,8 +23,9 @@ contract, so episode identity must be recovered without altering those records.
 2. **Campaign dependency order is explicit.** The active order is
    `#25 → #23/#31 → #30 → #13a → #13b → #13c → #26 → #10 → #11 → #12 → #14`.
    Decision 0021 refines #13 into a private no-egress substrate, typed
-   generation/provider integration, then advisory review; it does not move
-   decisive calibrated review ahead of #26. This supersedes
+   generation/provider integration, then advisory review. Decision 0022
+   implements #13b but does not move #13c or decisive calibrated review ahead
+   of #26. This supersedes
    decision 0001's coarse Observe/Govern-then-Activate-then-Validate order; it
    does not weaken the independence of the four lifecycle tiers.
 3. **Public reads are typed and bounded.** The façade exposes domain-specific
@@ -73,3 +74,7 @@ contract, so episode identity must be recovered without altering those records.
 - Page revisions are suitable for detecting append visibility and diagnosing
   drift, but never substitute for the frozen eligibility-set digests required
   by candidate-utility studies or efficacy experiments.
+- Decision 0022 adds definition-local workflow turn pages whose opaque cursors
+  additionally bind the exact workflow definition. Their revisions describe
+  only that definition's receipt-last terminal stream; they are not frozen
+  model-evaluation or calibration populations.

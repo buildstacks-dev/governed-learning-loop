@@ -15,8 +15,8 @@ import type { EvidenceHealthFinding } from "../records/source-health.js";
 import type { DetectorExecutionRecord } from "../records/detector-execution.js";
 import type { EngineContext } from "./context.js";
 import { loadStoredRecord, recordDigest } from "./context.js";
-import type { CandidateEvidenceResolution, EvidenceHealthView } from "./evidence-binding.js";
-import { resolveCandidateEvidence } from "./evidence-binding.js";
+import type { CandidateEvidenceResolution, DetectorEvidenceInput, EvidenceHealthView } from "./evidence-binding.js";
+import { resolveDetectorEvidence } from "./evidence-binding.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
 import type { EpisodeView } from "./query.js";
 import {
@@ -329,11 +329,10 @@ export async function materializeDetectorWindow(input: {
     health: { status: "ready", diagnostics: [] },
   };
   if (records.length > 0) {
-    resolution = await resolveCandidateEvidence(
-      context,
-      records.map((record) => record.id),
-      scope,
+    const exactInputs: DetectorEvidenceInput[] = records.map((record) =>
+      "metric" in record ? { kind: "measurement", record } : { kind: "observation", record },
     );
+    resolution = await resolveDetectorEvidence(context, exactInputs, scope);
   }
   let evidenceHealth = resolution.health;
   if (resolution.refs.length !== records.length && status === "ready") {

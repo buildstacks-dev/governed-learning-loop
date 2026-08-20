@@ -175,9 +175,14 @@ remain duplicate-free. Scope entries recompute `scopeDigest`.
   outbound authorization, create-only dispatch claims, closed sanitized result
   metadata, and scope-private receipt-last persistence—without egress, a public
   export, or completed output persistence.
-- **Deferred to #13b/#13c:** nonforgeable prepared preview/provider capabilities,
-  typed generation and actual handoff, then advisory qualitative review.
-  Decisive calibrated model review remains #26.
+- **Implemented by decision 0022 for #13b:** a nonforgeable prepared preview,
+  exact local/outbound provider capability, one-call dispatch, typed
+  DetectorResultDraft assembly into this existing execution/derivation graph,
+  durable attempt recovery, locator-unavailable recurrence and
+  definition-local audit reads. It creates no Candidate, Review or effect and
+  makes no model-quality claim.
+- **Deferred to #13c:** advisory qualitative review and its non-decisive
+  evaluation scaffold. Decisive calibrated model review remains #26.
 - **Deferred to #26:** held-out candidate-utility calibration and any
   default-quality claim.
 

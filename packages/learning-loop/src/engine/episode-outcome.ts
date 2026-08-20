@@ -239,6 +239,15 @@ export async function loadLatestEpisodeOutcomeClaim(
     : foldClaims(parseStoredClaims(stored.value), episodeRecordId);
 }
 
+/** Exact retained claims for historical semantic lineage checks. */
+export async function loadEpisodeOutcomeClaimHistory(
+  context: EngineContext,
+  episodeRecordId: string,
+): Promise<readonly EpisodeOutcomeClaim[]> {
+  const stored = await loadStoredRecord(context, "episode-outcome", episodeRecordId);
+  return stored === undefined ? [] : parseStoredClaims(stored.value).map((entry) => entry.value);
+}
+
 export async function persistEpisodeOutcomeClaim(
   context: EngineContext,
   input: EpisodeOutcomeClaim,

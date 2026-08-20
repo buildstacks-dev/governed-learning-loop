@@ -37,7 +37,6 @@ const DISPATCH_KIND = "semantic-workflow-dispatch";
 const RESULT_KIND = "semantic-workflow-result";
 const TURN_KIND = "semantic-workflow-turn";
 const TURN_SCOPE_INDEX_KIND = "semantic-workflow-turn-index";
-const REVISION_DOMAIN = "semantic-workflow-revision:v1";
 const PROVIDER_OPERATION_KEY_DOMAIN = "semantic-workflow-provider-operation-key:v1";
 const WORKFLOW_FINGERPRINT_KINDS = new Set(["implementation", "model", "prompt", "tool", "budget"]);
 
@@ -80,7 +79,7 @@ export type SemanticTurnPersistenceState =
 
 const parseUnknown: Parse<unknown> = (input) => input;
 
-function sameCanonicalValue(left: unknown, right: unknown): boolean {
+export function sameCanonicalValue(left: unknown, right: unknown): boolean {
   return canonicalJsonText(toJsonValue(left)) === canonicalJsonText(toJsonValue(right));
 }
 
@@ -106,7 +105,7 @@ function providerOperationBinding(reservation: SemanticTurnReservation): {
   };
 }
 
-function assertCanonicalRecordBound(record: unknown): void {
+export function assertCanonicalRecordBound(record: unknown): void {
   assertSemanticWorkflowStructureBound(record);
   const bytes = Buffer.byteLength(canonicalJsonText(toJsonValue(record)), "utf8");
   if (bytes > SEMANTIC_WORKFLOW_MAX_CANONICAL_BYTES) {
@@ -122,7 +121,7 @@ function timestampMilliseconds(value: string): number {
   return milliseconds;
 }
 
-function assertAuthorizationBinding(
+export function assertAuthorizationBinding(
   reservation: SemanticTurnReservation,
   authorization: SemanticDisclosureAuthorization | null,
   dispatch: SemanticDispatchMarker,
@@ -273,7 +272,7 @@ function assertReportedUsageWithinBudget(reservation: SemanticTurnReservation, r
   }
 }
 
-function assertResultBinding(
+export function assertResultBinding(
   reservation: SemanticTurnReservation,
   dispatch: SemanticDispatchMarker,
   result: SemanticResultBinding,
@@ -346,7 +345,9 @@ function assertTerminalBinding(
     scopeIndex.scopeDigest !== reservation.scopeDigest ||
     scopeIndex.turnId !== turn.id ||
     scopeIndex.turnKeyDigest !== turn.turnKeyDigest ||
-    scopeIndex.turnDigest !== turn.turnDigest
+    scopeIndex.turnDigest !== turn.turnDigest ||
+    (scopeIndex.definitionDigest !== undefined &&
+      scopeIndex.definitionDigest !== reservation.definition.definitionDigest)
   ) {
     throw invalid("schema.corrupt", "semantic turn scope index does not match its terminal receipt", []);
   }
@@ -428,7 +429,7 @@ async function persistGlobalExactWithStatus<T extends { readonly id: string }>(
   return { status: status === "created" ? "created" : "existing", record: parsed };
 }
 
-async function persistGlobalExact<T extends { readonly id: string }>(
+export async function persistGlobalExact<T extends { readonly id: string }>(
   context: EngineContext,
   kind: RecordKind,
   record: T,
@@ -437,11 +438,31 @@ async function persistGlobalExact<T extends { readonly id: string }>(
   return (await persistGlobalExactWithStatus(context, kind, record, parseRecord)).record;
 }
 
-function turnScopeNamespace(exactScopeDigest: string): string {
+export async function loadOptionalGlobalExact<T extends { readonly id: string }>(
+  context: EngineContext,
+  kind: RecordKind,
+  id: string,
+  parseRecord: (input: unknown) => T,
+): Promise<T | undefined> {
+  const stored = await loadStoredRecord(context, kind, id);
+  if (stored === undefined) return undefined;
+  assertCanonicalRecordBound(stored.value);
+  const parsed = parseRecord(stored.value);
+  if (parsed.id !== id || !sameCanonicalValue(stored.value, parsed)) {
+    throw invalid("store.corrupt", "stored semantic workflow binding differs from its exact key", []);
+  }
+  return parsed;
+}
+
+export function turnScopeNamespace(exactScopeDigest: string): string {
   return `learning-semantic-workflow-scope-${exactScopeDigest}`;
 }
 
-const parseStoredRecordAt: Parse<StoredRecord> = (input, path) => {
+export function turnScopeDefinitionNamespace(exactScopeDigest: string, definitionDigest: string): string {
+  return `${turnScopeNamespace(exactScopeDigest)}-definition-${definitionDigest}`;
+}
+
+export const parseStoredRecordAt: Parse<StoredRecord> = (input, path) => {
   const fields = readFields(input, path);
   const keyFields = readFields(fields.req("key", parseUnknown), [...path, "key"]);
   return {
@@ -456,7 +477,7 @@ const parseStoredRecordAt: Parse<StoredRecord> = (input, path) => {
   };
 };
 
-function parseStoredScopeIndex(
+export function parseStoredScopeIndex(
   input: unknown,
   exactScopeDigest: string,
   expectedTurnId: string | undefined,
@@ -497,15 +518,29 @@ async function loadScopeIndex(
     : parseStoredScopeIndex(raw, exactScopeDigest, turnId, ["store", "get", TURN_SCOPE_INDEX_KIND]);
 }
 
-function parseStoredScopedTurn(
+export function loadSemanticTurnScopeIndex(
+  context: EngineContext,
+  turnIdInput: unknown,
+  exactScopeDigestInput: unknown,
+): Promise<SemanticTurnScopeIndex | undefined> {
+  const turnId = parseDurableId(turnIdInput, ["turnId"]);
+  const exactScopeDigest = parseDigestAt(exactScopeDigestInput, ["scopeDigest"]);
+  return loadScopeIndex(context, exactScopeDigest, turnId);
+}
+
+export function parseStoredScopedTurn(
   input: unknown,
   exactScopeDigest: string,
   expectedTurnId: string,
   path: readonly (string | number)[],
+  definitionDigest?: string,
 ): SemanticTurnReceipt {
   const stored = parseStoredRecordAt(input, path);
   if (
-    stored.key.namespace !== turnScopeNamespace(exactScopeDigest) ||
+    stored.key.namespace !==
+      (definitionDigest === undefined
+        ? turnScopeNamespace(exactScopeDigest)
+        : turnScopeDefinitionNamespace(exactScopeDigest, definitionDigest)) ||
     stored.key.kind !== TURN_KIND ||
     stored.key.id !== expectedTurnId
   ) {
@@ -527,23 +562,46 @@ async function loadScopedTurn(
   context: EngineContext,
   exactScopeDigest: string,
   turnId: string,
+  definitionDigest?: string,
 ): Promise<SemanticTurnReceipt | undefined> {
   const raw: unknown = await context.store.get({
-    namespace: turnScopeNamespace(exactScopeDigest),
+    namespace:
+      definitionDigest === undefined
+        ? turnScopeNamespace(exactScopeDigest)
+        : turnScopeDefinitionNamespace(exactScopeDigest, definitionDigest),
     kind: TURN_KIND,
     id: turnId,
   });
   return raw === undefined
     ? undefined
-    : parseStoredScopedTurn(raw, exactScopeDigest, turnId, ["store", "get", TURN_KIND]);
+    : parseStoredScopedTurn(raw, exactScopeDigest, turnId, ["store", "get", TURN_KIND], definitionDigest);
 }
 
-async function persistScopedTurn(context: EngineContext, turn: SemanticTurnReceipt): Promise<SemanticTurnReceipt> {
+export function loadSemanticDefinitionTurn(
+  context: EngineContext,
+  turnIdInput: unknown,
+  exactScopeDigestInput: unknown,
+  definitionDigestInput: unknown,
+): Promise<SemanticTurnReceipt | undefined> {
+  const turnId = parseDurableId(turnIdInput, ["turnId"]);
+  const exactScopeDigest = parseDigestAt(exactScopeDigestInput, ["scopeDigest"]);
+  const definitionDigest = parseDigestAt(definitionDigestInput, ["definitionDigest"]);
+  return loadScopedTurn(context, exactScopeDigest, turnId, definitionDigest);
+}
+
+export async function persistScopedTurn(
+  context: EngineContext,
+  turn: SemanticTurnReceipt,
+  definitionDigest?: string,
+): Promise<SemanticTurnReceipt> {
   assertCanonicalRecordBound(turn);
   const value = toJsonValue(turn);
   const rawResult: unknown = await context.store.create(
     {
-      namespace: turnScopeNamespace(turn.scopeDigest),
+      namespace:
+        definitionDigest === undefined
+          ? turnScopeNamespace(turn.scopeDigest)
+          : turnScopeDefinitionNamespace(turn.scopeDigest, definitionDigest),
       kind: TURN_KIND,
       id: turn.id,
     },
@@ -558,14 +616,14 @@ async function persistScopedTurn(context: EngineContext, turn: SemanticTurnRecei
   if (result.status === "conflict") {
     throw invalid("store.conflict", "scoped semantic turn receipt already binds different content", []);
   }
-  const stored = await loadScopedTurn(context, turn.scopeDigest, turn.id);
+  const stored = await loadScopedTurn(context, turn.scopeDigest, turn.id, definitionDigest);
   if (stored === undefined || !sameCanonicalValue(stored, turn)) {
     throw invalid("store.corrupt", "store acknowledged a scoped semantic turn receipt without preserving it", []);
   }
   return stored;
 }
 
-async function persistScopeIndex(context: EngineContext, index: SemanticTurnScopeIndex): Promise<void> {
+export async function persistScopeIndex(context: EngineContext, index: SemanticTurnScopeIndex): Promise<void> {
   assertCanonicalRecordBound(index);
   const value = toJsonValue(index);
   const rawResult: unknown = await context.store.create(
@@ -591,7 +649,7 @@ async function persistScopeIndex(context: EngineContext, index: SemanticTurnScop
   }
 }
 
-async function reloadExactCommitted<T extends { readonly id: string }>(
+export async function reloadExactCommitted<T extends { readonly id: string }>(
   context: EngineContext,
   kind: RecordKind,
   expected: T,
@@ -613,7 +671,7 @@ async function reloadExactCommitted<T extends { readonly id: string }>(
   return parsed;
 }
 
-async function reloadAuthorizationInput(
+export async function reloadAuthorizationInput(
   context: EngineContext,
   reservation: SemanticTurnReservation,
   authorizationInput: unknown,
@@ -644,7 +702,11 @@ export async function persistSemanticTurnReservation(
   return persistGlobalExact(context, RESERVATION_KIND, reservation, parseSemanticTurnReservation);
 }
 
-/** Outbound-only authorization write after the exact reservation is committed. */
+/**
+ * Serializes all semantic generation for one exact DetectorExecution key.
+ * A different request or turn for the same child execution is refused before
+ * authorization or dispatch can be claimed.
+ */
 export async function persistSemanticDisclosureAuthorization(
   context: EngineContext,
   reservationInput: unknown,
@@ -776,6 +838,7 @@ export async function persistSemanticResultBinding(
   return persistGlobalExact(context, RESULT_KIND, result, parseSemanticResultBinding);
 }
 
+/** #13b-only typed completed generation sidecars, before the child graph. */
 /** Terminal index and receipt write after every exact sidecar is reloaded. */
 export async function persistSemanticTurnTerminal(
   context: EngineContext,
@@ -801,10 +864,10 @@ export async function persistSemanticTurnTerminal(
     turn: graph.turn,
   });
   await persistScopeIndex(context, exactGraph.scopeIndex);
-  return persistScopedTurn(context, exactGraph.turn);
+  return persistScopedTurn(context, exactGraph.turn, exactGraph.scopeIndex.definitionDigest);
 }
 
-async function loadRequiredGlobal<T extends { readonly id: string }>(
+export async function loadRequiredGlobal<T extends { readonly id: string }>(
   context: EngineContext,
   kind: RecordKind,
   id: string,
@@ -827,7 +890,7 @@ async function loadRequiredGlobal<T extends { readonly id: string }>(
  * the scope-private turn receipt, so a wrong-scope lookup cannot probe a
  * foreign target. An orphaned pre-terminal index remains invisible.
  */
-export async function loadSemanticTurnByScope(
+export async function loadSemanticTurnByScopeUnchecked(
   context: EngineContext,
   turnIdInput: unknown,
   exactScopeDigestInput: unknown,
@@ -836,7 +899,7 @@ export async function loadSemanticTurnByScope(
   const exactScopeDigest = parseDigestAt(exactScopeDigestInput, ["scopeDigest"]);
   const scopeIndex = await loadScopeIndex(context, exactScopeDigest, turnId);
   if (scopeIndex === undefined) return undefined;
-  const turn = await loadScopedTurn(context, exactScopeDigest, turnId);
+  const turn = await loadScopedTurn(context, exactScopeDigest, turnId, scopeIndex.definitionDigest);
   if (turn === undefined) return undefined;
   if (
     turn.id !== turnId ||
@@ -861,10 +924,19 @@ export async function loadSemanticTurnByScope(
   const dispatch = await loadRequiredGlobal(context, DISPATCH_KIND, turn.dispatch.id, parseSemanticDispatchMarker);
   const result = await loadRequiredGlobal(context, RESULT_KIND, turn.result.id, parseSemanticResultBinding);
   const graph = parseSemanticTurnPersistenceGraph({ reservation, authorization, dispatch, result, scopeIndex, turn });
-  assertResultPersistenceAvailable(graph.result);
+
   return graph;
 }
 
+export async function loadSemanticTurnByScope(
+  context: EngineContext,
+  turnIdInput: unknown,
+  exactScopeDigestInput: unknown,
+): Promise<SemanticTurnPersistenceGraph | undefined> {
+  const graph = await loadSemanticTurnByScopeUnchecked(context, turnIdInput, exactScopeDigestInput);
+  if (graph !== undefined) assertResultPersistenceAvailable(graph.result);
+  return graph;
+}
 async function loadAuthorizationForDispatch(
   context: EngineContext,
   reservation: SemanticTurnReservation,
@@ -893,6 +965,14 @@ async function loadAuthorizationForDispatch(
 export async function classifySemanticTurnPersistence(
   context: EngineContext,
   reservationInput: unknown,
+  options: {
+    readonly allowCompleted?: boolean;
+    readonly loadGraph?: (
+      context: EngineContext,
+      turnId: unknown,
+      scopeDigest: unknown,
+    ) => Promise<SemanticTurnPersistenceGraph | undefined>;
+  } = {},
 ): Promise<SemanticTurnPersistenceState> {
   assertCanonicalRecordBound(reservationInput);
   const candidateReservation = parseSemanticTurnReservation(reservationInput);
@@ -921,68 +1001,19 @@ export async function classifySemanticTurnPersistence(
   if (result.id !== resultId || !sameCanonicalValue(resultStored.value, result)) {
     throw invalid("store.corrupt", "semantic result id does not match its key", []);
   }
-  assertResultPersistenceAvailable(result);
+  if (options.allowCompleted !== true) assertResultPersistenceAvailable(result);
   assertResultBinding(reservation, dispatch, result);
 
   const turnId = `semantic-workflow-turn-${reservation.turnKeyDigest}`;
-  const graph = await loadSemanticTurnByScope(context, turnId, reservation.scopeDigest);
+  const graph = await (options.loadGraph ?? loadSemanticTurnByScope)(context, turnId, reservation.scopeDigest);
   if (graph === undefined) {
     return { status: "result_recorded", reservation, authorization, dispatch, result };
   }
   return { status: "committed", graph };
 }
 
-async function turnScopeIndexRevision(context: EngineContext, exactScopeDigest: string): Promise<string> {
-  const rawPage: unknown = await context.store.list({
-    namespace: turnScopeNamespace(exactScopeDigest),
-    kind: TURN_SCOPE_INDEX_KIND,
-    limit: 1,
-  });
-  const fields = readFields(rawPage, ["store", "list", TURN_SCOPE_INDEX_KIND]);
-  const rawRecords = fields.req("records", parseUnknown);
-  if (!Array.isArray(rawRecords) || rawRecords.length > 1) {
-    throw invalid("store.corrupt", "semantic turn scope-index revision page is invalid", ["records"]);
-  }
-  for (const [index, record] of rawRecords.entries()) {
-    parseStoredScopeIndex(record, exactScopeDigest, undefined, ["store", "list", TURN_SCOPE_INDEX_KIND, index]);
-  }
-  return fields.req("snapshotRevision", parseNonEmptyText);
-}
-
-async function turnScopeTerminalRevision(context: EngineContext, exactScopeDigest: string): Promise<string> {
-  const rawPage: unknown = await context.store.list({
-    namespace: turnScopeNamespace(exactScopeDigest),
-    kind: TURN_KIND,
-    limit: 1,
-  });
-  const fields = readFields(rawPage, ["store", "list", TURN_KIND]);
-  const rawRecords = fields.req("records", parseUnknown);
-  if (!Array.isArray(rawRecords) || rawRecords.length > 1) {
-    throw invalid("store.corrupt", "scoped semantic turn revision page is invalid", ["records"]);
-  }
-  for (const [index, record] of rawRecords.entries()) {
-    const stored = parseStoredRecordAt(record, ["store", "list", TURN_KIND, index]);
-    parseStoredScopedTurn(record, exactScopeDigest, stored.key.id, ["store", "list", TURN_KIND, index]);
-  }
-  return fields.req("snapshotRevision", parseNonEmptyText);
-}
-
-/** Composite revision for bounded workflow graph snapshot/retry checks. */
-export async function semanticWorkflowSnapshotRevision(
-  context: EngineContext,
-  exactScopeDigestInput: unknown,
-): Promise<string> {
-  const exactScopeDigest = parseDigestAt(exactScopeDigestInput, ["scopeDigest"]);
-  const scopeIndex = await turnScopeIndexRevision(context, exactScopeDigest);
-  const scopedTurn = await turnScopeTerminalRevision(context, exactScopeDigest);
-  return sha256HexOfCanonicalJson(
-    toJsonValue({
-      domain: REVISION_DOMAIN,
-      scopeDigest: exactScopeDigest,
-      scopeIndex,
-      scopedTurn,
-    }),
-  );
-}
-
-export const SEMANTIC_TURN_SCOPE_INDEX_KIND = TURN_SCOPE_INDEX_KIND;
+export {
+  querySemanticTurnsByScope,
+  semanticWorkflowSnapshotRevision,
+  SEMANTIC_TURN_SCOPE_INDEX_KIND,
+} from "./semantic-turn-query.js";

@@ -11,33 +11,20 @@ import type {
 } from "../src/index.js";
 import {
   candidateContentDigest,
-  detectorExecutionDigest,
-  detectorExecutionKeyDigest,
   evidenceRefDigest,
-  insightDerivationDigest,
   parseCandidateReview,
   parseCandidate,
-  parseDetectorExecutionRecord,
-  parseInsightDerivation,
   sha256HexOfCanonicalJson,
   toJsonValue,
 } from "../src/index.js";
 import { evidenceHealthFindingDigest } from "../src/records/source-health.js";
 import { candidateScopeDigest } from "../src/records/candidate.js";
-import {
-  appendDerivationLink,
-  buildDerivationLink,
-  buildRegistrySnapshot,
-  persistRegistrySnapshot,
-} from "../src/engine/semantic-graph.js";
+import { contextForLearningLoop } from "../src/engine/loop.js";
 import { persistDetectorExecution } from "../src/engine/semantic-persistence.js";
-import {
-  persistDetectorExecutionScopeIndex,
-  persistInsightDerivationScopeIndex,
-} from "../src/engine/semantic-scope-index.js";
 import { createInMemoryStore } from "../src/testing/index.js";
 import { createSemanticEngineHarness, createSemanticFacts } from "./semantic-engine-harness.js";
 import { SEMANTIC_SCOPE_B } from "./semantic-engine-harness.js";
+import { createGenerationHarness, positiveProviderResult } from "./semantic-workflow-generation-harness.js";
 
 function toggledSnapshotStore(base: LearningStore) {
   let hidden = false;
@@ -228,120 +215,88 @@ function acceptingReviewer(input: {
 }
 
 async function semanticProducerFixture() {
-  const harness = await createSemanticEngineHarness();
-  const producer = await harness.context.identity.verify({
-    principalId: "semantic-derivation-producer",
-    kind: "agent",
-    independenceDomain: "semantic-producer-domain",
-  });
-  const baseFacts = createSemanticFacts(harness);
-  const {
-    schemaVersion: _schemaVersion,
-    id: _id,
-    derivationDigest: _derivationDigest,
-    ...derivationBaseFields
-  } = baseFacts.derivation;
-  const derivationBase = {
-    ...derivationBaseFields,
-    producer: {
-      kind: "semantic_judgment" as const,
-      implementationId: "semantic-generator",
-      implementationVersion: "2.0.0",
-      implementationDigest: harness.detector.implementationDigest,
-      principal: producer.ref,
-      attestation: { id: producer.attestationId, digest: producer.attestationDigest },
-      modelFingerprintDigest: "2".repeat(64),
-      promptDigest: "3".repeat(64),
-      toolPolicyDigest: "4".repeat(64),
-      budgetPolicyDigest: "5".repeat(64),
-      disclosure: null,
-    },
+  const generation = await createGenerationHarness();
+  const comparablePopulation = { episodeClass: "interactive", split: "held-out" };
+  generation.providerState.script = (input) => {
+    const envelope = positiveProviderResult(input);
+    if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) {
+      throw new Error("semantic producer provider fixture is malformed");
+    }
+    return Promise.resolve({
+      ...envelope,
+      result: {
+        conditionDetected: true,
+        recurrenceLocator: null,
+        insights: [
+          {
+            learningClass: "system_meta",
+            directObservation: {
+              statement: "The exact episode population contains a reviewable structural condition.",
+              data: { condition: "semantic-producer-review" },
+              evidenceReferenceDigests: [],
+            },
+            interpretation: {
+              statement: "The condition may be reduced by a governed host intervention.",
+              confidence: "unknown",
+              uncertainty: ["Causal impact remains unvalidated."],
+            },
+            impactHypothesis: { statement: "The intervention may reduce incomplete verification attempts." },
+            contradictoryEvidenceReferenceDigests: [],
+            evidenceHealthFindingIds: [],
+            missingEvidence: [],
+            applicability: { statement: "Applies only to this exact project scope.", exclusions: [] },
+            candidateIntervention: {
+              summary: "Run the registered verifier before a completion claim.",
+              proposedDestinationKind: "report-note",
+              proposedDestinationId: "host/semantic-note",
+              contentDraft: { action: "verify-before-completion" },
+              rollbackIntent: "Remove the unvalidated draft.",
+            },
+            validation: {
+              method: "comparable-held-out-episodes",
+              comparablePopulation,
+              comparablePopulationDigest: sha256HexOfCanonicalJson(toJsonValue(comparablePopulation)),
+              successCriterion: "Verifier-backed completion claims increase.",
+              guardrails: ["Do not suppress valid failures."],
+              strategyDigest: generation.lens.validationStrategyDigest,
+            },
+            supersedes: null,
+          },
+        ],
+        findings: [],
+      },
+    });
   };
-  const derivationDigest = insightDerivationDigest(derivationBase);
-  const derivation = parseInsightDerivation({
-    schemaVersion: 1,
-    id: `insight-${derivationDigest}`,
-    ...derivationBase,
-    derivationDigest,
-  });
-  const result = {
-    status: "applied" as const,
-    conditionDetected: true,
-    derivationRefs: [
-      { id: derivation.id, derivationDigest: derivation.derivationDigest, scopeDigest: derivation.scopeDigest },
-    ],
-    evidenceHealthFindings: [],
-  };
-  const executionKeyDigest = detectorExecutionKeyDigest(baseFacts.execution);
-  const executionDigest = detectorExecutionDigest({ ...baseFacts.execution, result, executionKeyDigest });
-  const execution = parseDetectorExecutionRecord({
-    ...baseFacts.execution,
-    id: `detector-execution-${executionKeyDigest}`,
-    result,
-    executionKeyDigest,
-    executionDigest,
-  });
-  const snapshot = buildRegistrySnapshot(harness.context);
-  await persistRegistrySnapshot(harness.context, snapshot);
-  const reference = result.derivationRefs[0];
-  if (reference === undefined) throw new Error("missing semantic producer derivation reference");
-  await appendDerivationLink(
-    harness.context,
-    buildDerivationLink(execution, snapshot.semanticRegistry.registryDigest, reference),
-  );
-  const derivationValue = toJsonValue(derivation);
-  await harness.store.create(
-    { namespace: "learning", kind: "insight-derivation", id: derivation.id },
-    derivationValue,
-    sha256HexOfCanonicalJson(derivationValue),
-    "seed-semantic-producer-derivation",
-  );
-  await persistInsightDerivationScopeIndex(harness.context, derivation);
-  await persistDetectorExecutionScopeIndex(harness.context, execution);
-  const executionValue = toJsonValue(execution);
-  await harness.store.create(
-    { namespace: "learning", kind: "detector-execution", id: execution.id },
-    executionValue,
-    sha256HexOfCanonicalJson(executionValue),
-    "seed-semantic-producer-execution",
-  );
-  const proposer = await harness.context.identity.verify({
+  const prepared = await generation.bundle.prepareGeneration(generation.prepareInput);
+  if (prepared.status !== "prepared") throw new Error(`expected prepared generation, got ${prepared.status}`);
+  const generated = await generation.bundle.runGeneration({ plan: prepared.plan, authorization: null });
+  if (generated.status !== "completed") throw new Error(`expected completed generation, got ${generated.status}`);
+  const derivation = generated.derivations[0];
+  if (derivation === undefined) throw new Error("semantic producer generation omitted its derivation");
+  const producer = generation.producer;
+  const context = contextForLearningLoop(generation.learning);
+  const proposer = await context.identity.verify({
     principalId: "semantic-candidate-adopter",
     kind: "agent",
     independenceDomain: "semantic-adopter-domain",
   });
-  const candidateBase = {
-    schemaVersion: 2 as const,
-    scope: derivation.scope,
-    problem: derivation.interpretation?.statement ?? "missing interpretation",
-    hypothesis: derivation.impactHypothesis?.statement ?? "missing impact",
-    evidenceRefs: [...derivation.directObservation.evidenceRefs, ...derivation.contradictoryEvidenceRefs],
-    intervention: {
-      destinationId: derivation.candidateIntervention?.proposedDestinationId ?? "missing-destination",
-      kind: derivation.candidateIntervention?.proposedDestinationKind ?? "missing-kind",
-      content: derivation.candidateIntervention?.contentDraft ?? null,
-      rollbackIntent: derivation.candidateIntervention?.rollbackIntent ?? "missing rollback",
-    },
-    proposedRisk: "T1" as const,
-    derivationRef: { id: derivation.id, digest: derivation.derivationDigest },
-  };
-  const candidate = parseCandidate({
-    ...candidateBase,
-    id: "semantic-producer-candidate",
-    proposedBy: proposer.ref,
-    proposerAttestationDigest: proposer.attestationDigest,
-    proposedAt: "2026-08-20T00:05:00.000Z",
-    contentDigest: candidateContentDigest(candidateBase),
-  });
+  const candidate = (
+    await generation.learning.propose({
+      id: "semantic-producer-candidate",
+      scope: derivation.scope,
+      derivationId: derivation.id,
+      proposedRisk: "T1",
+      proposedBy: proposer,
+    })
+  ).candidate;
   if (candidate.schemaVersion !== 2) throw new Error("expected semantic producer Candidate-v2");
-  const candidateValue = toJsonValue(candidate);
-  await harness.store.create(
-    { namespace: "learning", kind: "candidate", id: candidate.id },
-    candidateValue,
-    sha256HexOfCanonicalJson(candidateValue),
-    "seed-semantic-producer-candidate",
-  );
-  return { harness, producer, derivation, proposer, candidate };
+  return {
+    harness: { ...generation, context },
+    producer,
+    derivation,
+    proposer,
+    candidate,
+  };
 }
 
 async function overwriteCandidate(
@@ -761,8 +716,8 @@ describe("stored review independence from derivation producer", () => {
           },
         }),
       }),
-    ).rejects.toMatchObject({ code: "review.derivation_invalid" });
-    expect(independentCalls).toBe(0);
+    ).resolves.toMatchObject({ disposition: "accept" });
+    expect(independentCalls).toBe(1);
   });
 
   it("treats a forged accepted review by the producer implementation as store corruption", async () => {
@@ -822,6 +777,7 @@ describe("stored review independence from derivation producer", () => {
         reviewedAt: "2026-08-20T00:11:00.000Z",
       });
       const value = toJsonValue(record);
+      await appendIndexedReview(harness.store, candidate, record);
       await harness.store.create(
         { namespace: "learning", kind: "review", id: record.id },
         value,

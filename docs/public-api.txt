@@ -145,6 +145,8 @@ node:FileStoreOptions
 node:createFileStore
 reference:ReferenceDetectorBundle
 reference:createReferenceDetectorBundle
+workflows:SemanticWorkflowBundle
+workflows:createSemanticWorkflowBundle
 testing:createInMemoryStore
 testing:FixedClock
 testing:createFixedClock

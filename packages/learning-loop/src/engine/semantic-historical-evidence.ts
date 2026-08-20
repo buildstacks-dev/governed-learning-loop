@@ -14,7 +14,7 @@ import type { EngineContext } from "./context.js";
 import { iterateRecordPages, loadStoredRecord, recordDigest } from "./context.js";
 import type { EvidenceHealthView } from "./evidence-binding.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
-import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
+import { loadEpisodeOutcomeClaimHistory } from "./episode-outcome.js";
 
 const SCAN_PAGE_LIMIT = 100;
 
@@ -134,6 +134,7 @@ export async function validateHistoricalWindowEvidence(
   context: EngineContext,
   execution: DetectorExecutionRecord,
   registry: SemanticRegistryConfig,
+  options: { readonly includeCurrentHealth?: boolean } = {},
 ): Promise<EvidenceHealthView> {
   const detector = registry.detectors.find(
     (candidate) => detectorRefKey(candidate) === detectorRefKey(execution.detector),
@@ -274,16 +275,14 @@ export async function validateHistoricalWindowEvidence(
           pageKeys,
         );
       }
-      const outcome = await loadLatestEpisodeOutcomeClaim(context, episode.id);
-      if (
-        outcome.status !== "resolved" ||
-        !outcome.latest.measurementRefs.some((claimed) => sameCanonical(claimed, reference))
-      ) {
-        throw invalid("semantic.evidence_invalid", "historical measurement is absent from the latest outcome", []);
+      const outcomeClaims = await loadEpisodeOutcomeClaimHistory(context, episode.id);
+      if (!outcomeClaims.some((claim) => claim.measurementRefs.some((claimed) => sameCanonical(claimed, reference)))) {
+        throw invalid("semantic.evidence_invalid", "historical measurement is absent from retained outcomes", []);
       }
     }
     if (reference.completeness !== "complete") status = "incomplete";
   }
+  if (options.includeCurrentHealth === false) return { status, diagnostics };
   for await (const page of iterateRecordPages(context.store, "evidence-health", { limit: SCAN_PAGE_LIMIT })) {
     for (const stored of page.records) {
       const finding = parseEvidenceHealthFinding(stored.value);

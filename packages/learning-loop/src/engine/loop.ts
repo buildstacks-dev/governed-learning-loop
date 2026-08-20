@@ -127,6 +127,20 @@ export interface LearningLoop {
   }): Promise<DetectorPackRunView | undefined>;
 }
 
+const learningLoopContexts = new WeakMap<object, EngineContext>();
+
+/** Private capability lookup used by opt-in package entrypoints. */
+export function contextForLearningLoop(input: unknown): EngineContext {
+  if (typeof input !== "object" || input === null) {
+    throw invalid("config.invalid", "learning loop must be a kernel-created capability", ["loop"]);
+  }
+  const context = learningLoopContexts.get(input);
+  if (context === undefined) {
+    throw invalid("config.invalid", "learning loop was not created by createLearningLoop", ["loop"]);
+  }
+  return context;
+}
+
 const systemClock: Clock = { now: () => new Date().toISOString() };
 
 function randomIds(): IdGenerator {
@@ -389,7 +403,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     ids: config.ids ?? randomIds(),
   };
 
-  return {
+  const loop: LearningLoop = {
     ingest: <I>(source: RegisteredSource<I>, sourceInput: I, options?: IngestOptions) =>
       runIngest(context, source, sourceInput, options),
     queryObservations: (input) => runObservationQuery(context, input),
@@ -411,4 +425,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     queryDetectorPackRuns: (input) => runDetectorPackRunQuery(context, input),
     getDetectorPackRun: (input) => runGetDetectorPackRun(context, input),
   };
+  const frozen = Object.freeze(loop);
+  learningLoopContexts.set(frozen, context);
+  return frozen;
 }

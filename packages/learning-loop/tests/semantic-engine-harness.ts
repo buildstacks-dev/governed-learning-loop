@@ -81,6 +81,7 @@ function createLens(
   scopePolicyDigest: string,
   evidenceKind: LearningLensRegistration["evidenceRequirements"][number]["kind"],
   minimumTrust: LearningLensRegistration["evidenceRequirements"][number]["minimumTrust"],
+  generatorKinds: LearningLensRegistration["generatorPolicy"]["allowedKinds"] = ["deterministic"],
 ): LearningLensRegistration {
   const objective = "Improve a registered host purpose without granting activation authority.";
   const qualitativeRubric = { relevance: "required", uncertainty: "explicit" };
@@ -102,7 +103,7 @@ function createLens(
     permittedDestinationIds: ["host/semantic-note"],
     permittedDestinationKinds: ["report-note"],
     generatorPolicy: {
-      allowedKinds: ["deterministic"],
+      allowedKinds: generatorKinds,
       identityPolicyDigest: "1".repeat(64),
       fingerprintPolicyDigest: "2".repeat(64),
     },
@@ -134,9 +135,18 @@ function createDetector(
     readonly minimumCompleteness?: DetectorRegistration["minimumCompleteness"];
     readonly episodeClasses?: DetectorRegistration["episodeClasses"];
     readonly scopeConstraint?: DetectorRegistration["scopeConstraint"];
+    readonly workflowDefinitionDigest?: string;
+    readonly transientContent?: DetectorRegistration["privacy"]["transientContent"];
+    readonly lensGeneratorKinds?: LearningLensRegistration["generatorPolicy"]["allowedKinds"];
   },
 ): DetectorRegistration {
-  const configuration = { detector: "semantic-fixture", thresholdClass: "exact" };
+  const configuration = {
+    detector: "semantic-fixture",
+    thresholdClass: "exact",
+    ...(options.workflowDefinitionDigest === undefined
+      ? {}
+      : { workflowDefinitionDigest: options.workflowDefinitionDigest }),
+  };
   const falsePositivePolicy = { complexLegitimateControls: "required" };
   const proposedValidationCriterion = { metric: "verified-repeat-rate", direction: "decrease" };
   const base: Omit<DetectorRegistration, "schemaVersion" | "registrationDigest"> = {
@@ -172,7 +182,7 @@ function createDetector(
     calibrationEvidenceDigest: null,
     privacy: {
       signatureTreatment: "tenant_keyed_private",
-      transientContent: "forbidden",
+      transientContent: options.transientContent ?? "forbidden",
       policyDigest: "a".repeat(64),
     },
     proposedValidationCriterion,
@@ -268,18 +278,33 @@ export async function createSemanticEngineHarness(
     readonly label?: string;
     readonly lensEvidenceKind?: LearningLensRegistration["evidenceRequirements"][number]["kind"];
     readonly lensMinimumTrust?: LearningLensRegistration["evidenceRequirements"][number]["minimumTrust"];
+    readonly lensGeneratorKinds?: LearningLensRegistration["generatorPolicy"]["allowedKinds"];
+    readonly detectorTransientContent?: DetectorRegistration["privacy"]["transientContent"];
     readonly detectorOutputKind?: DetectorRegistration["outputKind"];
     readonly withMeasurement?: boolean;
+    readonly observationCount?: number;
+    readonly measurementCount?: number;
+    readonly measurementEvidenceIds?: readonly string[];
     readonly detectorRequiredCapabilities?: readonly string[];
     readonly detectorAcceptedObservationKinds?: readonly string[];
     readonly detectorMinimumTrust?: DetectorRegistration["minimumTrust"];
     readonly detectorMinimumCompleteness?: DetectorRegistration["minimumCompleteness"];
     readonly detectorEpisodeClasses?: DetectorRegistration["episodeClasses"];
     readonly detectorScopeConstraint?: DetectorRegistration["scopeConstraint"];
+    readonly workflowDefinitionDigest?: string;
   } = {},
 ): Promise<SemanticEngineHarness> {
   const scope = input.scope ?? SEMANTIC_SCOPE_A;
   const label = input.label ?? "semantic";
+  const observationCount = input.observationCount ?? 1;
+  const measurementCount = input.measurementCount ?? (input.withMeasurement === true ? 1 : 0);
+  const observationIds = Array.from({ length: observationCount }, (_, index) =>
+    index === 0 ? `${label}-observation` : `${label}-observation-${index}`,
+  );
+  const measurementIds = Array.from({ length: measurementCount }, (_, index) =>
+    index === 0 ? `${label}-measurement` : `${label}-measurement-${index}`,
+  );
+  const measurementEvidenceIds = input.measurementEvidenceIds ?? [`${label}-observation`];
   const store = input.store ?? createInMemoryStore();
   const source = defineSourceRegistration({
     source: createManualEvidenceSource(),
@@ -291,6 +316,7 @@ export async function createSemanticEngineHarness(
     scopePolicy.digest,
     input.lensEvidenceKind ?? "observation",
     input.lensMinimumTrust ?? "advisory",
+    input.lensGeneratorKinds,
   );
   const detector = createDetector(scopePolicy.digest, lens, input.detectorOutputKind ?? "insight_derivation", {
     ...(input.detectorRequiredCapabilities === undefined
@@ -305,6 +331,10 @@ export async function createSemanticEngineHarness(
       : { minimumCompleteness: input.detectorMinimumCompleteness }),
     ...(input.detectorEpisodeClasses === undefined ? {} : { episodeClasses: input.detectorEpisodeClasses }),
     ...(input.detectorScopeConstraint === undefined ? {} : { scopeConstraint: input.detectorScopeConstraint }),
+    ...(input.workflowDefinitionDigest === undefined
+      ? {}
+      : { workflowDefinitionDigest: input.workflowDefinitionDigest }),
+    ...(input.detectorTransientContent === undefined ? {} : { transientContent: input.detectorTransientContent }),
   });
   const pack = createPack(detector, lens);
   const profile = createProfile(source);
@@ -326,30 +356,24 @@ export async function createSemanticEngineHarness(
     clock,
     ids,
   });
+  const observations: NonNullable<ManualEvidenceInput["observations"]> = observationIds.map((id) => ({
+    id,
+    episodeId: `${label}-episode`,
+    occurredAt: "2026-08-20T00:01:00.000Z",
+    kind: "tool.process.completed",
+    data: { commandClass: "verify", exitCode: 1 },
+  }));
+  const measurements: NonNullable<ManualEvidenceInput["measurements"]> = measurementIds.map((id) => ({
+    id,
+    episodeId: `${label}-episode`,
+    metric: { name: "verification", valueType: "boolean", unit: "pass", aggregation: "all" },
+    value: false,
+    evidenceIds: measurementEvidenceIds,
+    measuredAt: "2026-08-20T00:01:30.000Z",
+  }));
   const receipt = await learning.ingest(source, {
-    observations: [
-      {
-        id: `${label}-observation`,
-        episodeId: `${label}-episode`,
-        occurredAt: "2026-08-20T00:01:00.000Z",
-        kind: "tool.process.completed",
-        data: { commandClass: "verify", exitCode: 1 },
-      },
-    ],
-    ...(input.withMeasurement === true
-      ? {
-          measurements: [
-            {
-              id: `${label}-measurement`,
-              episodeId: `${label}-episode`,
-              metric: { name: "verification", valueType: "boolean", unit: "pass", aggregation: "all" },
-              value: false,
-              evidenceIds: [`${label}-observation`],
-              measuredAt: "2026-08-20T00:01:30.000Z",
-            },
-          ],
-        }
-      : {}),
+    observations,
+    ...(measurements.length > 0 ? { measurements } : {}),
     episodes: [
       {
         id: `${label}-episode`,
@@ -357,9 +381,7 @@ export async function createSemanticEngineHarness(
         scope,
         openedAt: "2026-08-20T00:00:00.000Z",
         closedAt: "2026-08-20T00:02:00.000Z",
-        ...(input.withMeasurement === true
-          ? { outcome: { status: "failed" as const, measurementIds: [`${label}-measurement`] } }
-          : {}),
+        ...(measurementIds.length > 0 ? { outcome: { status: "failed" as const, measurementIds } } : {}),
       },
     ],
   });
@@ -388,7 +410,7 @@ export async function createSemanticEngineHarness(
   }
   const observationEvidence: ObservationEvidenceRef = { ...evidence, kind: "observation" };
   let measurementEvidence: MeasurementEvidenceRefV2 | undefined;
-  if (input.withMeasurement === true) {
+  if (measurementIds.length > 0) {
     const measurementResolution = await resolveCandidateEvidence(context, [`${source.id}/${label}-measurement`], scope);
     const resolvedMeasurement = measurementResolution.refs[0];
     if (

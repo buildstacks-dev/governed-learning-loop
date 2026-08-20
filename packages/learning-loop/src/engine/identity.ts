@@ -28,7 +28,7 @@ interface IdentityVerificationResult {
 }
 
 const portRegistrations = new WeakMap<IdentityPort, IdentityRegistration>();
-const principalRegistrations = new WeakMap<VerifiedPrincipal, IdentityRegistration>();
+const principalRegistrations = new WeakMap<object, IdentityRegistration>();
 
 function parseBoundedControlFreeText(maximumLength: number): Parse<string> {
   return (input, path) => {
@@ -145,7 +145,11 @@ export function identityRegistryProjection(port: IdentityPort): {
   };
 }
 
-export function assertVerifiedPrincipal(identity: IdentityPort, principal: VerifiedPrincipal, role: string): void {
+export function assertVerifiedPrincipal(
+  identity: IdentityPort,
+  principal: unknown,
+  role: string,
+): asserts principal is VerifiedPrincipal {
   const expected = portRegistrations.get(identity);
   if (expected === undefined) {
     throw invalid("config.invalid", "configured identity port has no kernel registration", ["identity"]);
@@ -154,9 +158,8 @@ export function assertVerifiedPrincipal(identity: IdentityPort, principal: Verif
   if (typeof unknownPrincipal !== "object" || unknownPrincipal === null) {
     throw invalid("identity.unverified", `${role} is not a verified principal handle`, [role]);
   }
-  const actual = principalRegistrations.get(principal);
-  const carrier: { readonly [verifiedPrincipalBrand]?: unknown } = principal;
-  if (actual?.token !== expected.token || carrier[verifiedPrincipalBrand] !== true) {
+  const actual = principalRegistrations.get(unknownPrincipal);
+  if (actual?.token !== expected.token) {
     throw invalid("identity.unverified", `${role} was not minted by this loop's configured identity port`, [role]);
   }
   const fields = readFields(principal, [role]);

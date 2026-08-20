@@ -35,6 +35,7 @@ the issue backlog and are orthogonal capabilities, not implied by the first two.
 ├── /node      local filesystem (JSON Lines) store adapters
 ├── /testing   runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── /reference-detectors  opt-in host-bound deterministic pack bundle
+├── /workflows  provider-neutral semantic generation capability and audit views
 └── adapters/  transcript source adapters (Claude Code, Codex) — explicit input only
 ```
 
@@ -242,9 +243,10 @@ effect and claim no harm, inefficiency, preference, utility or efficacy.
 Missing, unreadable and unsupported evidence stays in the native
 SourcePageReceipt/EvidenceHealthFinding path because unavailable pages have no
 episode population for a DetectorWindow. The shipped reference cases are L1
-contract plus L2 hermetic controls only. Optional semantic providers remain
-#13; held-out detector/candidate-utility calibration and every default-quality
-claim remain #26.
+contract plus L2 hermetic controls only. Optional semantic generation is
+supplied separately by `/workflows`; advisory review remains #13c, while
+held-out detector/Candidate-utility calibration and every default-quality claim
+remain #26.
 Evidence-health findings stay separate from behavioral derivations, and only
 the verified `propose` path may turn a derivation into an inert Candidate.
 
@@ -264,17 +266,61 @@ is `outcome_unknown`; an existing claim is never permission to redispatch.
 Authorization is not a disclosure receipt, and `created` is not provider
 authority. No preview, request bytes, raw response, provider error, transcript
 text, Candidate, Review, provider callback, SDK or effect is stored or invoked.
-Completed semantic result/terminal persistence is deliberately refused until
-#13b supplies typed minimized generation output and exact sidecars. Advisory
-review dispatch remains #13c, and no model review becomes decisive before #26
+Completed semantic result/terminal persistence is deliberately refused by the
+generic #13a path; #13b supplies a separate typed generation writer with exact
+sidecars. Advisory review dispatch remains #13c, and no model review becomes
+decisive before #26
 ratifies calibrated reviewer capabilities.
 
-The exact-byte claim is the content-bearing application payload handed to a
-future registered provider port, not credentials, transport headers, TLS
+The exact-byte claim is the content-bearing application payload handed to the
+registered provider port, not credentials, transport headers, TLS
 framing or unverifiable SDK wire bytes. #13a exposes no `/workflows` entrypoint
 and adds no public symbol. Its validation evidence is L1 contract/goldens plus
 L2 hermetic crash, concurrency, privacy and scope controls; L3 live-provider,
 L4 semantic/model, L5 operations/SLO and L6 longitudinal evidence are empty.
+
+#13b adds the optional `/workflows` entrypoint with exactly two names:
+`SemanticWorkflowBundle` and `createSemanticWorkflowBundle`. The frozen factory
+also carries typed `defineGeneration(...)` and `generationResultSchema`
+properties, allowing a consumer to define the workflow, bind its digest into a
+detector registration, construct the loop, and then create the exact bundle
+without a deep import. The bundle prepares a kernel-owned request, returns an
+exact byte preview, obtains outbound authorization when required, permits one
+provider callback only after a create-only dispatch claim, recovers known
+post-callback facts by safe `attemptId`, and exposes definition-local
+`getTurn`/`queryTurns` audit views.
+
+The factory brands the loop, verified producer, renderer, minimizer,
+tenant-keyed digester, token estimator, provider, and optional disclosure
+authority. Preparation includes the complete normalized DetectorWindow,
+EvidenceRefs, and evidence-health facts in the canonical request envelope;
+renderers cannot silently omit them. The request-byte claim remains exactly the
+UTF-8 application payload handed to the registered callback—not credentials,
+headers, compression, TLS, network delivery, or provider wire serialization.
+Response metadata is measured from one detached canonical callback value by the
+kernel; native provider receipt ids, raw response bytes, and provider error text
+do not persist.
+
+Completed output must match the fixed typed DetectorResultDraft schema. It may
+cite only disclosed evidence and health facts, cannot emit findings or a
+recurrence locator, and is assembled into the existing attributed
+DetectorExecution/InsightDerivation graph. Positive generation records
+recurrence as locator unavailable; it does not group or suppress anything. No
+workflow method creates a Candidate or Review, runs proposal admission,
+publishes, activates, validates, or applies an effect. A dispatch without a
+durable result/completion intent remains `outcome_unknown` and is never
+redispatched. Process recovery forward-completes only already known facts and
+performs no provider or authority callback.
+
+Public workflow reads require exact scope and definition. Their terminal
+namespace, opaque cursor, and page revision are definition-local, so another
+workflow definition cannot churn or poison the query. Detector window evidence
+resolution is batch-bounded at 5,000 exact refs; Candidate proposal retains its
+separate 1,000-ref cap. #13b still has only L1 contract/schema evidence and L2
+hermetic provider/store controls. L3 live-provider, L4 semantic/model, L5
+operations/SLO, and L6 longitudinal evidence remain empty. Advisory review is
+#13c; calibrated decisive review and every default-quality or improvement claim
+remain #26.
 
 ## The demo: transcript insights
 

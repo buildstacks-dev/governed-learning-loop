@@ -1,4 +1,5 @@
 import type {
+  DetectorOrchestrationPolicy,
   DetectorPackManifest,
   DetectorRecurrenceLocator,
   DetectorRegistration,
@@ -79,6 +80,7 @@ export async function createRecurrenceRunnerHarness(
     readonly packId?: string;
     readonly implementation?: boolean;
     readonly detectorRequiredCapabilities?: readonly string[];
+    readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
   } = {},
 ): Promise<RecurrenceRunnerHarness> {
   const template = await createSemanticEngineHarness({ label: `template-${input.label ?? "recurrence"}` });
@@ -152,6 +154,9 @@ export async function createRecurrenceRunnerHarness(
     sources: [template.source],
     semanticRegistry: registry,
     ...(input.implementation === false ? {} : { detectorImplementations: [implementation] }),
+    ...(input.detectorOrchestrationPolicy === undefined
+      ? {}
+      : { detectorOrchestrationPolicy: input.detectorOrchestrationPolicy }),
     queryCursorScope: `detector-recurrence-${input.label ?? "fixture"}`,
     clock: template.context.clock,
     ids: template.context.ids,
@@ -186,6 +191,9 @@ export async function createRecurrenceRunnerHarness(
     sourceSemanticProfilesBySourceId: new Map([[template.source.id, template.profile]]),
     detectorImplementationsByRef:
       input.implementation === false ? new Map() : new Map([[detectorRefKey(implementation.detector), implementation]]),
+    ...(input.detectorOrchestrationPolicy === undefined
+      ? {}
+      : { detectorOrchestrationPolicy: input.detectorOrchestrationPolicy }),
     registryRevision: receipt.registryRevision,
   };
   return {

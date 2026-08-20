@@ -24,6 +24,8 @@ import type { SemanticRegistryConfig } from "../records/semantic-registry.js";
 import { parseSemanticRegistryConfig } from "../records/semantic-registry.js";
 import { detectorRefKey, lensRefKey, packRefKey } from "../records/semantic-shared.js";
 import type { SourceSemanticProfile } from "../records/source-semantic-profile.js";
+import type { DetectorOrchestrationPolicy } from "../records/detector-orchestration-policy.js";
+import { parseDetectorOrchestrationPolicy } from "../records/detector-orchestration-policy.js";
 import type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "../records/source-health.js";
 import type { EngineContext } from "./context.js";
 import type { IngestOptions, IngestReceipt } from "./ingest.js";
@@ -85,6 +87,7 @@ export interface LearningLoopConfig {
   readonly sources: readonly RegisteredSource<unknown>[];
   readonly semanticRegistry?: SemanticRegistryConfig;
   readonly detectorImplementations?: readonly RegisteredDetectorImplementation[];
+  readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
   /** Stable host/store scope for resumable query cursors; omitted means process-local cursors. */
   readonly queryCursorScope?: string;
   readonly clock?: Clock;
@@ -186,6 +189,11 @@ function freezeSemanticValue<T>(value: T): T {
 export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   const configuredSemanticRegistry = config.semanticRegistry;
   const configuredDetectorImplementations = config.detectorImplementations;
+  const configuredDetectorOrchestrationPolicy = config.detectorOrchestrationPolicy;
+  const detectorOrchestrationPolicy =
+    configuredDetectorOrchestrationPolicy === undefined
+      ? undefined
+      : freezeSemanticValue(parseDetectorOrchestrationPolicy(configuredDetectorOrchestrationPolicy));
   const contentPoliciesById = new Map<string, ContentPolicy>();
   for (const configuredPolicy of config.contentPolicies) {
     const policy = snapshotContentPolicy(configuredPolicy);
@@ -348,6 +356,9 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     ...(configuredDetectorImplementations !== undefined
       ? { detectorImplementations: detectorImplementationRegistryProjection }
       : {}),
+    ...(detectorOrchestrationPolicy === undefined
+      ? {}
+      : { detectorOrchestrationPolicy: { policyDigest: detectorOrchestrationPolicy.policyDigest } }),
   });
 
   const context: EngineContext = {
@@ -364,6 +375,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     semanticLensesByRef,
     sourceSemanticProfilesBySourceId,
     detectorImplementationsByRef,
+    ...(detectorOrchestrationPolicy === undefined ? {} : { detectorOrchestrationPolicy }),
     registryRevision,
     queryCursorScopeDigest,
     clock: config.clock ?? systemClock,

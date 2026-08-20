@@ -124,8 +124,7 @@ between code and contract, open an issue — never silently drift either one.
   child. Dry-run writes
   nothing; commit persists exact child graphs sequentially and is not a batch
   transaction. C2a creates no pack receipt, durable cap/suppression policy,
-  Candidate, provider turn, or authority. Durable recurrence policy,
-  rejection suppression, and host-configured caps remain #30c2b2.
+  Candidate, provider turn, or authority.
 - **Recurrence lineage is privacy-treated and receipt-last.** A detector may
   optionally emit one canonical public structural locator or tenant-keyed
   private digest permitted by its exact privacy registration; raw private key
@@ -137,9 +136,18 @@ between code and contract, open an issue — never silently drift either one.
   Orphan crash remnants do not count, and historical unbound receipts are
   never backfilled. Folds fail closed above 5,000 members, 50,000 total episode
   references, or 5,000 distinct episode identities. Counts are descriptive
-  only. C2b1 grants no deduplication, suppression, Candidate, policy,
-  authority, utility, or efficacy claim; those governance records remain
-  #30c2b2.
+  only. C2b1 grants no deduplication, suppression, Candidate, authority,
+  utility, or efficacy claim.
+- **Orchestration policy tightens caps but does not govern Candidates.** An
+  optional immutable DetectorOrchestrationPolicy contributes its exact digest
+  to loop identity, may lower the 100-child callback ceiling, and separately
+  classifies retained exact insight/evidence-health recurrence states as
+  `not_grouped | unassessed | capped`. Group caps are transient reporting
+  dispositions: no-result items omit the unknown classification, and caps do
+  not truncate or block exact child persistence.
+  rejectionSuppression bytes are registered and digested but non-enforcing
+  until durable pack receipts, Candidate/group claims, review snapshots and
+  proposal admission land in later decisions.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

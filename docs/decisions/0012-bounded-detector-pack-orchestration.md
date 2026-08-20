@@ -114,11 +114,14 @@ locators, pack-independent group identity, private create-only execution
 bindings, append-only members, bounded committed folds, crash recovery, and
 dry-run group previews. Counts remain descriptive and grant no authority.
 
-**Deferred to #30c2b2:** comparable-group availability policy,
-deduplication, decisive-rejection suppression and override evidence,
-host-configured digested lower caps, Candidate-to-group claims, durable
-pack-run/disposition receipts, and exact-scope audit reads. C2b2 may not expose
-a public receipt writer.
+**Implemented next by decision 0014:** registered host-digested lower
+invocation/group caps and transient `not_grouped | unassessed | capped`
+classification. Rejection-suppression configuration remains non-enforcing.
+
+**Still deferred:** durable pack-run/disposition receipts and exact-scope
+reads, Candidate-to-group claims, assessed availability, deduplication,
+decisive-rejection suppression and override evidence, and proposal admission.
+No later slice may expose a public receipt writer.
 
 Reference detector contents and synthetic controls remain #30d. Optional
 semantic/model workflows remain #13. Candidate-utility calibration and every

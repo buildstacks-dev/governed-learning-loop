@@ -1034,6 +1034,32 @@ export type DetectorRecurrenceLocator =
       readonly keyPolicyDigest: string;
     };
 
+export interface DetectorOrchestrationPolicy {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly version: string;
+  readonly caps: {
+    readonly maximumInvocationsPerRun: number;
+    readonly maximumInsightGroupsPerRun: number;
+    readonly maximumEvidenceHealthGroupsPerRun: number;
+  };
+  readonly rejectionSuppression:
+    | { readonly mode: "disabled" }
+    | {
+        readonly mode: "evidence_multiplier";
+        readonly minimumDistinctEpisodeMultiplier: number;
+      };
+  readonly policyDigest: string;
+}
+
+export declare function detectorOrchestrationPolicyDigest(
+  input: Omit<DetectorOrchestrationPolicy, "schemaVersion" | "policyDigest">,
+): string;
+
+export declare function parseDetectorOrchestrationPolicy(
+  input: unknown,
+): DetectorOrchestrationPolicy;
+
 export type DetectorResultDraft = {
   readonly conditionDetected: boolean;
   readonly recurrenceLocator?: DetectorRecurrenceLocator | null;
@@ -1135,6 +1161,7 @@ export interface DetectorPackRunResult {
     readonly detector: DetectorRunInput["detector"];
     readonly lens: DetectorRunInput["lens"];
     readonly disposition: DetectorOrchestrationDisposition;
+    readonly recurrenceDisposition?: "not_grouped" | "unassessed" | "capped";
     readonly callbackInvoked: boolean;
     readonly result?: DetectorRunResult;
     readonly diagnostics: readonly Diagnostic[];
@@ -1266,6 +1293,7 @@ Digest inclusion is exact:
 | `InsightDerivation` | Every field from scope through producer, intervention/validation and same-scope supersession, including full evidence and complete evidence-health findings | `schemaVersion`, `id`, `derivationDigest` |
 | `SourceSemanticProfile` | Source id, exact source-registration revision, observation-vocabulary digest, capabilities, and observation kinds | `schemaVersion`, `profileDigest` |
 | `SemanticRegistryConfig` | Scope-policy digest; full installed detector, pack, lens, and source-profile records; exact selected detector, pack, and lens refs | `schemaVersion`, `registryDigest` |
+| `DetectorOrchestrationPolicy` | Id, version, exact invocation/insight-group/evidence-health-group caps, and complete rejection-suppression configuration | `schemaVersion`, `policyDigest` |
 | `DetectorExecutionRecord.executionKeyDigest` | Loop-registry revision, detector plus configuration/implementation digests, required pack, output-dependent lens, scope and policy, output kind, and the complete immutable window | `schemaVersion`, `id`, `result`, `executionKeyDigest`, `executionDigest` |
 | `DetectorExecutionRecord.executionDigest` | The complete invocation/window, closed result, and `executionKeyDigest` | `schemaVersion`, `id`, `executionDigest` |
 
@@ -1546,13 +1574,51 @@ or a partial count. Raw member length is refused before entry parsing and
 episode references use bounded iteration. These descriptive counts are not
 comparable experiments.
 
-Immutable orchestration policy, availability thresholds beyond detector-owned
-conditions, deduplication, decisive-rejection suppression and overrides,
-Candidate-to-group claims, durable pack-run/disposition receipts, and scoped
-pack-run queries remain #30c2b2. Automatic population discovery and
-scheduling/routing remain outside c2b1. Core/reference/host pack contents and
-reference consumers are #30d. Optional semantic-provider generation and
-disclosure are #13. Default-quality and candidate-utility claims remain #26.
+#30c2b2-policy adds an optional immutable DetectorOrchestrationPolicy. Its
+policyDigest binds exact `{ id, version, caps, rejectionSuppression }` and
+excludes schemaVersion and itself. Id and SemVer use the semantic record
+grammar. All numeric fields are safe integers. maximumInvocationsPerRun is from
+1 through 100; maximumInsightGroupsPerRun and
+maximumEvidenceHealthGroupsPerRun are each from 0 through 100. The suppression
+branch is `disabled` or `evidence_multiplier`; the latter requires
+minimumDistinctEpisodeMultiplier from 2 through 100.
+
+The policy is optional LearningLoopConfig data, parsed and recursively
+snapshotted at construction. Presence contributes exact `{ policyDigest }` to
+the loop registry revision. Omission preserves c2b1 registry bytes and omits
+recurrenceDisposition from pack results. A changed policy intentionally creates
+new child execution lineage through the changed loop registry; it never
+relabels historical executions or groups.
+
+Only the cap behavior is executable in this slice. The invocation cap lowers
+c2a's maximum of 100 admitted child calls; later runnable pairs are explicitly
+capped without callback. After pack evaluation, exact grouped results are
+classified in stable item order with separate insight and evidence-health
+counters. One exact group-key digest consumes its family counter once. A
+non-grouped result is `not_grouped`, a grouped result within its family cap is
+`unassessed`, and a later group is `capped`. A recurrence-capped item makes the
+overall pack status partial but retains its exact DetectorRunResult and, in
+commit mode, still persists its c2b1 execution/recurrence lineage. This is a
+transient reporting cap—not deletion, Candidate suppression, output
+truncation, or authority. It carries the static
+`detector.pack_group_capped` warning diagnostic.
+
+recurrenceDisposition is present only for an exact retained DetectorRunResult.
+A capped or refused item with no retained result omits it because grouping is
+unknown; omission must not be interpreted as `not_grouped`. `not_grouped` is
+reserved for a retained result whose exact recurrence state is not grouped.
+
+rejectionSuppression is registered and digested but deliberately
+non-enforcing. This slice does not read Candidate/review state, create a
+Candidate-to-group claim, classify a group available/deduplicated/suppressed,
+refuse or revise a proposal, or authorize an override. Durable pack-run
+receipts and scoped queries remain the next receipt slice. Exact
+Candidate/review claims, deduplication, rejection suppression, same-group
+supersession and concurrent proposal admission remain a separate governance
+slice. Automatic population discovery and scheduling/routing remain outside
+this policy slice. Core/reference/host pack contents and reference consumers
+are #30d. Optional semantic-provider generation and disclosure are #13.
+Default-quality and candidate-utility claims remain #26.
 
 ### Candidate
 
@@ -2559,7 +2625,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry and detector implementations, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, and exact detector capability metadata/callbacks; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. Omitting either optional dimension preserves its prior registry bytes.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, detector implementations and detector-orchestration policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, exact detector capability metadata/callbacks, and orchestration-policy content; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. A configured detector-orchestration policy contributes exact `{ policyDigest }`. Omitting any optional dimension preserves its prior registry bytes.
 
 ```ts
 export interface LearningPolicy {
@@ -2576,6 +2642,7 @@ export interface LearningLoopConfig {
   readonly sources: readonly RegisteredSource<unknown>[];
   readonly semanticRegistry?: SemanticRegistryConfig;
   readonly detectorImplementations?: readonly RegisteredDetectorImplementation[];
+  readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
   readonly queryCursorScope?: string;
   readonly outcomeSources?: readonly RegisteredOutcomeSource<unknown>[];
   readonly destinations?: readonly DestinationRegistration[];
@@ -3512,6 +3579,19 @@ The core suite should prove at least:
   truncation;
 - historical execution receipts without recurrence binding remain
   `locator_unavailable`, skip callbacks, and never acquire inferred lineage;
+- detector-orchestration policy rejects corrupt digests, invalid SemVer,
+  non-integer/out-of-range caps and suppression multipliers, and later caller
+  mutation cannot change the snapshotted policy;
+- configured invocation caps can only lower the hard callback ceiling, while
+  omission preserves prior registry bytes and pack-result field omission;
+- recurrence group caps count exact unique group keys in separate insight and
+  evidence-health families, use stable pack order, classify every exact
+  retained recurrence state `not_grouped | unassessed | capped`, attach the
+  static group-cap diagnostic, omit unknown no-result classifications, and
+  never truncate or suppress exact child facts;
+- both rejection-suppression modes remain non-enforcing: no Candidate/review
+  read, group claim, proposal refusal, override, durable pack receipt or
+  efficacy implication occurs in the policy-only slice;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

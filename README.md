@@ -62,6 +62,24 @@ measurement reference. Episode outcomes append retained claims rather than
 rewriting episodes; typed episode views expose the latest claim, full attempt
 history, and closed evidence health. Raw legacy outcomes remain unqualified.
 
+## Semantic record seam
+
+The root record contract now distinguishes four independent semantic
+dimensions: detector semantics (`DetectorRegistration`), distribution
+(`DetectorPackManifest`), purpose (`LearningLensRegistration`), and an inert
+fact-to-hypothesis chain (`InsightDerivation`). Scope still answers where a
+learning applies; a lens answers what good means; a learning class identifies
+mechanical, interaction, role/craft, or system/meta altitude. Support,
+Documentation, Cormidia roles, and personal-project names remain host data.
+
+These content-digested records and unknown-first parsers are the implemented
+#30a seam. They do not claim that a detector ran or that a recommendation is
+useful. Detector execution records and registry selection are #30b; the
+deterministic engine is #30c; reference packs/examples are #30d; optional
+semantic providers are #13; held-out candidate-utility calibration is #26.
+Evidence-health findings stay separate from behavioral derivations, and only
+the verified `propose` path may turn a derivation into an inert Candidate.
+
 ## The demo: transcript insights
 
 `examples/transcript-insights` is a small local CLI that ingests your own

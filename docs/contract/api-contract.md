@@ -207,6 +207,8 @@ export interface ScopeSegment {
 
 export type Scope = readonly ScopeSegment[];
 
+export declare function scopeDigest(scope: Scope): string;
+
 export interface ScopePolicy {
   readonly id: string;
   readonly digest: string;
@@ -234,7 +236,14 @@ const cormidiaAppRoleScope: Scope = [
 ];
 ```
 
-Exact match is the safe default. Unknown segment types never inherit, and no policy may infer an ancestor across a tenant isolation boundary. A content-bound `ScopePolicy` validates segment type, identifier length and Unicode form; canonicalizes order; declares isolation boundaries, permitted ancestors and precedence; and is bound into plans, resolutions and fingerprints. Changing that policy creates a new registry revision and cannot reinterpret an old exposure silently.
+`scopeDigest` is the lower-case SHA-256 digest of protocol-canonical JSON for
+the exact ordered `{ type, id }` segment array. Exact match is the safe default.
+Unknown segment types never inherit, and no policy may infer an ancestor across
+a tenant isolation boundary. A content-bound `ScopePolicy` validates segment
+type, identifier length and Unicode form; canonicalizes order; declares
+isolation boundaries, permitted ancestors and precedence; and is bound into
+plans, resolutions and fingerprints. Changing that policy creates a new
+registry revision and cannot reinterpret an old exposure silently.
 
 ### Principal and independence
 
@@ -427,6 +436,437 @@ missing value to zero. Durable source-page receipts still do not prove cited
 observation, episode, or outcome ownership by themselves; that qualification
 is carried by schema-version-2 measurement references and append-only outcome
 claims below.
+
+### Registered semantic learning
+
+```ts
+export type DetectorMaturity =
+  | "experimental"
+  | "calibrated"
+  | "stable"
+  | "deprecated";
+
+export type DetectorOutputKind =
+  | "evidence_health"
+  | "insight_derivation";
+
+export type LearningClass =
+  | "mechanical_execution"
+  | "human_agent_interaction"
+  | "role_craft"
+  | "system_meta"
+  | `host:${string}`;
+
+interface DetectorRef {
+  readonly id: string;
+  readonly version: string;
+  readonly registrationDigest: string;
+}
+
+interface PackRef {
+  readonly id: string;
+  readonly version: string;
+  readonly manifestDigest: string;
+}
+
+interface LensRef {
+  readonly id: string;
+  readonly version: string;
+  readonly registrationDigest: string;
+}
+
+interface SemanticJsonObject {
+  readonly [key: string]: JsonValue;
+}
+
+export interface DetectorRegistration {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly version: string;
+  readonly maturity: DetectorMaturity;
+  readonly implementationDigest: string;
+
+  readonly configuration: SemanticJsonObject;
+  readonly configurationDigest: string;
+  readonly thresholds: SemanticJsonObject | null;
+  readonly thresholdDigest: string | null;
+  readonly observationVocabularyDigest: string;
+
+  readonly requiredCapabilities: readonly string[];
+  readonly acceptedObservationKinds: readonly string[];
+  readonly minimumTrust: TrustClass;
+  readonly minimumCompleteness: Provenance["completeness"];
+
+  readonly episodeClasses:
+    | { readonly mode: "any" }
+    | { readonly mode: "include"; readonly values: readonly string[] };
+
+  readonly scopePolicyDigest: string;
+  readonly scopeConstraint:
+    | { readonly mode: "invocation" }
+    | {
+        readonly mode: "exact";
+        readonly scopes: readonly {
+          readonly scope: Scope;
+          readonly scopeDigest: string;
+        }[];
+      };
+
+  readonly lensConstraint:
+    | { readonly mode: "independent" }
+    | {
+        readonly mode: "required";
+        readonly selection: "any_registered" | "allowlist";
+        readonly registrations: readonly LensRef[];
+      };
+
+  readonly normalizationPolicyDigest: string;
+  readonly comparabilityPolicyDigest: string | null;
+  readonly outputKind: DetectorOutputKind;
+
+  readonly positiveFixtureDigests: readonly string[];
+  readonly negativeFixtureDigests: readonly string[];
+
+  readonly falsePositivePolicy: SemanticJsonObject;
+  readonly falsePositivePolicyDigest: string;
+  readonly calibrationPopulation: SemanticJsonObject | null;
+  readonly calibrationPopulationDigest: string | null;
+  readonly calibrationEvidenceDigest: string | null;
+
+  readonly privacy: {
+    readonly signatureTreatment:
+      | "none"
+      | "public_structural"
+      | "tenant_keyed_private"
+      | "mixed";
+    readonly transientContent:
+      | "forbidden"
+      | "memory_only"
+      | "explicit_disclosure_receipt";
+    readonly policyDigest: string;
+  };
+
+  readonly proposedValidationCriterion: SemanticJsonObject;
+  readonly proposedValidationCriterionDigest: string;
+  readonly supersedes: DetectorRef | null;
+  readonly registrationDigest: string;
+}
+
+export declare function detectorRegistrationDigest(
+  input: Omit<DetectorRegistration, "schemaVersion" | "registrationDigest">,
+): string;
+
+export declare function parseDetectorRegistration(
+  input: unknown,
+): DetectorRegistration;
+
+export interface DetectorPackManifest {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly version: string;
+  readonly kind: "core_structural" | "reference_operational" | "host";
+  readonly detectors: readonly DetectorRef[];
+  readonly lenses: readonly LensRef[];
+  readonly changelogDigest: string;
+  readonly supersedes: PackRef | null;
+  readonly manifestDigest: string;
+}
+
+export declare function detectorPackManifestDigest(
+  input: Omit<DetectorPackManifest, "schemaVersion" | "manifestDigest">,
+): string;
+
+export declare function parseDetectorPackManifest(
+  input: unknown,
+): DetectorPackManifest;
+
+export interface LearningLensRegistration {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly version: string;
+  readonly objective: string;
+  readonly objectiveDigest: string;
+  readonly scopePolicyDigest: string;
+
+  readonly applicableScopes:
+    | { readonly mode: "invocation" }
+    | {
+        readonly mode: "exact";
+        readonly scopes: readonly {
+          readonly scope: Scope;
+          readonly scopeDigest: string;
+        }[];
+      };
+
+  readonly episodeClasses:
+    | { readonly mode: "any" }
+    | { readonly mode: "include"; readonly values: readonly string[] };
+
+  readonly learningClasses: readonly LearningClass[];
+  readonly evidenceRequirements: readonly {
+    readonly kind: EvidenceRef["kind"];
+    readonly minimumTrust: TrustClass;
+    readonly minimumCompleteness: Provenance["completeness"];
+  }[];
+
+  readonly qualitativeRubric: SemanticJsonObject;
+  readonly qualitativeRubricDigest: string;
+  readonly requiredFingerprintKinds: readonly string[];
+  readonly requiredCalibrationIds: readonly string[];
+  readonly permittedDestinationIds: readonly string[];
+  readonly permittedDestinationKinds: readonly string[];
+
+  readonly generatorPolicy: {
+    readonly allowedKinds: readonly (
+      | "deterministic"
+      | "human"
+      | "semantic_judgment"
+    )[];
+    readonly identityPolicyDigest: string;
+    readonly fingerprintPolicyDigest: string;
+  };
+
+  readonly reviewerPolicy: {
+    readonly independentFromGenerator: true;
+    readonly identityPolicyDigest: string;
+    readonly calibrationPolicyDigest: string | null;
+  };
+
+  readonly privacy: {
+    readonly outboundDisclosure:
+      | "forbidden"
+      | "explicit_disclosure_receipt";
+    readonly policyDigest: string;
+  };
+  readonly validationStrategy: { readonly [key: string]: JsonValue };
+  readonly validationStrategyDigest: string;
+  readonly supersedes: LensRef | null;
+  readonly registrationDigest: string;
+}
+
+export declare function learningLensRegistrationDigest(
+  input: Omit<
+    LearningLensRegistration,
+    "schemaVersion" | "registrationDigest"
+  >,
+): string;
+
+export declare function parseLearningLensRegistration(
+  input: unknown,
+): LearningLensRegistration;
+
+export interface InsightDerivation {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly scope: Scope;
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly learningClass: LearningClass;
+  readonly lens: LensRef;
+
+  readonly detector: DetectorRef & {
+    readonly configurationDigest: string;
+  };
+  readonly pack: PackRef | null;
+
+  readonly population: {
+    readonly episodes: readonly {
+      readonly episodeRecordId: string;
+      readonly episodeViewDigest: string;
+      readonly scopeDigest: string;
+    }[];
+    readonly populationDigest: string;
+    readonly normalizationPolicyDigest: string;
+    readonly comparabilityPolicyDigest: string | null;
+  };
+
+  readonly directObservation: {
+    readonly statement: string;
+    readonly data: JsonValue;
+    readonly evidenceRefs: readonly EvidenceRef[];
+    readonly completeness: Provenance["completeness"];
+  };
+
+  readonly evidenceHealthFindings: readonly EvidenceHealthFinding[];
+
+  readonly interpretation: {
+    readonly statement: string;
+    readonly confidence: "high" | "medium" | "low" | "unknown";
+    readonly uncertainty: readonly string[];
+  } | null;
+
+  readonly impactHypothesis: {
+    readonly statement: string;
+  } | null;
+
+  readonly contradictoryEvidenceRefs: readonly EvidenceRef[];
+  readonly missingEvidence: readonly {
+    readonly capability: string;
+    readonly reasonCode: string;
+    readonly effect: "limits_claims" | "blocks_audit" | "blocks_use";
+  }[];
+
+  readonly applicability: {
+    readonly statement: string;
+    readonly exclusions: readonly string[];
+  };
+
+  readonly producer: {
+    readonly kind: "deterministic" | "human" | "semantic_judgment";
+    readonly implementationId: string;
+    readonly implementationVersion: string;
+    readonly implementationDigest: string;
+    readonly principal: PrincipalRef | null;
+    readonly attestation: {
+      readonly id: string;
+      readonly digest: string;
+    } | null;
+    readonly modelFingerprintDigest: string | null;
+    readonly promptDigest: string | null;
+    readonly toolPolicyDigest: string | null;
+    readonly budgetPolicyDigest: string | null;
+    readonly disclosure: {
+      readonly receiptId: string;
+      readonly receiptDigest: string;
+      readonly minimizedBytesDigest: string;
+    } | null;
+  };
+
+  readonly candidateIntervention: {
+    readonly summary: string;
+    readonly proposedDestinationKind: string;
+    readonly proposedDestinationId: string | null;
+    readonly contentDraft: JsonValue | null;
+    readonly rollbackIntent: string | null;
+  } | null;
+
+  readonly validation: {
+    readonly method: string;
+    readonly comparablePopulation: JsonValue | null;
+    readonly comparablePopulationDigest: string | null;
+    readonly successCriterion: string;
+    readonly guardrails: readonly string[];
+    readonly strategyDigest: string;
+  } | null;
+
+  readonly supersedes: {
+    readonly id: string;
+    readonly derivationDigest: string;
+    readonly scopeDigest: string;
+  } | null;
+  readonly derivationDigest: string;
+}
+
+export declare function insightDerivationDigest(
+  input: Omit<InsightDerivation, "schemaVersion" | "id" | "derivationDigest">,
+): string;
+
+export declare function parseInsightDerivation(
+  input: unknown,
+): InsightDerivation;
+```
+
+All ids, versions, capability names, observation kinds, episode classes,
+destination values, learning classes, reason codes, and method names are
+bounded and control-free. Versions use canonical SemVer. Host learning classes
+use a bounded `host:<namespace>` form; roles remain lens data and never become
+kernel enums.
+
+Registration content (`configuration`, present `thresholds`, false-positive policy,
+calibration population, proposed validation criterion, qualitative rubric,
+and validation strategy) is minimized, public-safe JSON. Its adjacent digest
+is recomputed from that exact content. Lens fingerprint/calibration requirements
+are explicit sorted ids, while generator, reviewer, and privacy policy objects
+carry their exact policy digests. Null content and digest fields occur together;
+no digest authenticates omitted private bytes. Secrets and low-entropy private
+recurrence stay behind tenant-keyed host registrations.
+
+Required configuration, false-positive policy, proposed validation criterion,
+and qualitative rubric values are non-null JSON objects. Thresholds and
+calibration population are either null with a null digest or non-null JSON
+objects with their recomputed digest; JSON null is never accepted as disguised
+required content.
+
+Every detector has at least one positive fixture digest and one complex or
+ordinary negative-control digest. Include-mode episode classes and exact-scope
+selectors are nonempty. A required lens allowlist is nonempty, while
+`any_registered` carries an empty list. Threshold content/digest and
+calibration-population content/digest are paired. Every pack contains at least
+one detector; detector and lens refs are sorted and unique by id/version/digest.
+
+Every set-like array is sorted and unique. Arrays whose order affects meaning
+— derivation evidence, populations, supports, guardrails, and validation —
+retain declared order and are duplicate-free. Exact-scope entries recompute
+their `scopeDigest`. `directObservation.data` uses the normalized, minimized
+provider-neutral vocabulary and is included in `derivationDigest`; it never
+contains a provider-native raw record. `InsightDerivation.id` is exactly
+`insight-${derivationDigest}`. `population.episodes` and
+`directObservation.evidenceRefs` cannot both be empty, so a self-digested statement
+without durable grounding cannot parse as a derivation. Every population
+episode `scopeDigest` must equal the derivation's top-level `scopeDigest`, which
+prevents a population-only derivation from crossing a project or isolation
+boundary. `populationDigest` is the digest of protocol-canonical JSON for exact
+`{ episodes, normalizationPolicyDigest, comparabilityPolicyDigest }`; changing
+either policy therefore changes population identity even when the episode list
+does not.
+
+Population `episodeRecordId` values use the 4,096-character durable-id bound,
+not the smaller semantic identifier bound. Every direct-observation and
+contradictory EvidenceRef must carry `episode.scopeDigest` exactly equal to the
+derivation `scopeDigest`. An Insight supersession carries the predecessor
+`scopeDigest`, which must also equal the current derivation scope; semantic
+revision lineage cannot cross a project or isolation boundary.
+
+`evidenceHealthFindings` embeds complete, unknown-first-parsed
+`EvidenceHealthFinding` records, so id, digest, effect, source, page,
+completeness, and affected-record facts stay cryptographically coherent. The
+#30b resolver still must prove each finding's source/page relationship to the
+derivation's exact evidence and scope before permitting downstream use.
+
+Human and semantic-judgment producers require both `principal` and
+`attestation`. Human producers require `principal.kind === "human"`;
+semantic-judgment producers require an `agent` or `service` principal and
+additionally require model, prompt, tool-policy, and budget-policy digests. Deterministic producers require those
+provider fields and principal/attestation to be null. `disclosure` is optional
+only for local or otherwise non-outbound production; any outbound semantic
+workflow binds the exact durable receipt, minimized-byte digest, and receipt
+digest. Validation comparable-population content and digest are paired.
+
+Digest inclusion is exact:
+
+| Record | Included | Excluded |
+| --- | --- | --- |
+| `DetectorRegistration` | Every field from `id` through `supersedes`, including full policy/configuration content and its verified adjacent digests | `schemaVersion`, `registrationDigest` |
+| `DetectorPackManifest` | `id`, version, kind, exact detector/lens refs, changelog and supersession | `schemaVersion`, `manifestDigest` |
+| `LearningLensRegistration` | Every field from `id` through `supersedes`, including full objective/rubric/requirement/policy/strategy content and adjacent digests | `schemaVersion`, `registrationDigest` |
+| `InsightDerivation` | Every field from scope through producer, intervention/validation and same-scope supersession, including full evidence and complete evidence-health findings | `schemaVersion`, `id`, `derivationDigest` |
+
+Changing implementation, configuration, thresholds, capabilities,
+applicability, normalization, comparability, fixtures, false-positive policy,
+calibration, privacy, proposed validation, lens objective/rubric/requirements,
+validation strategy, or pack membership requires a new semantic version and
+new digest. Maturity promotion also creates a new version with exact
+`supersedes` lineage. `calibrated` and `stable` require non-null calibration
+population and evidence digests. `deprecated` registrations are not executable
+and must supersede the prior executable version. A pack cannot select a
+deprecated registration.
+
+Detector and lens content may be registered directly or made available through
+a pack. Installation grants no trust, execution, publication, active-context,
+review, authorization, or validation authority. A derivation is advisory and
+inert. Its deterministic observation can be certain while interpretation and
+impact remain uncertain. Evidence-health references constrain claims but never
+become behavioral evidence. An intervention and validation plan are either
+both present or both absent; a derivation cannot authorize or publish either.
+
+`DetectorExecutionRecord` and the `applied | not_applicable | incomplete`
+execution result are deliberately deferred to #30b. Detector eligibility,
+capability checks, exact populations, pack selection, recurrence, deduplication,
+suppression, caps, dry-run output, and no-provider-on-empty behavior are #30c.
+Core/reference/host pack contents and reference consumers are #30d. Optional
+semantic-provider generation, disclosure receipts, and independently
+calibrated qualitative review are #13. Default-quality and candidate-utility
+claims remain #26 work.
 
 ### Candidate
 

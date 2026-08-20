@@ -32,6 +32,13 @@ export type { CandidateReview, ReviewDisposition, ReviewFinding } from "./record
 export { parseCandidateReview, reviewInvalidReasons } from "./records/review.js";
 export type { EvidenceHealthFinding, ImportReceipt, SourcePageReceipt } from "./records/source-health.js";
 export { parseEvidenceHealthFinding, parseImportReceipt, parseSourcePageReceipt } from "./records/source-health.js";
+export type { DetectorMaturity, DetectorOutputKind, DetectorRegistration } from "./records/semantic.js";
+export type { DetectorPackManifest, LearningLensRegistration } from "./records/semantic.js";
+export type { InsightDerivation, LearningClass } from "./records/semantic.js";
+export { detectorRegistrationDigest, parseDetectorRegistration } from "./records/semantic.js";
+export { detectorPackManifestDigest, parseDetectorPackManifest } from "./records/semantic.js";
+export { learningLensRegistrationDigest, parseLearningLensRegistration } from "./records/semantic.js";
+export { insightDerivationDigest, parseInsightDerivation, scopeDigest } from "./records/semantic.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";

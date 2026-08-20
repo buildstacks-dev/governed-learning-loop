@@ -64,6 +64,18 @@ between code and contract, open an issue — never silently drift either one.
   references. Normal ingest appends retained outcome claims; raw legacy outcome
   ids, missing values, ownership mismatches, and incomplete evidence never pass
   or become zero.
+- **Semantic dimensions stay independent.** Scope says where learning applies;
+  a registered lens says what good means; learning class says which semantic
+  altitude is considered; a detector says which condition was observed; a
+  destination says what may change. Roles and provider categories are host
+  data, never kernel enums.
+- **Registered semantics are immutable and inert.** Detector, pack, and lens
+  records bind full minimized content plus verified digests. InsightDerivation
+  keeps direct observation, uncertain interpretation, impact hypothesis,
+  intervention, and validation separate. Evidence health remains a separate
+  record family, packs grant no authority, and only verified `propose` may
+  create a Candidate. #30a records do not imply the deferred detector engine,
+  reference packs, semantic-provider workflow, or measured candidate utility.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

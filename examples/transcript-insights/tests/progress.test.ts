@@ -1,9 +1,13 @@
-import type { EvidenceSource } from "@cormidia/learning-loop";
+import type { DetectorRegistration, EvidenceSource } from "@cormidia/learning-loop";
 import {
   conservativePolicy,
   createExactScopePolicy,
   createLearningLoop,
+  detectorRegistrationDigest,
   defineSourceRegistration,
+  parseDetectorRegistration,
+  sha256HexOfCanonicalJson,
+  toJsonValue,
 } from "@cormidia/learning-loop";
 import {
   createInMemoryStore,
@@ -91,4 +95,58 @@ test("report announces its resolved state and remains read-only when state is ab
   } finally {
     removeDir(outer);
   }
+});
+
+test("strict consumer can construct and parse a host-neutral detector registration from the public root", () => {
+  const configuration = { detector: "strict-consumer-evidence-coverage", version: 1 };
+  const falsePositivePolicy = { policy: "no-behavioral-denominator" };
+  const validationCriterion = { criterion: "all selected pages available" };
+  const digest = (value: unknown): string => sha256HexOfCanonicalJson(toJsonValue(value));
+  const base: Omit<DetectorRegistration, "schemaVersion" | "registrationDigest"> = {
+    id: "host:transcript-evidence-coverage",
+    version: "1.0.0",
+    maturity: "experimental",
+    implementationDigest: "1".repeat(64),
+    configuration,
+    configurationDigest: digest(configuration),
+    thresholds: null,
+    thresholdDigest: null,
+    observationVocabularyDigest: "2".repeat(64),
+    requiredCapabilities: ["source.health"],
+    acceptedObservationKinds: ["source.health"],
+    minimumTrust: "untrusted",
+    minimumCompleteness: "unknown",
+    episodeClasses: { mode: "any" },
+    scopePolicyDigest: "3".repeat(64),
+    scopeConstraint: { mode: "invocation" },
+    lensConstraint: { mode: "independent" },
+    normalizationPolicyDigest: "4".repeat(64),
+    comparabilityPolicyDigest: null,
+    outputKind: "evidence_health",
+    positiveFixtureDigests: ["5".repeat(64)],
+    negativeFixtureDigests: ["6".repeat(64)],
+    falsePositivePolicy,
+    falsePositivePolicyDigest: digest(falsePositivePolicy),
+    calibrationPopulation: null,
+    calibrationPopulationDigest: null,
+    calibrationEvidenceDigest: null,
+    privacy: {
+      signatureTreatment: "none",
+      transientContent: "forbidden",
+      policyDigest: "7".repeat(64),
+    },
+    proposedValidationCriterion: validationCriterion,
+    proposedValidationCriterionDigest: digest(validationCriterion),
+    supersedes: null,
+  };
+  const registration = parseDetectorRegistration({
+    schemaVersion: 1,
+    ...base,
+    registrationDigest: detectorRegistrationDigest(base),
+  });
+  expect(registration).toMatchObject({
+    id: "host:transcript-evidence-coverage",
+    outputKind: "evidence_health",
+    lensConstraint: { mode: "independent" },
+  });
 });

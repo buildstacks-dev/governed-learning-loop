@@ -8,6 +8,7 @@ import { canonicalJsonText } from "../canonical/canonical-json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
 import { LearningLoopError } from "../diagnostics.js";
 import { parseArrayOf, parseNonEmptyText, parseOneOf, parseText, readFields } from "../parse/toolkit.js";
+import { parseDurableId } from "../records/semantic-shared.js";
 import type { Parse } from "../parse/toolkit.js";
 import type { Candidate } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
@@ -26,6 +27,7 @@ import type { CandidateEvidenceResolution } from "./evidence-binding.js";
 import { assertVerifiedPrincipal } from "./identity.js";
 import type { CandidateDerivationBinding } from "./derivation-binding.js";
 import { revalidateCandidateDerivation } from "./derivation-binding.js";
+import { appendCandidateReviewReference, verifyExistingCandidateReviewReference } from "./candidate-review-index.js";
 
 /** Semantic-judgment port for candidate review (contract §Semantic judgment). */
 export interface CandidateReviewer {
@@ -171,8 +173,8 @@ export async function runReviewCandidate(
   const reviewerPrincipal = reviewerPort.principal;
   assertVerifiedPrincipal(context.identity, reviewerPrincipal, "reviewer.principal");
   const inputFields = readFields(input, ["candidateReviewInput"]);
-  const reviewId = inputFields.req("id", parseNonEmptyText);
-  const requestedCandidateId = inputFields.req("candidateId", parseNonEmptyText);
+  const reviewId = inputFields.req("id", parseDurableId);
+  const requestedCandidateId = inputFields.req("candidateId", parseDurableId);
   const reviewerId = parseNonEmptyText(reviewerPort.id, ["reviewer", "id"]);
   const reviewerVersion = parseNonEmptyText(reviewerPort.version, ["reviewer", "version"]);
   const configuredCalibrationDigest = reviewerPort.calibrationDigest;
@@ -230,6 +232,7 @@ export async function runReviewCandidate(
       sameCanonicalValue(existing.reviewer, reviewerRef) &&
       sameCanonicalValue(existing.reviewerImplementation, reviewerImplementation)
     ) {
+      await verifyExistingCandidateReviewReference(context, candidate, existing);
       return existing;
     }
     throw refusal("store.conflict", `review "${reviewId}" already belongs to different content`);
@@ -304,6 +307,8 @@ export async function runReviewCandidate(
     throw new LearningLoopError(firstReason.code, invalidReasons);
   }
 
+  await appendCandidateReviewReference(context, currentCandidate, review);
+
   const status = await createOnly(context, "review", review.id, review, `review/${review.id}`);
   if (status === "conflict") {
     throw refusal(
@@ -311,5 +316,13 @@ export async function runReviewCandidate(
       `review "${review.id}" already exists with different content; reviews are create-only`,
     );
   }
-  return review;
+  const terminalStored = await loadStoredRecord(context, "review", review.id);
+  if (terminalStored === undefined) {
+    throw refusal("store.corrupt", "review receipt was not preserved after a successful write");
+  }
+  const terminalReview = parseCandidateReview(terminalStored.value);
+  if (terminalReview.id !== review.id || !sameCanonicalValue(terminalReview, review)) {
+    throw refusal("store.corrupt", "terminal review bytes differ from the exact indexed result");
+  }
+  return terminalReview;
 }

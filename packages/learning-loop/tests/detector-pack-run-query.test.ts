@@ -102,6 +102,69 @@ function rebuildReceipt(input: DetectorPackRunReceipt): DetectorPackRunReceipt {
   });
 }
 
+function numberedDigest(value: number): string {
+  return value.toString(16).padStart(64, "0");
+}
+
+function receiptWithCandidateBindings(
+  receipt: DetectorPackRunReceipt,
+  counts: readonly number[],
+  prefix: string,
+): DetectorPackRunReceipt {
+  const item = receipt.items[0];
+  if (item === undefined || item.recurrence.status !== "grouped") {
+    throw new Error("candidate-binding query fixture requires a grouped receipt");
+  }
+  const recurrence = item.recurrence;
+  let candidateIndex = 1;
+  const items = counts.map((count, groupIndex) => {
+    const candidateBindings = Array.from({ length: count }, () => {
+      const number = candidateIndex;
+      candidateIndex += 1;
+      const derivationDigest = numberedDigest(200_000 + number);
+      return {
+        candidateId: `${prefix}-${String(number).padStart(5, "0")}`,
+        candidateDigest: numberedDigest(number),
+        claimDigest: numberedDigest(100_000 + number),
+        derivationId: `insight-${derivationDigest}`,
+        derivationDigest,
+        episodeIdentitySetDigest: recurrence.episodeIdentitySetDigest,
+        distinctEpisodeCount: 1,
+        supersedes: null,
+        latestReview: null,
+      };
+    });
+    const executionKeyDigest = numberedDigest(400_000 + groupIndex);
+    return {
+      ...item,
+      detector: { ...item.detector, id: `${prefix}-detector-${String(groupIndex).padStart(3, "0")}` },
+      executionRef: {
+        id: `detector-execution-${executionKeyDigest}`,
+        executionKeyDigest,
+        executionDigest: numberedDigest(300_000 + groupIndex),
+      },
+      recurrence: {
+        ...recurrence,
+        groupKeyDigest: numberedDigest(500_000 + groupIndex),
+        decisionBindingDigest: numberedDigest(600_000 + groupIndex),
+        governance: {
+          status: "assessed" as const,
+          candidateBindings,
+          groupDisposition: count === 0 ? ("available" as const) : ("deduplicated" as const),
+          requiredSupersedes: null,
+          requiredOverrideCount: null,
+          governingRejection: null,
+          reasonCodes: [count === 0 ? "candidate.group_available" : "candidate.group_deduplicated"],
+        },
+      },
+    };
+  });
+  return rebuildReceipt({
+    ...receipt,
+    items,
+  });
+}
+
 async function queryFixture() {
   const store = createInMemoryStore();
   const policy = createDetectorOrchestrationPolicy();
@@ -210,7 +273,7 @@ describe("DetectorPackRunQuery public boundary and filters", () => {
       { executionDispositions: ["refused"] },
       { groupDispositions: ["suppressed"] },
       { recurrenceStatuses: ["absent"] },
-      { governanceStatuses: ["assessed"] },
+      { governanceStatuses: ["not_assessed"] },
       { statuses: ["partial"] },
       { registryStatuses: ["historical_unconfigured"] },
       { commitStatuses: ["invalid"] },
@@ -221,12 +284,51 @@ describe("DetectorPackRunQuery public boundary and filters", () => {
       ).toEqual([]);
     }
   });
+
+  it("accepts exactly 50,000 embedded Candidate bindings per page and fails closed at 50,001", async () => {
+    const { harness, receipts } = await queryFixture();
+    const first = receipts[0];
+    const second = receipts[1];
+    if (first === undefined || second === undefined) throw new Error("expected two aggregate query receipts");
+    const exact = receiptWithCandidateBindings(
+      first,
+      Array.from({ length: 10 }, () => 5_000),
+      "aggregate-exact",
+    );
+    const excess = receiptWithCandidateBindings(second, [1], "aggregate-excess");
+    await persistDetectorPackRunReceipt(harness.context, exact);
+
+    const exactItems = await itemsOf(
+      harness.learning.queryDetectorPackRuns({
+        scope: harness.scope,
+        receiptIds: [exact.id],
+        limit: 10,
+      }),
+    );
+    expect(exactItems).toHaveLength(1);
+    expect(exactItems[0]).toMatchObject({ governanceBinding: { status: "invalid" } });
+    await expect(
+      harness.learning.getDetectorPackRun({ packRunReceiptId: exact.id, scope: harness.scope }),
+    ).resolves.toMatchObject({ governanceBinding: { status: "invalid" } });
+
+    await persistDetectorPackRunReceipt(harness.context, excess);
+    const receiptIds = [exact.id, excess.id].sort();
+    await expect(
+      itemsOf(
+        harness.learning.queryDetectorPackRuns({
+          scope: harness.scope,
+          receiptIds,
+          limit: 10,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "query.incomplete" });
+  }, 30_000);
 });
 
 describe("DetectorPackRunView history, isolation, and child integrity", () => {
-  it("returns configured committed not-assessed views and exact-scope getters", async () => {
+  it("returns configured committed current assessed views and exact-scope getters", async () => {
     const { harness, receipts } = await queryFixture();
-    const receipt = receipts[0];
+    const receipt = receipts[receipts.length - 1];
     if (receipt === undefined) throw new Error("expected view receipt");
     const view = await harness.learning.getDetectorPackRun({ packRunReceiptId: receipt.id, scope: harness.scope });
     expect(view).toMatchObject({
@@ -234,7 +336,7 @@ describe("DetectorPackRunView history, isolation, and child integrity", () => {
       registryBinding: { status: "configured" },
       policyBinding: { status: "configured" },
       commitBinding: { status: "committed" },
-      governanceBinding: { status: "not_assessed" },
+      governanceBinding: { status: "current" },
       evidenceHealth: { status: "ready" },
       childBindings: [{ status: "committed" }],
     });
@@ -258,6 +360,104 @@ describe("DetectorPackRunView history, isolation, and child integrity", () => {
     await expect(
       harness.learning.getDetectorPackRun({ packRunReceiptId: "detector-pack-run-missing", scope: harness.scope }),
     ).resolves.toBeUndefined();
+  });
+
+  it("keeps legacy-deferred and incomplete admitted insight governance explicitly not assessed", async () => {
+    const { harness, receipts } = await queryFixture();
+    const receipt = receipts[0];
+    const item = receipt?.items[0];
+    if (receipt === undefined || item === undefined || item.recurrence.status !== "grouped") {
+      throw new Error("expected grouped not-assessed fixture");
+    }
+    for (const reason of [
+      "candidate_claims_deferred",
+      "candidate_review_history_unavailable",
+      "candidate_governance_incomplete",
+    ] as const) {
+      const historical = rebuildReceipt({
+        ...receipt,
+        items: [
+          {
+            ...item,
+            recurrence: {
+              ...item.recurrence,
+              governance: { status: "not_assessed", reason, groupDisposition: "unassessed" },
+            },
+          },
+        ],
+      });
+      await persistDetectorPackRunReceipt(harness.context, historical);
+      await expect(
+        harness.learning.getDetectorPackRun({
+          packRunReceiptId: historical.id,
+          scope: harness.scope,
+        }),
+      ).resolves.toMatchObject({
+        commitBinding: { status: "committed" },
+        governanceBinding: { status: "not_assessed" },
+      });
+    }
+  });
+
+  it("keeps legacy assessed-capped governance historical without reading Candidate state", async () => {
+    const { harness, receipts } = await queryFixture();
+    const receipt = receipts[0];
+    const item = receipt?.items[0];
+    if (receipt === undefined || item === undefined || item.recurrence.status !== "grouped") {
+      throw new Error("expected grouped legacy cap fixture");
+    }
+    const cappedPolicy = createDetectorOrchestrationPolicy({ maximumInsightGroupsPerRun: 0 });
+    const legacy = rebuildReceipt({
+      ...receipt,
+      policy: cappedPolicy,
+      status: "partial",
+      items: [
+        {
+          ...item,
+          reasonCodes: ["detector.pack_group_capped"],
+          recurrence: {
+            ...item.recurrence,
+            governance: {
+              status: "assessed",
+              candidateBindings: [],
+              groupDisposition: "capped",
+              requiredSupersedes: null,
+              requiredOverrideCount: null,
+              governingRejection: null,
+              reasonCodes: ["detector.pack_group_capped"],
+            },
+          },
+        },
+      ],
+    });
+    await persistDetectorPackRunReceipt(harness.context, legacy);
+    let candidateReads = 0;
+    const observed: LearningStore = {
+      get: (key) => {
+        if (
+          key.kind === "candidate" ||
+          key.kind === "candidate-recurrence-claim" ||
+          key.kind === "detector-recurrence-group-candidate" ||
+          key.kind === "candidate-review" ||
+          key.kind === "review"
+        ) {
+          candidateReads += 1;
+        }
+        return harness.store.get(key);
+      },
+      create: (key, value, digest, operationId) => harness.store.create(key, value, digest, operationId),
+      compareAndSet: (key, revision, value, digest, operationId) =>
+        harness.store.compareAndSet(key, revision, value, digest, operationId),
+      append: (stream, revision, entries, operationId) => harness.store.append(stream, revision, entries, operationId),
+      tombstone: (input) => harness.store.tombstone(input),
+      list: (query) => harness.store.list(query),
+    };
+    await expect(
+      loadDetectorPackRunView(replaceContextStore(harness.context, observed), legacy),
+    ).resolves.toMatchObject({
+      governanceBinding: { status: "historical" },
+    });
+    expect(candidateReads).toBe(0);
   });
 
   it("resolves valid receipts as historical under another registry/policy configuration", async () => {
@@ -317,6 +517,7 @@ describe("DetectorPackRunView history, isolation, and child integrity", () => {
     expect(view).toMatchObject({
       commitBinding: { status: "invalid" },
       childBindings: [{ executionId, status: "invalid" }],
+      governanceBinding: { status: "invalid" },
       evidenceHealth: { status: "invalid" },
     });
   });

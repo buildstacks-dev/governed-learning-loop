@@ -1126,12 +1126,45 @@ describe("configured detector orchestration policy", () => {
     expect(result.receipt).toMatchObject({
       status: "partial",
       items: [
-        { recurrence: { governance: { groupDisposition: "unassessed" } } },
-        { recurrence: { governance: { groupDisposition: "capped" } }, reasonCodes: ["detector.pack_group_capped"] },
-        { recurrence: { governance: { groupDisposition: "unassessed" } } },
-        { recurrence: { governance: { groupDisposition: "capped" } }, reasonCodes: ["detector.pack_group_capped"] },
+        { recurrence: { governance: { status: "assessed", groupDisposition: "available" } } },
+        {
+          recurrence: {
+            governance: {
+              status: "not_assessed",
+              reason: "candidate_governance_capped",
+              groupDisposition: "capped",
+            },
+          },
+          reasonCodes: ["detector.pack_group_capped"],
+        },
+        {
+          recurrence: {
+            governance: {
+              status: "not_assessed",
+              reason: "candidate_governance_not_applicable",
+              groupDisposition: "unassessed",
+            },
+          },
+        },
+        {
+          recurrence: {
+            governance: {
+              status: "not_assessed",
+              reason: "candidate_governance_not_applicable",
+              groupDisposition: "capped",
+            },
+          },
+          reasonCodes: ["detector.pack_group_capped"],
+        },
       ],
     });
+    if (result.receipt === undefined) throw new Error("mixed governance fixture omitted its receipt");
+    await expect(
+      fixture.learning.getDetectorPackRun({
+        packRunReceiptId: result.receipt.id,
+        scope: fixture.harness.scope,
+      }),
+    ).resolves.toMatchObject({ governanceBinding: { status: "current" } });
   });
 
   it("counts an existing exact group once and keeps rejection-suppression registration inert", async () => {

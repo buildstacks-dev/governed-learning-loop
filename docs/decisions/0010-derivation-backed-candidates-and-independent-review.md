@@ -144,3 +144,12 @@ symbol. Historical Candidate bytes are unchanged and never gain a claim on
 read. The exact mapping, proposer/producer separation, review independence and
 inert Candidate rulings above remain unchanged; recurrence claims do not yet
 alter proposal or review disposition.
+
+### Amendment — decision 0017
+
+New Candidate receipts now establish a private review-history marker, and new
+reviews append an exact ref before their terminal receipt. Assessed recurrence
+uses the same stored-review independence validation and append order to bind the
+latest frontier review. Pre-marker reviews remain usable audit/governance
+history but do not become assessed recurrence history. No assessed disposition
+changes review eligibility or proposal admission.

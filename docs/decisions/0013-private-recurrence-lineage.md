@@ -183,6 +183,10 @@ decisive-rejection suppression and override evidence, assessed pack receipts,
 and proposal admission. The recurrence, policy, receipt, and claim slices do
 not refuse a Candidate because another claim exists.
 
+**Implemented later by decision 0017:** observational Candidate/review
+frontier assessment and current/historical assessed receipt views. Enforced
+deduplication, suppression, override, and proposal admission remain deferred.
+
 Reference detector contents and fixtures remain #30d. Optional semantic/model
 workflows remain #13. Candidate-utility calibration and every quality or
 improvement claim remain #26. Scheduling, provider routing, cost/time budgets,

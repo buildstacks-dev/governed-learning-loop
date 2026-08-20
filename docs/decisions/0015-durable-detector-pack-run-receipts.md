@@ -165,10 +165,11 @@ DetectorPackRunView contains:
 
 Decision 0016 subsequently implements private derivation/Candidate recurrence
 claims and group-Candidate append lineage, derived only from exact qualified
-execution/derivation facts. Receipt minting in the current runtime still does
-not read those claims. Current Candidate/review assessment, deduplication,
-suppression, override, assessed receipt minting and proposal admission remain
-deferred. Historical/manual/unbound Candidates are never auto-migrated.
+execution/derivation facts. Decision 0017 subsequently mints observational
+assessed receipt branches for exact post-marker active frontiers and resolves
+them current/historical/invalid. Enforced deduplication, suppression, override,
+and proposal admission remain deferred. Historical/manual/unbound Candidates
+are never auto-migrated.
 
 Reference detector contents remain #30d. Semantic/model workflows remain #13.
 Candidate-utility calibration and every quality/improvement claim remain #26.
@@ -185,7 +186,7 @@ activation remain outside this receipt.
 - Historical receipts retain their embedded full policy and immutable
   governance snapshot. Current policy, evidence health and future governance
   remain separate view dimensions.
-- Assessed governance bytes may parse for forward audit but are not current or
-  enforcing in this runtime.
+- Decision 0017 may resolve exact assessed governance bytes current or
+  historical; the classification remains observational and non-enforcing.
 - No receipt creates a Candidate, grants review, suppression, publication,
   authorization, activation, validation, utility or efficacy.

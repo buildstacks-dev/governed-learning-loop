@@ -80,7 +80,12 @@ type CandidateBinding = {
 type GroupGovernance =
   | {
       readonly status: "not_assessed";
-      readonly reason: "candidate_claims_deferred";
+      readonly reason:
+        | "candidate_claims_deferred"
+        | "candidate_review_history_unavailable"
+        | "candidate_governance_not_applicable"
+        | "candidate_governance_incomplete"
+        | "candidate_governance_capped";
       readonly groupDisposition: "unassessed" | "capped";
     }
   | {
@@ -102,6 +107,8 @@ type GroupGovernance =
       } | null;
       readonly reasonCodes: readonly string[];
     };
+
+type AssessedGovernance = Extract<GroupGovernance, { status: "assessed" }>;
 
 type ReceiptRecurrence =
   | {
@@ -266,7 +273,16 @@ const parseGovernanceAt: Parse<GroupGovernance> = (input, path) => {
   if (status === "not_assessed") {
     return {
       status,
-      reason: fields.req("reason", parseOneOf(["candidate_claims_deferred"])),
+      reason: fields.req(
+        "reason",
+        parseOneOf([
+          "candidate_claims_deferred",
+          "candidate_review_history_unavailable",
+          "candidate_governance_not_applicable",
+          "candidate_governance_incomplete",
+          "candidate_governance_capped",
+        ]),
+      ),
       groupDisposition: fields.req("groupDisposition", parseOneOf(["unassessed", "capped"])),
     };
   }
@@ -341,6 +357,18 @@ const parseGovernanceAt: Parse<GroupGovernance> = (input, path) => {
   ) {
     throw invalid("schema.corrupt", "required predecessor does not resolve an exact candidate binding", path);
   }
+  const reasonCodes = fields.req("reasonCodes", parseSortedReasons);
+  if (
+    groupDisposition === "capped" &&
+    (candidateBindings.length !== 0 ||
+      requiredSupersedes !== null ||
+      requiredOverrideCount !== null ||
+      governingRejection !== null ||
+      reasonCodes.length !== 1 ||
+      reasonCodes[0] !== "detector.pack_group_capped")
+  ) {
+    throw invalid("schema.corrupt", "legacy assessed capped governance has noncanonical fields", path);
+  }
   return {
     status: "assessed",
     candidateBindings,
@@ -348,9 +376,165 @@ const parseGovernanceAt: Parse<GroupGovernance> = (input, path) => {
     requiredSupersedes,
     requiredOverrideCount,
     governingRejection,
-    reasonCodes: fields.req("reasonCodes", parseSortedReasons),
+    reasonCodes,
   };
 };
+
+function candidateBindingRef(binding: CandidateBinding): NonNullable<AssessedGovernance["requiredSupersedes"]> {
+  return {
+    candidateId: binding.candidateId,
+    candidateDigest: binding.candidateDigest,
+    claimDigest: binding.claimDigest,
+  };
+}
+
+function reviewedCandidateKey(binding: CandidateBinding): string {
+  const review = binding.latestReview;
+  return canonicalKey([
+    binding.candidateId,
+    binding.candidateDigest,
+    binding.claimDigest,
+    review?.id ?? "",
+    review?.recordDigest ?? "",
+  ]);
+}
+
+export function classifyAssessedRecurrenceGovernance(input: {
+  readonly policy: DetectorOrchestrationPolicy;
+  readonly currentDistinctEpisodeCount: number;
+  readonly candidateBindings: readonly CandidateBinding[];
+}): AssessedGovernance {
+  const candidateBindings = input.candidateBindings;
+  if (candidateBindings.length === 0) {
+    return {
+      status: "assessed",
+      candidateBindings,
+      groupDisposition: "available",
+      requiredSupersedes: null,
+      requiredOverrideCount: null,
+      governingRejection: null,
+      reasonCodes: ["candidate.group_available"],
+    };
+  }
+  const suppressed: Array<{
+    readonly binding: CandidateBinding;
+    readonly requiredOverrideCount: number;
+  }> = [];
+  const required: CandidateBinding[] = [];
+  let deduplicated = false;
+  for (const binding of candidateBindings) {
+    const disposition = binding.latestReview?.disposition;
+    if (disposition === undefined || disposition === "accept" || disposition === "escalate") {
+      deduplicated = true;
+      continue;
+    }
+    if (disposition === "revise" || input.policy.rejectionSuppression.mode === "disabled") {
+      required.push(binding);
+      continue;
+    }
+    const requiredOverrideCount = Math.ceil(
+      binding.distinctEpisodeCount * input.policy.rejectionSuppression.minimumDistinctEpisodeMultiplier,
+    );
+    if (!Number.isSafeInteger(requiredOverrideCount)) {
+      throw invalid("schema.invalid", "rejection evidence threshold overflowed", []);
+    }
+    if (input.currentDistinctEpisodeCount < requiredOverrideCount) {
+      suppressed.push({ binding, requiredOverrideCount });
+    } else required.push(binding);
+  }
+  if (suppressed.length > 0) {
+    const strictest = [...suppressed].sort((left, right) => {
+      if (left.requiredOverrideCount !== right.requiredOverrideCount) {
+        return right.requiredOverrideCount - left.requiredOverrideCount;
+      }
+      const leftKey = reviewedCandidateKey(left.binding);
+      const rightKey = reviewedCandidateKey(right.binding);
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    })[0];
+    if (strictest === undefined || strictest.binding.latestReview === null) {
+      throw invalid("schema.corrupt", "suppressed governance has no exact rejection", []);
+    }
+    const reference = candidateBindingRef(strictest.binding);
+    return {
+      status: "assessed",
+      candidateBindings,
+      groupDisposition: "suppressed",
+      requiredSupersedes: reference,
+      requiredOverrideCount: strictest.requiredOverrideCount,
+      governingRejection: {
+        ...reference,
+        reviewId: strictest.binding.latestReview.id,
+        reviewRecordDigest: strictest.binding.latestReview.recordDigest,
+      },
+      reasonCodes: ["candidate.rejection_suppressed"],
+    };
+  }
+  if (deduplicated) {
+    return {
+      status: "assessed",
+      candidateBindings,
+      groupDisposition: "deduplicated",
+      requiredSupersedes: null,
+      requiredOverrideCount: null,
+      governingRejection: null,
+      reasonCodes: ["candidate.group_deduplicated"],
+    };
+  }
+  if (required.length > 1) {
+    return {
+      status: "assessed",
+      candidateBindings,
+      groupDisposition: "deduplicated",
+      requiredSupersedes: null,
+      requiredOverrideCount: null,
+      governingRejection: null,
+      reasonCodes: ["candidate.frontier_ambiguous", "candidate.group_deduplicated"],
+    };
+  }
+  const binding = required[0];
+  if (binding === undefined || binding.latestReview === null) {
+    throw invalid("schema.corrupt", "available governance has no exact required Candidate", []);
+  }
+  const reference = candidateBindingRef(binding);
+  if (binding.latestReview.disposition === "revise") {
+    return {
+      status: "assessed",
+      candidateBindings,
+      groupDisposition: "available",
+      requiredSupersedes: reference,
+      requiredOverrideCount: null,
+      governingRejection: null,
+      reasonCodes: ["candidate.revision_required"],
+    };
+  }
+  if (input.policy.rejectionSuppression.mode === "disabled") {
+    return {
+      status: "assessed",
+      candidateBindings,
+      groupDisposition: "available",
+      requiredSupersedes: reference,
+      requiredOverrideCount: null,
+      governingRejection: null,
+      reasonCodes: ["candidate.rejection_suppression_disabled"],
+    };
+  }
+  const requiredOverrideCount = Math.ceil(
+    binding.distinctEpisodeCount * input.policy.rejectionSuppression.minimumDistinctEpisodeMultiplier,
+  );
+  return {
+    status: "assessed",
+    candidateBindings,
+    groupDisposition: "available",
+    requiredSupersedes: reference,
+    requiredOverrideCount,
+    governingRejection: {
+      ...reference,
+      reviewId: binding.latestReview.id,
+      reviewRecordDigest: binding.latestReview.recordDigest,
+    },
+    reasonCodes: ["candidate.rejection_override_available"],
+  };
+}
 
 const parseRecurrenceAt: Parse<ReceiptRecurrence> = (input, path) => {
   const fields = readFields(input, path);
@@ -577,11 +761,25 @@ function assertGroupPolicy(items: DetectorPackRunReceipt["items"], policy: Detec
     }
     if (
       expected.outputKind !== item.outputKind ||
+      (item.outputKind === "evidence_health" && item.recurrence.governance.status === "assessed") ||
       (item.recurrence.governance.groupDisposition === "capped") !== expected.capped ||
       (item.recurrence.governance.status === "not_assessed" &&
         item.recurrence.governance.groupDisposition !== (expected.capped ? "capped" : "unassessed"))
     ) {
       throw invalid("schema.corrupt", "pack receipt group disposition violates its exact orchestration policy", []);
+    }
+    if (item.recurrence.governance.status === "not_assessed") {
+      const reason = item.recurrence.governance.reason;
+      const reasonAllowed =
+        reason === "candidate_claims_deferred" ||
+        (item.outputKind === "evidence_health"
+          ? reason === "candidate_governance_not_applicable"
+          : expected.capped
+            ? reason === "candidate_governance_capped"
+            : reason === "candidate_review_history_unavailable" || reason === "candidate_governance_incomplete");
+      if (!reasonAllowed) {
+        throw invalid("schema.corrupt", "pack receipt governance reason does not match its output family", []);
+      }
     }
   }
 }
@@ -650,6 +848,28 @@ export function parseDetectorPackRunReceipt(input: unknown): DetectorPackRunRece
     ["items"],
   );
   assertGroupPolicy(items, policy);
+  for (const [index, item] of items.entries()) {
+    if (
+      item.recurrence.status !== "grouped" ||
+      item.recurrence.governance.status !== "assessed" ||
+      item.recurrence.governance.groupDisposition === "capped"
+    ) {
+      continue;
+    }
+    const expectedGovernance = classifyAssessedRecurrenceGovernance({
+      policy,
+      currentDistinctEpisodeCount: item.recurrence.distinctEpisodeCount,
+      candidateBindings: item.recurrence.governance.candidateBindings,
+    });
+    if (canonicalKey(expectedGovernance) !== canonicalKey(item.recurrence.governance)) {
+      throw invalid("schema.corrupt", "assessed recurrence governance violates its exact policy matrix", [
+        "items",
+        index,
+        "recurrence",
+        "governance",
+      ]);
+    }
+  }
   const governanceSnapshotDigest = fields.req("governanceSnapshotDigest", parseDigestAt);
   if (governanceSnapshotDigest !== detectorPackRunGovernanceSnapshotDigest(items)) {
     throw invalid("schema.corrupt", "pack receipt governance snapshot digest is invalid", ["governanceSnapshotDigest"]);

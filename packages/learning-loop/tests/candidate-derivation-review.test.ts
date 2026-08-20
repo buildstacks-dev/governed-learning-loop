@@ -54,6 +54,33 @@ function toggledSnapshotStore(base: LearningStore) {
   return { store, hide: () => (hidden = true) };
 }
 
+async function appendIndexedReview(
+  store: LearningStore,
+  candidate: CandidateV2,
+  review: ReturnType<typeof parseCandidateReview>,
+): Promise<void> {
+  const stream = { namespace: "learning", kind: "candidate-review", id: candidate.id };
+  const stored = await store.get(stream);
+  if (stored === undefined) throw new Error("indexed review fixture requires a Candidate review marker");
+  const reviewValue = toJsonValue(review);
+  const recordDigest = sha256HexOfCanonicalJson(reviewValue);
+  const value = toJsonValue({
+    kind: "review",
+    reviewId: review.id,
+    recordDigest,
+    candidateId: candidate.id,
+    candidateDigest: candidate.contentDigest,
+    scopeDigest: candidateScopeDigest(candidate.scope),
+  });
+  const result = await store.append(
+    stream,
+    stored.revision,
+    [{ id: `review:${review.id}`, digest: sha256HexOfCanonicalJson(value), value }],
+    `seed-indexed-review/${review.id}`,
+  );
+  if (result.status !== "updated") throw new Error("indexed review fixture did not append its reference");
+}
+
 function candidateFoldChangingStore(base: LearningStore, mode: "semantic-once" | "review-once" | "review-always") {
   let changes = 0;
   let configured:
@@ -64,34 +91,28 @@ function candidateFoldChangingStore(base: LearningStore, mode: "semantic-once" |
       }
     | undefined;
   const store: LearningStore = {
-    get: (key) => base.get(key),
-    create: (key, value, digest, operationId) => base.create(key, value, digest, operationId),
-    compareAndSet: (key, expectedRevision, value, digest, operationId) =>
-      base.compareAndSet(key, expectedRevision, value, digest, operationId),
-    append: (stream, expectedRevision, entries, operationId) =>
-      base.append(stream, expectedRevision, entries, operationId),
-    tombstone: (input) => base.tombstone(input),
-    list: async (query) => {
-      const page = await base.list(query);
+    get: async (key) => {
+      const stored = await base.get(key);
       const value = configured;
       if (
         value !== undefined &&
-        query.namespace === "learning" &&
-        query.kind === "review" &&
+        key.namespace === "learning" &&
+        key.kind === "candidate-review" &&
+        key.id === value.candidate.id &&
         (mode === "review-always" || changes === 0)
       ) {
         changes += 1;
         if (mode === "semantic-once") {
-          const key = {
+          const snapshotKey = {
             namespace: "learning",
             kind: "semantic-registry-snapshot",
             id: value.registryRevision,
           };
-          const snapshot = await base.get(key);
+          const snapshot = await base.get(snapshotKey);
           if (snapshot === undefined) throw new Error("candidate fold requires semantic snapshot");
           const snapshotValue = toJsonValue(snapshot.value);
           const result = await base.compareAndSet(
-            key,
+            snapshotKey,
             snapshot.revision,
             snapshotValue,
             snapshot.digest,
@@ -111,6 +132,7 @@ function candidateFoldChangingStore(base: LearningStore, mode: "semantic-once" |
             findings: [],
             reviewedAt: `2026-08-20T00:2${changes}:00.000Z`,
           });
+          await appendIndexedReview(base, value.candidate, record);
           const reviewValue = toJsonValue(record);
           await base.create(
             { namespace: "learning", kind: "review", id: record.id },
@@ -120,8 +142,15 @@ function candidateFoldChangingStore(base: LearningStore, mode: "semantic-once" |
           );
         }
       }
-      return page;
+      return stored;
     },
+    create: (key, value, digest, operationId) => base.create(key, value, digest, operationId),
+    compareAndSet: (key, expectedRevision, value, digest, operationId) =>
+      base.compareAndSet(key, expectedRevision, value, digest, operationId),
+    append: (stream, expectedRevision, entries, operationId) =>
+      base.append(stream, expectedRevision, entries, operationId),
+    tombstone: (input) => base.tombstone(input),
+    list: (query) => base.list(query),
   };
   return {
     store,
@@ -554,7 +583,7 @@ describe("derivation-backed review context and revalidation", () => {
     expect(facts.derivation.id).toBe(candidate.derivationRef?.id);
   });
 
-  it("marks self-consistent stored mapping or derivationRef forgery invalid and never calls review", async () => {
+  it("treats stored mapping or derivationRef forgery as an exact marker corruption and never calls review", async () => {
     for (const mode of ["problem", "evidence", "intervention", "scope", "derivationRef"] as const) {
       const { harness, candidate } = await fixture();
       const reference = candidate.evidenceRefs[0];
@@ -588,18 +617,9 @@ describe("derivation-backed review context and revalidation", () => {
                     },
                   };
       const changed = await overwriteCandidate(harness.store, candidate, mutation);
-      const view = await harness.learning.getCandidateView({ candidateId: changed.id });
-      expect(view).toMatchObject({
-        derivationLineage: {
-          status: "invalid",
-          ...(mode === "derivationRef" || mode === "scope" ? {} : { derivation: expect.any(Object) }),
-        },
-        evidenceHealth: { status: "invalid" },
-        governance: { review: "blocked", publication: "blocked" },
+      await expect(harness.learning.getCandidateView({ candidateId: changed.id })).rejects.toMatchObject({
+        code: "store.corrupt",
       });
-      if (mode === "derivationRef" || mode === "scope") {
-        expect(view?.derivationLineage).not.toHaveProperty("derivation");
-      }
       const principal = await reviewerPrincipal(harness.context.identity, {
         id: `forged-${mode}-reviewer`,
         domain: `forged-${mode}-domain`,
@@ -621,7 +641,7 @@ describe("derivation-backed review context and revalidation", () => {
     }
   });
 
-  it("marks forged mirrored supersession invalid and an occupied review id cannot bypass it", async () => {
+  it("treats forged mirrored supersession as marker corruption and an occupied review id cannot bypass lineage", async () => {
     const { harness, proposer, candidate } = await fixture();
     const manualPredecessor = await harness.learning.propose({
       id: "forged-lineage-manual-predecessor",
@@ -637,10 +657,8 @@ describe("derivation-backed review context and revalidation", () => {
       supersedes: manualPredecessor.candidate.id,
       originalDigest: manualPredecessor.candidate.contentDigest,
     });
-    await expect(harness.learning.getCandidateView({ candidateId: changed.id })).resolves.toMatchObject({
-      derivationLineage: { status: "invalid", derivation: expect.any(Object) },
-      evidenceHealth: { status: "ready" },
-      governance: { review: "blocked", publication: "blocked" },
+    await expect(harness.learning.getCandidateView({ candidateId: changed.id })).rejects.toMatchObject({
+      code: "store.corrupt",
     });
 
     const principal = await reviewerPrincipal(harness.context.identity, {
@@ -769,6 +787,7 @@ describe("stored review independence from derivation producer", () => {
       reviewedAt: "2026-08-20T00:10:00.000Z",
     });
     const value = toJsonValue(record);
+    await appendIndexedReview(harness.store, candidate, record);
     await harness.store.create(
       { namespace: "learning", kind: "review", id: record.id },
       value,
@@ -898,7 +917,7 @@ describe("CandidateView composite semantic/review snapshots", () => {
 });
 
 describe("manual Candidate supersession versus derivation lineage", () => {
-  it("keeps ordinary manual supersession defects not_bound while manual-to-derived mismatch is invalid", async () => {
+  it("treats post-receipt manual supersession mutation as exact marker corruption", async () => {
     const store = createInMemoryStore();
     const harness = await createSemanticEngineHarness({ store, label: "manual-lineage-a" });
     const projectB = await createSemanticEngineHarness({
@@ -983,13 +1002,8 @@ describe("manual Candidate supersession versus derivation lineage", () => {
         supersedes: defect.supersedes,
         originalDigest: defect.originalDigest,
       });
-      await expect(harness.learning.getCandidateView({ candidateId: changed.id })).resolves.toMatchObject({
-        derivationLineage: { status: "not_bound" },
-        governance: {
-          review: "blocked",
-          publication: "blocked",
-          reasons: expect.arrayContaining([expect.objectContaining({ code: defect.reason })]),
-        },
+      await expect(harness.learning.getCandidateView({ candidateId: changed.id })).rejects.toMatchObject({
+        code: "store.corrupt",
       });
     }
 
@@ -1007,9 +1021,8 @@ describe("manual Candidate supersession versus derivation lineage", () => {
       supersedes: derivedPredecessor.candidate.id,
       originalDigest: derivedPredecessor.candidate.contentDigest,
     });
-    await expect(harness.learning.getCandidateView({ candidateId: forged.id })).resolves.toMatchObject({
-      derivationLineage: { status: "invalid" },
-      governance: { review: "blocked", publication: "blocked" },
+    await expect(harness.learning.getCandidateView({ candidateId: forged.id })).rejects.toMatchObject({
+      code: "store.corrupt",
     });
   });
 });

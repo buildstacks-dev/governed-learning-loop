@@ -1237,7 +1237,12 @@ export interface DetectorPackRunReceipt {
           readonly governance:
             | {
                 readonly status: "not_assessed";
-                readonly reason: "candidate_claims_deferred";
+                readonly reason:
+                  | "candidate_claims_deferred"
+                  | "candidate_review_history_unavailable"
+                  | "candidate_governance_not_applicable"
+                  | "candidate_governance_incomplete"
+                  | "candidate_governance_capped";
                 readonly groupDisposition: "unassessed" | "capped";
               }
             | {
@@ -1817,12 +1822,16 @@ retry-stable reason codes. An absent recurrence records one closed reason and a
 nullable decision binding; grouped recurrence records treated locator,
 binding, committed counts, exact sorted identity set/digest and governance.
 
-The runtime mints only not_assessed governance with the explicit
-candidate_claims_deferred reason and exact unassessed/capped policy
-classification. The parser reserves the assessed branch with exact Candidate,
-derivation, claim, supersession, review, rejection and override references, but
-this runtime reports such bytes historical rather than current. It creates no
-Candidate claim and enforces no rejectionSuppression rule.
+The runtime now mints observational assessed governance for uncapped insight
+groups whose exact active Candidate frontier has complete post-marker review
+history and current eligible lineage. Evidence-health groups remain
+`not_assessed/candidate_governance_not_applicable`. Capped insight groups do no
+Candidate/review work and remain `not_assessed/candidate_governance_capped`.
+Pre-marker or typed-incomplete active frontiers remain not assessed with their
+closed reason. Existing `candidate_claims_deferred` bytes stay parseable
+history. The assessed branch binds exact Candidate, derivation, claim,
+supersession, latest-review, rejection and override facts but still enforces no
+proposal rule.
 
 populationDigest binds requested ids plus one-to-one resolved episode lineage.
 itemDigest binds each complete item. governanceSnapshotDigest binds sorted
@@ -1855,21 +1864,27 @@ Views separate receipt commit integrity, current/historical registry and policy,
 each child commit, governance assessment and current aggregate evidence health.
 Complete child detector/pack/lens/output/registry/scope/recurrence provenance is
 revalidated together with selected detector/lens fan-out and exact
-invocation/aggregate-cap ordering under the embedded policy; historical group
-growth may be a superset, never a mutation of the receipt snapshot.
+invocation/aggregate-cap ordering under the embedded policy. Assessed
+governance is current only when every embedded frontier binding, policy,
+registry, review and frozen group snapshot remains exact. Later valid group,
+Candidate, or review growth makes the old governance historical; missing or
+mismatched embedded refs make it invalid. Historical group growth remains a
+valid commit superset, never a mutation of the receipt snapshot.
 
 Receipts fail closed above 64 MiB canonical bytes, 5,000 items, 500 population
 episodes, the embedded policy's 100-or-lower committed-execution and
-grouped-item bounds, 50,000 total identity references, 50,000 future Candidate
-bindings, 5,000 identities per group or 1,000 reason codes. A query page
+grouped-item bounds, 50,000 total identity references, 50,000 Candidate
+bindings, 5,000 identities per group or 1,000 reason codes. One receipt build,
+direct view, or query page additionally caps total Candidate/claim/member/review
+governance work at 50,000. A query page
 additionally caps aggregate receipt bytes at 64 MiB, receipt items, child refs
 and population episodes at 5,000 each, and unique group folds at 100. No digest
 helper or receipt writer is public.
 
 Private derivation/Candidate recurrence claims are implemented by decision
-0016, but receipt assessment, current Candidate/review governance,
-deduplication, rejection suppression and concurrent proposal admission remain
-a separate governance slice. Automatic population discovery and
+0016 and observational receipt assessment by decision 0017. Automatic
+deduplication, rejection suppression, override enforcement, and concurrent
+proposal admission remain a separate governance slice. Automatic population discovery and
 scheduling/routing remain outside this receipt. Core/reference/host pack
 contents and reference consumers are #30d. Optional semantic-provider
 generation and disclosure are #13. Default-quality and candidate-utility
@@ -1987,9 +2002,104 @@ episode sets at 5,000 values, and same-group derivation witnesses share one
 bounded group fold. Raw malformed bytes or impossible bindings propagate
 `schema.corrupt` or `store.corrupt`; a self-consistent but referentially invalid Candidate claim is
 visible through its typed invalid lineage. Claims do not alter the recurrence
-group key, Candidate content digest, review matrix, pack governance snapshot,
-proposal admission, publication, authority, utility or efficacy. Pack receipts
-remain `not_assessed/candidate_claims_deferred` in this slice.
+group key, Candidate content digest, proposal admission, publication,
+authority, utility or efficacy.
+
+#### Private review marker and observational frontier assessment
+
+New Candidate receipts are preceded by one private
+`candidate-review/<candidateId>` append-stream marker:
+
+```ts
+type CandidateReviewIndexValue =
+  | {
+      readonly kind: "marker";
+      readonly candidateId: string;
+      readonly candidateDigest: string;
+      readonly scopeDigest: string;
+      readonly recurrenceClaimDigest: string;
+    }
+  | {
+      readonly kind: "review";
+      readonly reviewId: string;
+      readonly recordDigest: string;
+      readonly candidateId: string;
+      readonly candidateDigest: string;
+      readonly scopeDigest: string;
+    };
+```
+
+The marker is exactly entry zero and has framed id
+`marker:<candidateDigest>:<recurrenceClaimDigest>`. It follows the exact
+Candidate claim/content lock and precedes the group-Candidate append and
+Candidate receipt. A review ref has fixed id `review:<reviewId>`, is appended
+and reloaded after independent review revalidation, and precedes the Review
+receipt. Missing receipts are retained orphan attempts and do not become
+latest; terminal bytes that differ from the fixed indexed ref are corruption.
+Review ids use the 4,096-character durable-id bound before callback/write, and
+the framed stream id admits its fixed prefix.
+
+The marker makes post-marker history complete without a global review scan.
+Pre-marker Candidates remain reviewable and their reviews remain audit-visible,
+but their active recurrence group is
+`not_assessed/candidate_review_history_unavailable`; nothing backfills the
+marker. Latest review means the last committed exact ref in append order,
+never greatest `reviewedAt`. Indexed reviews re-run the existing
+proposer/producer/reviewer independence and structural validity matrix.
+
+The active frontier contains exact committed group Candidate claims that are
+not superseded by another committed valid same-group claim. Cycles, foreign
+predecessors, malformed records, and terminal Candidate bytes that differ from
+their embedded claim/lock are corruption. CandidateBindings contain only this
+frontier, sorted by Candidate id, with exact derivation, proposal episode
+set/count, predecessor and latest indexed review. Superseded review histories
+are not read. A typed-invalid active recurrence/derivation/evidence/mirrored
+lineage makes the whole group `not_assessed/candidate_governance_incomplete`;
+it is not silently excluded.
+
+The record layer's pure assessed classifier is shared by runtime and parser.
+For uncapped insight groups its exact precedence is:
+
+1. Any below-threshold multiplier rejection is `suppressed`.
+2. Otherwise any latest null/accept/escalate is `deduplicated`.
+3. More than one otherwise-eligible revise/reject predecessor is
+   `deduplicated` with `candidate.frontier_ambiguous`.
+4. One revise, disabled rejection, or threshold-met rejection is `available`
+   with its exact required predecessor and, for a multiplier, exact rejection
+   and absolute threshold.
+5. An empty frontier is `available` with all required fields null.
+
+The absolute multiplier threshold is the checked-safe
+`ceil(proposalDistinctEpisodeCount × registeredMultiplier)`; equality passes,
+and invalid/overflowed values are never zero or clamped. Multiple suppressed
+rejections select the greatest threshold, then the ascending canonical tuple
+`[candidateId,candidateDigest,claimDigest,reviewId,reviewRecordDigest]`.
+
+Current assessed reason codes are closed to
+`candidate.group_available`, `candidate.group_deduplicated`,
+`candidate.frontier_ambiguous`, `candidate.revision_required`,
+`candidate.rejection_suppression_disabled`,
+`candidate.rejection_suppressed`, and
+`candidate.rejection_override_available`. `detector.pack_group_capped` remains
+the item/legacy assessed-cap reason. A current capped insight group instead
+uses not-assessed reason `candidate_governance_capped` and does zero assessment
+work. Evidence-health uses `candidate_governance_not_applicable`.
+
+Assessment reads only exact group/Candidate review streams and memoizes one
+group fold per build/page. At most 5,000 review refs occur behind one marker and
+at most 50,000 total Candidate, proposal-member, derivation-claim, indexed
+review, and embedded CandidateBinding work units occur per receipt build,
+direct view, or query page. No result is truncated. The candidate-review kind
+does not contribute to the global detector semantic-graph revision, so foreign
+review activity does not churn detector planning.
+
+One inherited limitation remains: Candidate evidence/derivation revalidation
+still uses global evidence-kind revisions and source receipt/health scans.
+Concurrent foreign evidence or Candidate-claim traffic can cause bounded
+retry/work, although it cannot enter the exact-scope frontier or returned
+content. The library therefore does not yet claim completely scope-local
+analysis work; an exact-reference evidence-health/source-receipt index remains
+follow-up work.
 
 ### Candidate
 
@@ -2296,6 +2406,10 @@ lineage, producer independence, and evidence after the external callback
 before writing. An occupied review id is
 returned only for the same captured binding and reviewer registration;
 otherwise it conflicts before another callback or disclosure.
+Review id is parsed with the 4,096-character durable-id bound before callback
+or index persistence. For a marked Candidate, the exact review index ref is
+appended/reloaded before CandidateReview is created last; exact retry verifies
+that ref, while pre-marker Candidates retain the prior unindexed review path.
 Governance reads bind each stored review's inner id to its store key and
 re-run review structural validity, proposer/producer/reviewer independence,
 and the current risk tier's independence-domain rule. A forged or internally
@@ -4022,7 +4136,8 @@ The core suite should prove at least:
   and documents surviving child facts rather than claiming batch atomicity;
 - receipt views revalidate exact child detector/pack/lens/output/registry/scope
   and recurrence provenance, keep registry/policy/commit/governance/evidence
-  dimensions separate, and never treat reserved assessed governance as current;
+  dimensions separate, and classify exact assessed governance current,
+  historical, invalid, or not-assessed without changing commit state;
 - receipt queries/gets require exact scope, never touch a wrong-scope target,
   bind normalized filters except page limit into opaque cursors, expose a
   scope-local public revision, and provide no locator/group-key/content search;
@@ -4045,6 +4160,22 @@ The core suite should prove at least:
   lineage without changing GovernanceView;
 - historical Candidate ownership locks without claim bytes remain
   `historical_unbound` and are never backfilled on read;
+- Candidate review streams require one first marker, retain review-ref orphans,
+  write exact refs before Review receipts, order latest by committed append,
+  preserve pre-marker review compatibility, and reject marker/ref/terminal
+  tamper and 5,001 refs without truncation;
+- assessed frontiers retain only exact active claims, ignore superseded review
+  history, classify the full closed disposition/reason matrix identically in
+  runtime and parser, and leave proposal admission unchanged;
+- capped insight and evidence-health groups do zero Candidate assessment work,
+  while typed-invalid or pre-marker active frontiers remain explicitly not
+  assessed;
+- assessed receipt build/direct/page folds share exact group/review caches and
+  fail closed above 50,000 aggregate governance work units or embedded
+  Candidate bindings; foreign review traffic does not enter exact group reads;
+- later Candidate, review, policy, registry, or group-snapshot changes make an
+  older exact assessed receipt historical; missing embedded refs or an invalid
+  pack graph make governance invalid, never current;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

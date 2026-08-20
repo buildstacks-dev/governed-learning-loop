@@ -109,6 +109,22 @@ export type CandidateRecurrenceLineage =
       };
     };
 
+export interface CandidateRecurrenceResolutionCache {
+  readonly derivationClaims: Map<string, readonly DerivationRecurrenceClaim[]>;
+  readonly claimGroupExecutions: Map<string, { readonly executionIds: readonly string[] }>;
+  readonly groupLineages: Map<string, Awaited<ReturnType<typeof recurrenceReceiptLineage>>>;
+  readonly groupCandidateMembers: Map<string, ReadonlySet<string>>;
+}
+
+export function createCandidateRecurrenceResolutionCache(): CandidateRecurrenceResolutionCache {
+  return {
+    derivationClaims: new Map(),
+    claimGroupExecutions: new Map(),
+    groupLineages: new Map(),
+    groupCandidateMembers: new Map(),
+  };
+}
+
 interface ClaimRef {
   readonly claimDigest: string;
 }
@@ -536,12 +552,13 @@ export async function loadCommittedDerivationRecurrenceClaims(
   context: EngineContext,
   derivationId: string,
   derivationDigest: string,
+  sharedGroupCache?: Map<string, { readonly executionIds: readonly string[] }>,
 ): Promise<readonly DerivationRecurrenceClaim[]> {
   const stored = await loadStoredRecord(context, "derivation-recurrence", derivationId);
   if (stored === undefined) return [];
   const refs = parseStoredRefs(stored.value, ["derivation-recurrence"]);
   const claims: DerivationRecurrenceClaim[] = [];
-  const groupCache = new Map<string, { readonly executionIds: readonly string[] }>();
+  const groupCache = sharedGroupCache ?? new Map<string, { readonly executionIds: readonly string[] }>();
   for (const ref of refs) {
     const claim = await loadDerivationClaim(context, ref.value.claimDigest);
     if (claim.derivationId !== derivationId || claim.derivationDigest !== derivationDigest) {
@@ -671,6 +688,7 @@ export async function prepareCandidateRecurrenceClaim(
     ) {
       return notBoundCandidateClaim(candidate, "derivation_unbound");
     }
+    await assertExactCandidateRecurrenceOwnership(context, predecessor, predecessorClaim);
     supersedes = {
       candidateId: predecessor.id,
       candidateDigest: predecessor.contentDigest,
@@ -762,6 +780,28 @@ async function loadCandidateRecurrenceAnchor(
   };
 }
 
+async function assertExactCandidateRecurrenceOwnership(
+  context: EngineContext,
+  candidate: Candidate,
+  claim: CandidateRecurrenceClaim,
+): Promise<void> {
+  const anchor = await loadCandidateRecurrenceAnchor(context, candidate.contentDigest);
+  if (
+    candidate.schemaVersion !== 2 ||
+    recordDigest(toJsonValue(claim.candidate)) !== recordDigest(toJsonValue(candidate)) ||
+    anchor === undefined ||
+    anchor.candidateId !== candidate.id ||
+    anchor.contentDigest !== candidate.contentDigest ||
+    anchor.recurrenceClaimDigest !== claim.claimDigest ||
+    anchor.recurrenceClaim === undefined ||
+    recordDigest(toJsonValue(anchor.recurrenceClaim)) !== recordDigest(toJsonValue(claim)) ||
+    anchor.candidate === undefined ||
+    recordDigest(toJsonValue(anchor.candidate)) !== recordDigest(toJsonValue(candidate))
+  ) {
+    throw invalid("store.corrupt", "Candidate recurrence ownership bytes are mismatched", []);
+  }
+}
+
 export async function persistCandidateRecurrenceClaim(
   context: EngineContext,
   claim: CandidateRecurrenceClaim,
@@ -809,6 +849,7 @@ export async function persistCandidateRecurrenceGroupMember(
 export async function loadCandidateRecurrenceLineage(
   context: EngineContext,
   candidate: Candidate,
+  cache?: CandidateRecurrenceResolutionCache,
 ): Promise<CandidateRecurrenceLineage> {
   const anchor = await loadCandidateRecurrenceAnchor(context, candidate.contentDigest);
   const claim = await loadCandidateRecurrenceClaim(context, candidate.id);
@@ -877,11 +918,17 @@ export async function loadCandidateRecurrenceLineage(
     ) {
       throw recurrenceInvalid("Candidate recurrence claim does not match its derivation binding");
     }
-    const derivationClaims = await loadCommittedDerivationRecurrenceClaims(
-      context,
-      claim.derivationId,
-      claim.derivationDigest,
-    );
+    const derivationKey = `${claim.derivationId}\u0000${claim.derivationDigest}`;
+    let derivationClaims = cache?.derivationClaims.get(derivationKey);
+    if (derivationClaims === undefined) {
+      derivationClaims = await loadCommittedDerivationRecurrenceClaims(
+        context,
+        claim.derivationId,
+        claim.derivationDigest,
+        cache?.claimGroupExecutions,
+      );
+      cache?.derivationClaims.set(derivationKey, derivationClaims);
+    }
     const exactClaims = new Map(derivationClaims.map((value) => [value.claimDigest, value]));
     if (
       claim.derivationClaimDigests.some(
@@ -916,23 +963,29 @@ export async function loadCandidateRecurrenceLineage(
       ) {
         throw recurrenceInvalid("Candidate recurrence predecessor is mismatched");
       }
+      await assertExactCandidateRecurrenceOwnership(context, predecessor, predecessorClaim);
     } else if (candidate.supersedes !== undefined) {
       throw recurrenceInvalid("Candidate recurrence claim omitted its exact predecessor");
     }
-    const stream = await loadStoredRecord(context, "detector-recurrence-group-candidate", claim.groupKeyDigest);
-    const members = stream === undefined ? [] : parseCandidateGroupMembers(stream.value, ["group-candidate"]);
-    if (
-      !members.some(
-        (member) => member.value.candidateId === claim.candidateId && member.value.claimDigest === claim.claimDigest,
-      )
-    ) {
+    let memberKeys = cache?.groupCandidateMembers.get(claim.groupKeyDigest);
+    if (memberKeys === undefined) {
+      const stream = await loadStoredRecord(context, "detector-recurrence-group-candidate", claim.groupKeyDigest);
+      const members = stream === undefined ? [] : parseCandidateGroupMembers(stream.value, ["group-candidate"]);
+      memberKeys = new Set(members.map((member) => `${member.value.candidateId}\u0000${member.value.claimDigest}`));
+      cache?.groupCandidateMembers.set(claim.groupKeyDigest, memberKeys);
+    }
+    if (!memberKeys.has(`${claim.candidateId}\u0000${claim.claimDigest}`)) {
       throw recurrenceInvalid("Candidate recurrence group member is missing");
     }
     const witness = derivationClaims.find((value) => value.groupKeyDigest === claim.groupKeyDigest);
     if (witness === undefined) throw recurrenceInvalid("Candidate recurrence claim has no witness");
     const execution = await loadDetectorExecutionRecord(context, witness.executionId);
     if (execution === undefined) throw recurrenceInvalid("Candidate recurrence witness execution is missing");
-    const current = await recurrenceReceiptLineage(context, execution);
+    let current = cache?.groupLineages.get(claim.groupKeyDigest);
+    if (current === undefined) {
+      current = await recurrenceReceiptLineage(context, execution);
+      cache?.groupLineages.set(claim.groupKeyDigest, current);
+    }
     if (
       current.binding?.groupKeyDigest !== claim.groupKeyDigest ||
       claim.episodeIdentityDigestsAtProposal.some(
@@ -1012,4 +1065,58 @@ function claimDiagnostic(message: string): Diagnostic {
 
 function recurrenceInvalid(message: string): LearningLoopError {
   return new LearningLoopError("candidate.recurrence_invalid", [claimDiagnostic(message)]);
+}
+
+export interface CurrentGroupCandidateClaim {
+  readonly candidate: Candidate;
+  readonly claim: Extract<CandidateRecurrenceClaim, { readonly status: "grouped" }>;
+}
+
+export async function loadCurrentGroupCandidateClaims(
+  context: EngineContext,
+  groupKeyDigest: string,
+  cache?: CandidateRecurrenceResolutionCache,
+  workBudget?: { claimRefs: number },
+): Promise<readonly CurrentGroupCandidateClaim[]> {
+  const stored = await loadStoredRecord(context, "detector-recurrence-group-candidate", groupKeyDigest);
+  if (stored === undefined) return [];
+  const members = parseCandidateGroupMembers(stored.value, ["group-candidate"]);
+  cache?.groupCandidateMembers.set(
+    groupKeyDigest,
+    new Set(members.map((member) => `${member.value.candidateId}\u0000${member.value.claimDigest}`)),
+  );
+  const current: CurrentGroupCandidateClaim[] = [];
+  for (const member of members) {
+    const claim = await loadCandidateRecurrenceClaim(context, member.value.candidateId);
+    if (
+      claim?.status !== "grouped" ||
+      claim.claimDigest !== member.value.claimDigest ||
+      claim.groupKeyDigest !== groupKeyDigest
+    ) {
+      throw invalid("store.corrupt", "group Candidate stream claim is missing or mismatched", []);
+    }
+    if (workBudget !== undefined) {
+      workBudget.claimRefs += 1 + claim.proposalMembers.length + claim.derivationClaimDigests.length;
+      if (workBudget.claimRefs > 50_000) {
+        throw new LearningLoopError("detector.limit_exceeded", [
+          {
+            code: "detector.limit_exceeded",
+            severity: "error",
+            message: "recurrence governance claim work exceeds its ceiling",
+          },
+        ]);
+      }
+    }
+    const candidate = await loadCandidate(context, claim.candidateId);
+    if (candidate === undefined) continue;
+    if (
+      candidate.contentDigest !== claim.candidateDigest ||
+      candidateScopeDigest(candidate.scope) !== claim.scopeDigest
+    ) {
+      throw invalid("store.corrupt", "group Candidate claim does not match its terminal Candidate", []);
+    }
+    await assertExactCandidateRecurrenceOwnership(context, candidate, claim);
+    current.push({ candidate, claim });
+  }
+  return current;
 }

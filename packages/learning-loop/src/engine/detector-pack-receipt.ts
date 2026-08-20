@@ -23,6 +23,7 @@ import { loadExecutionRecurrenceBinding, recurrenceReceiptLineage } from "./dete
 import { loadEpisodeIdentityState } from "./episode-identity.js";
 import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import { buildRegistrySnapshot, persistRegistrySnapshot } from "./semantic-graph.js";
+import { assessRecurrenceGroupGovernance } from "./recurrence-governance.js";
 
 const PACK_RUN_INDEX_KIND = "detector-pack-run-index";
 const MAX_BUILD_ATTEMPTS = 3;
@@ -146,6 +147,11 @@ function reasonCodes(item: DetectorPackRunResult["items"][number]): readonly str
 async function buildReceiptItem(
   context: EngineContext,
   item: DetectorPackRunResult["items"][number],
+  governanceCache: Map<
+    string,
+    Promise<Extract<DetectorPackRunReceipt["items"][number]["recurrence"], { status: "grouped" }>["governance"]>
+  >,
+  workBudget: { claimRefs: number },
 ): Promise<Omit<DetectorPackRunReceipt["items"][number], "itemDigest">> {
   const execution = item.result?.execution;
   const registration = context.semanticDetectorsByRef?.get(detectorRefKey(item.detector));
@@ -184,6 +190,38 @@ async function buildReceiptItem(
     if (groupDisposition !== "unassessed" && groupDisposition !== "capped") {
       throw invalid("store.corrupt", "configured grouped pack result has no exact policy disposition", []);
     }
+    const capped = groupDisposition === "capped";
+    let governance: Extract<DetectorPackRunReceipt["items"][number]["recurrence"], { status: "grouped" }>["governance"];
+    if (execution.outputKind === "evidence_health") {
+      governance = {
+        status: "not_assessed",
+        reason: "candidate_governance_not_applicable",
+        groupDisposition: capped ? "capped" : "unassessed",
+      };
+    } else if (capped) {
+      governance = {
+        status: "not_assessed",
+        reason: "candidate_governance_capped",
+        groupDisposition: "capped",
+      };
+    } else {
+      const policy = context.detectorOrchestrationPolicy;
+      if (policy === undefined) throw invalid("store.corrupt", "pack governance requires an orchestration policy", []);
+      const cacheKey = binding.groupKeyDigest;
+      let pending = governanceCache.get(cacheKey);
+      if (pending === undefined) {
+        pending = assessRecurrenceGroupGovernance(context, {
+          groupKeyDigest: binding.groupKeyDigest,
+          currentDistinctEpisodeCount: lineage.episodeIdentityDigests.length,
+          capped: false,
+          policy,
+          workBudget,
+          groupLineage: lineage,
+        });
+        governanceCache.set(cacheKey, pending);
+      }
+      governance = await pending;
+    }
     recurrence = {
       status: "grouped",
       groupKeyDigest: binding.groupKeyDigest,
@@ -193,7 +231,7 @@ async function buildReceiptItem(
       distinctEpisodeCount: lineage.episodeIdentityDigests.length,
       episodeIdentityDigests: lineage.episodeIdentityDigests,
       episodeIdentitySetDigest: sha256HexOfCanonicalJson(toJsonValue(lineage.episodeIdentityDigests)),
-      governance: { status: "not_assessed", reason: "candidate_claims_deferred", groupDisposition },
+      governance,
     };
   } else {
     const binding = execution === undefined ? undefined : await loadExecutionRecurrenceBinding(context, execution.id);
@@ -288,7 +326,13 @@ async function buildReceiptOnce(
     ...populationBase,
     populationDigest: detectorPackRunPopulationDigest(populationBase),
   };
-  const itemBases = await Promise.all(result.items.map((item) => buildReceiptItem(context, item)));
+  const governanceCache = new Map<
+    string,
+    Promise<Extract<DetectorPackRunReceipt["items"][number]["recurrence"], { status: "grouped" }>["governance"]>
+  >();
+  const workBudget = { claimRefs: 0 };
+  const itemBases: Array<Omit<DetectorPackRunReceipt["items"][number], "itemDigest">> = [];
+  for (const item of result.items) itemBases.push(await buildReceiptItem(context, item, governanceCache, workBudget));
   const items = itemBases.map((item) => ({ ...item, itemDigest: detectorPackRunItemDigest(item) }));
   const governanceSnapshotDigest = detectorPackRunGovernanceSnapshotDigest(items);
   const base = {

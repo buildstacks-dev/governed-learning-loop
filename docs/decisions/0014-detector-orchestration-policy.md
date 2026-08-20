@@ -113,11 +113,14 @@ separation.
 derivation/Candidate recurrence claims, exact frozen proposal populations and
 historical-unbound Candidate views. These claims remain observational.
 
-**Deferred to the Candidate-governance slice:** exact Candidate/review
-assessment, deduplication, decisive-rejection suppression,
-evidence-multiplier overrides, enforced same-group supersession, and concurrent
-proposal admission. That slice must not infer claims for
-historical/manual/unbound Candidates.
+**Implemented next by decision 0017:** exact active-frontier Candidate/review
+assessment and observational available/deduplicated/suppressed receipt states,
+including checked evidence-multiplier thresholds.
+
+**Deferred to the Candidate-admission slice:** enforced deduplication,
+decisive-rejection suppression, evidence-multiplier override admission,
+enforced same-group supersession, and concurrent proposal refusal. That slice
+must not infer claims for historical/manual/unbound Candidates.
 
 Reference detector contents remain #30d. Optional semantic/model workflows
 remain #13. Candidate-utility calibration and every quality or improvement
@@ -135,7 +138,7 @@ policy.
   historical executions and recurrence groups remain bound to their exact
   prior revisions and are never relabeled.
 - Registered rejectionSuppression bytes remain non-enforcing after decision
-  0016 lands durable observational claims; a separate decision must land
-  assessment and proposal controls.
+  0017 lands observational assessment; a separate decision must land proposal
+  controls.
 - No public pack receipt, query, writer, Candidate mutation, provider SDK,
   destination, activation path, or efficacy metric is added.

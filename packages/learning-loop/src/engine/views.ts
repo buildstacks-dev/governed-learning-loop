@@ -22,6 +22,7 @@ import { semanticScopeIndexSnapshotRevision } from "./semantic-scope-index.js";
 import type { InsightDerivationView } from "./semantic-views.js";
 import type { CandidateRecurrenceLineage } from "./recurrence-claims.js";
 import { loadCandidateRecurrenceLineage } from "./recurrence-claims.js";
+import { loadIndexedCandidateReviews } from "./candidate-review-index.js";
 
 const MAX_GOVERNANCE_SNAPSHOT_ATTEMPTS = 3;
 
@@ -50,20 +51,12 @@ export async function loadReviews(
   derivationBinding?: CandidateDerivationBinding,
 ): Promise<readonly CandidateReview[]> {
   const reviews: CandidateReview[] = [];
-  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
   const binding = derivationBinding ?? (await revalidateCandidateDerivation(context, candidate));
-  const producerPrincipal =
-    binding.status === "resolved"
-      ? binding.resolved.producerPrincipal
-      : binding.status === "invalid"
-        ? binding.producerPrincipal
-        : undefined;
-  const producerImplementation =
-    binding.status === "resolved"
-      ? binding.resolved.producerImplementation
-      : binding.status === "invalid"
-        ? binding.producerImplementation
-        : undefined;
+  const indexed = await loadIndexedCandidateReviews(context, candidate);
+  if (indexed.status === "ready") {
+    for (const review of indexed.reviews) assertStoredReviewValid(context, candidate, binding, review);
+    return indexed.reviews;
+  }
   for await (const page of iterateRecordPages(context.store, "review", { limit: 100 })) {
     for (const record of page.records) {
       const review = parseCandidateReview(record.value);
@@ -77,34 +70,54 @@ export async function loadReviews(
         ]);
       }
       if (review.candidateId !== candidate.id) continue;
-      const invalidReasons = reviewInvalidReasons(review);
-      if (
-        invalidReasons.length > 0 ||
-        review.reviewer.id === candidate.proposedBy.id ||
-        (producerPrincipal !== null &&
-          producerPrincipal !== undefined &&
-          review.reviewer.id === producerPrincipal.id) ||
-        (producerPrincipal !== null &&
-          producerPrincipal !== undefined &&
-          review.reviewer.independenceDomain === producerPrincipal.independenceDomain) ||
-        (producerImplementation !== undefined &&
-          review.reviewerImplementation.id === producerImplementation.id &&
-          review.reviewerImplementation.version === producerImplementation.version) ||
-        (riskRule.independentDomain && review.reviewer.independenceDomain === candidate.proposedBy.independenceDomain)
-      ) {
-        throw new LearningLoopError("store.corrupt", [
-          {
-            code: "store.corrupt",
-            severity: "error",
-            message: "stored candidate review violates review invariants",
-          },
-          ...invalidReasons,
-        ]);
-      }
+      assertStoredReviewValid(context, candidate, binding, review);
       reviews.push(review);
     }
   }
   return reviews;
+}
+
+export function assertStoredReviewValid(
+  context: EngineContext,
+  candidate: Candidate,
+  binding: CandidateDerivationBinding,
+  review: CandidateReview,
+): void {
+  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  const producerPrincipal =
+    binding.status === "resolved"
+      ? binding.resolved.producerPrincipal
+      : binding.status === "invalid"
+        ? binding.producerPrincipal
+        : undefined;
+  const producerImplementation =
+    binding.status === "resolved"
+      ? binding.resolved.producerImplementation
+      : binding.status === "invalid"
+        ? binding.producerImplementation
+        : undefined;
+  const invalidReasons = reviewInvalidReasons(review);
+  if (
+    invalidReasons.length > 0 ||
+    review.reviewer.id === candidate.proposedBy.id ||
+    (producerPrincipal !== null && producerPrincipal !== undefined && review.reviewer.id === producerPrincipal.id) ||
+    (producerPrincipal !== null &&
+      producerPrincipal !== undefined &&
+      review.reviewer.independenceDomain === producerPrincipal.independenceDomain) ||
+    (producerImplementation !== undefined &&
+      review.reviewerImplementation.id === producerImplementation.id &&
+      review.reviewerImplementation.version === producerImplementation.version) ||
+    (riskRule.independentDomain && review.reviewer.independenceDomain === candidate.proposedBy.independenceDomain)
+  ) {
+    throw new LearningLoopError("store.corrupt", [
+      {
+        code: "store.corrupt",
+        severity: "error",
+        message: "stored candidate review violates review invariants",
+      },
+      ...invalidReasons,
+    ]);
+  }
 }
 
 async function candidateGovernanceStateOnce(

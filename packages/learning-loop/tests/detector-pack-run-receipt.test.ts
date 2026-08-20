@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { DetectorPackRunReceipt } from "../src/index.js";
 import { parseDetectorPackRunReceipt, sha256HexOfCanonicalJson, toJsonValue } from "../src/index.js";
 import {
+  classifyAssessedRecurrenceGovernance,
   detectorPackRunGovernanceSnapshotDigest,
   detectorPackRunItemDigest,
   detectorPackRunKeyDigest,
@@ -123,11 +124,11 @@ function receiptWithCandidateGroups(
       governance: {
         status: "assessed",
         candidateBindings,
-        groupDisposition: "available",
+        groupDisposition: candidateBindings.length === 0 ? "available" : "deduplicated",
         requiredSupersedes: null,
         requiredOverrideCount: null,
         governingRejection: null,
-        reasonCodes: [],
+        reasonCodes: [candidateBindings.length === 0 ? "candidate.group_available" : "candidate.group_deduplicated"],
       },
     };
     const base = {
@@ -214,10 +215,10 @@ describe("DetectorPackRunReceipt canonical record", () => {
     expect(receipt.population.populationDigest).toBe(
       "9e02cdb3c66805fa0561ba2f810debb0f0584a2f6bdb13bdef3af6fec758a030",
     );
-    expect(receipt.items[0]?.itemDigest).toBe("d303289eb1756a853355dda43d4bd378ec5f9a75628c5c1adfea8d77a6fb17be");
-    expect(receipt.governanceSnapshotDigest).toBe("671c8d91368208a5c5cdabc215fe566ffa211537687b9e1cc592ec2fad244bd2");
-    expect(receipt.packRunKeyDigest).toBe("36dfcd8f929639d37e124ca412bc696089f980c85849f6850f4f65b6318cf292");
-    expect(receipt.receiptDigest).toBe("0ece468948baebb30482ac222db6048018fe8460a3d1bab7ad1d44259ccf279e");
+    expect(receipt.items[0]?.itemDigest).toBe("dc4576f53512ae86d9335f43c32f41e0163fd701290bef6e925b2f9ed7a80419");
+    expect(receipt.governanceSnapshotDigest).toBe("0e2adc01a9799b52210db99dada2786c53acc5062af8a2bb8fee3fc1ea45ece1");
+    expect(receipt.packRunKeyDigest).toBe("682ad70378bb2243e01b8d1dd8ba0e374c40735b7c023fa58ee07ff24c5f1975");
+    expect(receipt.receiptDigest).toBe("ccf202e7412e678b8694c18629e78b91d40d4702ae9277d20a3da3e26377c53f");
   });
 
   it("binds every top-level field family into key or full receipt identity", async () => {
@@ -337,7 +338,13 @@ describe("DetectorPackRunReceipt canonical record", () => {
   });
 
   it("accepts the future assessed branch and enforces suppression/candidate bindings", async () => {
-    const receipt = await receiptFixture();
+    const initial = await receiptFixture();
+    const receipt = rebuildReceipt({
+      ...initial,
+      policy: createDetectorOrchestrationPolicy({
+        rejectionSuppression: { mode: "evidence_multiplier", minimumDistinctEpisodeMultiplier: 2 },
+      }),
+    });
     const item = receipt.items[0];
     if (item === undefined || item.recurrence.status !== "grouped") throw new Error("expected grouped item");
     const groupedRecurrence = item.recurrence;
@@ -382,6 +389,15 @@ describe("DetectorPackRunReceipt canonical record", () => {
       recurrence: { ...groupedRecurrence, governance },
     });
     expect(assessed.items[0]?.recurrence).toMatchObject({ governance: { status: "assessed" } });
+    expect(() =>
+      classifyAssessedRecurrenceGovernance({
+        policy: createDetectorOrchestrationPolicy({
+          rejectionSuppression: { mode: "evidence_multiplier", minimumDistinctEpisodeMultiplier: 100 },
+        }),
+        currentDistinctEpisodeCount: 1,
+        candidateBindings: [{ ...candidate, distinctEpisodeCount: Number.MAX_SAFE_INTEGER }],
+      }),
+    ).toThrowError(expect.objectContaining({ code: "schema.invalid" }));
 
     const invalidGovernance: readonly AssessedGovernance[] = [
       { ...governance, requiredOverrideCount: null },
@@ -402,6 +418,19 @@ describe("DetectorPackRunReceipt canonical record", () => {
           recurrence: { ...groupedRecurrence, governance: changed },
         }),
       ).toThrowError(expect.objectContaining({ code: "schema.corrupt" }));
+    }
+    for (const reasonCodes of [
+      ["candidate.recurrence_available"],
+      ["candidate.recurrence_deduplicated"],
+      ["candidate.rejection_evidence_threshold_met"],
+      ["candidate.rejection_suppressed", "candidate.group_available"],
+    ]) {
+      expect(() =>
+        replaceItem(receipt, {
+          ...item,
+          recurrence: { ...groupedRecurrence, governance: { ...governance, reasonCodes } },
+        }),
+      ).toThrowError(expect.objectContaining({ code: expect.stringMatching(/^schema\./) }));
     }
   });
 

@@ -9,10 +9,10 @@ Local conventions on top of the repository rules:
   `packages/` and never deep subpaths. It is the second-consumer proving
   ground; friction goes into PR feedback, not into workarounds that touch the
   packages.
-- **The `demo` store namespace belongs to this app.** Kernel records live in
-  the engine's `learning` namespace (read-only here, validated on read with
-  the public parsers); demo bookkeeping (per-day ingest summaries) lives in
-  `demo`. Never write into `learning`.
+- **The `demo` store namespace belongs to this app.** Kernel observations,
+  episodes, and candidate governance are read only through the public learning
+  façade; the app never names or lists an engine namespace or record kind.
+  Demo bookkeeping (per-day ingest summaries) lives in `demo`.
 - **Aggregate output only.** CLI output and demo-owned records carry counts
   and diagnostic CODES, never diagnostic message bodies, transcript content,
   or full paths.

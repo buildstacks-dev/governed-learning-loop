@@ -40,7 +40,15 @@ export interface Harness {
   readonly reviewerSameDomain: VerifiedPrincipal;
 }
 
-export async function createHarness(extraSources: readonly RegisteredSource<unknown>[] = []): Promise<Harness> {
+export interface HarnessOptions {
+  readonly store?: LearningStore;
+  readonly queryCursorScope?: string;
+}
+
+export async function createHarness(
+  extraSources: readonly RegisteredSource<unknown>[] = [],
+  options: HarnessOptions = {},
+): Promise<Harness> {
   const identities = createTestIdentityPort();
   const proposer = await identities.verify({
     principalId: "distiller-a",
@@ -62,7 +70,7 @@ export async function createHarness(extraSources: readonly RegisteredSource<unkn
     trustCeiling: "observed",
     contentPolicyId: CONTENT_POLICY_ID,
   });
-  const store = createInMemoryStore();
+  const store = options.store ?? createInMemoryStore();
   const learning = createLearningLoop({
     store,
     policy: conservativePolicy(),
@@ -70,6 +78,7 @@ export async function createHarness(extraSources: readonly RegisteredSource<unkn
     scopePolicy: createExactScopePolicy(),
     contentPolicies: [createStructuredContentPolicy({ id: CONTENT_POLICY_ID })],
     sources: [manual, ...extraSources],
+    ...(options.queryCursorScope !== undefined ? { queryCursorScope: options.queryCursorScope } : {}),
     clock: createFixedClock("2026-08-16T10:00:00.000Z"),
     ids: createSequentialIds("t"),
   });

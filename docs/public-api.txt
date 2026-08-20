@@ -64,6 +64,12 @@ root:CandidateInput
 root:ProposeOutcome
 root:CandidateReviewer
 root:CandidateReviewInput
+root:CandidateView
+root:EpisodeQuery
+root:EpisodeView
+root:MeasurementQuery
+root:ObservationQuery
+root:QueryPage
 root:LearningReport
 root:LearningReportQuery
 root:LearningLoop

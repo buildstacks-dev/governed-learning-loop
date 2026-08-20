@@ -1,6 +1,14 @@
 // Episode, metric, and measurement records (contract §Episode).
 // Missing or invalid measurement is never zero and never a pass.
-import { parseArrayOf, parseNonEmptyText, parseOneOf, parseScalar, parseText, readFields } from "../parse/toolkit.js";
+import {
+  invalid,
+  parseArrayOf,
+  parseNonEmptyText,
+  parseOneOf,
+  parseScalar,
+  parseText,
+  readFields,
+} from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
 import type { Provenance } from "./provenance.js";
 import { parseProvenanceAt } from "./provenance.js";
@@ -45,12 +53,27 @@ export interface EpisodeRecord {
 const METRIC_VALUE_TYPES = ["number", "string", "boolean"] as const;
 const METRIC_AGGREGATIONS = ["all", "any", "mean", "median", "sum"] as const;
 const OUTCOME_STATUSES = ["succeeded", "failed", "cancelled", "unknown"] as const;
+const MAX_METRIC_NAME_LENGTH = 1_000;
+
+const parseMetricName: Parse<string> = (input, path) => {
+  const value = parseNonEmptyText(input, path);
+  if (value.length > MAX_METRIC_NAME_LENGTH) {
+    throw invalid("schema.invalid", `metric name exceeds ${MAX_METRIC_NAME_LENGTH} characters`, path);
+  }
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw invalid("schema.invalid", "metric name contains a control character", path);
+    }
+  }
+  return value;
+};
 
 const parseMetricDefinitionAt: Parse<MetricDefinition> = (input, path) => {
   const fields = readFields(input, path);
   const comparabilityPolicyDigest = fields.opt("comparabilityPolicyDigest", parseText);
   return {
-    name: fields.req("name", parseNonEmptyText),
+    name: fields.req("name", parseMetricName),
     valueType: fields.req("valueType", parseOneOf(METRIC_VALUE_TYPES)),
     unit: fields.req("unit", parseText),
     aggregation: fields.req("aggregation", parseOneOf(METRIC_AGGREGATIONS)),

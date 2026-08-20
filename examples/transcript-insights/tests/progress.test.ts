@@ -1,27 +1,76 @@
-import { createInMemoryStore } from "@cormidia/learning-loop/testing";
+import type { EvidenceSource } from "@cormidia/learning-loop";
+import {
+  conservativePolicy,
+  createExactScopePolicy,
+  createLearningLoop,
+  defineSourceRegistration,
+} from "@cormidia/learning-loop";
+import {
+  createInMemoryStore,
+  createStructuredContentPolicy,
+  createTestIdentityPort,
+} from "@cormidia/learning-loop/testing";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { listLearningRecords } from "../src/fold.js";
+import { foldStore } from "../src/fold.js";
 import { cli, makeTempDir, removeDir } from "./support.js";
 
 test("a multi-page fold reports aggregate page progress before completion", async () => {
-  const store = createInMemoryStore();
-  for (let index = 0; index < 201; index += 1) {
-    await store.create(
-      { namespace: "learning", kind: "observation", id: `obs-${String(index).padStart(3, "0")}` },
-      { index },
-      `digest-${index}`,
-      `operation-${index}`,
-    );
-  }
+  const contentPolicyId = "progress-structured-v1";
+  const source: EvidenceSource<null> = {
+    descriptor: { id: "progress-source", adapterVersion: "1.0.0" },
+    probe: () => Promise.resolve({ supported: true, sourceRevision: "progress-revision", diagnostics: [] }),
+    read: async function* () {
+      yield {
+        sourceRevision: "progress-revision",
+        observations: Array.from({ length: 201 }, (_, index) => ({
+          sourceRecordId: `obs-${String(index).padStart(3, "0")}`,
+          episodeId: "progress-episode",
+          kind: "test.progress",
+          data: { index },
+          completeness: "complete" as const,
+        })),
+        measurements: [],
+        episodes: [
+          {
+            sourceRecordId: "episode-record",
+            episodeId: "progress-episode",
+            scope: [
+              { type: "provider", id: "test" },
+              { type: "project", id: "progress" },
+            ],
+            openedAt: "2026-08-19T00:00:00.000Z",
+            status: "unknown" as const,
+            measurementSourceRecordIds: [],
+          },
+        ],
+        diagnostics: [],
+      };
+    },
+  };
+  const registered = defineSourceRegistration({ source, trustCeiling: "observed", contentPolicyId });
+  const learning = createLearningLoop({
+    store: createInMemoryStore(),
+    policy: conservativePolicy(),
+    identity: createTestIdentityPort(),
+    scopePolicy: createExactScopePolicy(),
+    contentPolicies: [createStructuredContentPolicy({ id: contentPolicyId })],
+    sources: [registered],
+  });
+  await learning.ingest(registered, null);
 
   const progress: { readonly records: number; readonly pages: number; readonly heartbeat: boolean }[] = [];
-  const records = await listLearningRecords(store, "observation", (event) => {
-    progress.push({ records: event.records, pages: event.pages, heartbeat: event.heartbeat });
+  const fold = await foldStore(learning, (event) => {
+    if (event.kind === "observations") {
+      progress.push({ records: event.records, pages: event.pages, heartbeat: event.heartbeat });
+    }
   });
 
-  expect(records).toHaveLength(201);
+  expect(fold.observationCount).toBe(201);
+  expect([...fold.projects.values()].map((project) => `${project.provider}/${project.project}`)).toEqual([
+    "test/progress",
+  ]);
   expect(progress).toEqual([
     { records: 200, pages: 1, heartbeat: false },
     { records: 201, pages: 2, heartbeat: false },

@@ -19,7 +19,7 @@ here says a learned intervention has been shown to improve later agent work.
 
 | Level | You integrate | You get |
 | --- | --- | --- |
-| Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account of recurring friction and corrections |
+| Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account plus bounded typed episode and evidence views |
 | Govern | Candidates, independent review, policy, rejection | Proposed lessons that are scoped, deduplicated, and kept **inert** until reviewed |
 | Activate *(planned)* | Content-bound authorization, deterministic publication, rollback | Exact versions introduced under host authority, disable/rollback explicit |
 | Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
@@ -40,6 +40,15 @@ the issue backlog and are orthogonal capabilities, not implied by the first two.
 The kernel is headless and dependency-light: no model-provider SDKs, no agent
 framework, no scheduler, no UI. Hosts own execution, identity, approvals,
 storage deployment, and side effects.
+
+## Typed reads
+
+Consumers read observations, measurements, episode views, and candidate
+governance through the `LearningLoop` façade. Queries return bounded typed
+pages with opaque cursors; engine namespaces and record kinds are private and
+unsupported integration points. A page revision records the append-visible
+store state observed for that page. It is not a frozen detector, calibration,
+or experiment population—those workflows must bind an exact eligible set.
 
 ## The demo: transcript insights
 

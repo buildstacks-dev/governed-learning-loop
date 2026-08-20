@@ -15,6 +15,7 @@ import { parseObservation } from "../records/observation.js";
 import type { Completeness, ContentPolicy, Provenance } from "../records/provenance.js";
 import type { EngineContext } from "./context.js";
 import { conflictDiagnostic, createOnly, derivedRecordId, errorDiagnostics, recordDigest } from "./context.js";
+import { episodeIdentityRecord, parseEpisodeIdentityRecord, persistEpisodeIdentity } from "./episode-identity.js";
 import {
   parseEvidencePageEnvelope,
   parseProjectedEpisodeAt,
@@ -148,7 +149,25 @@ async function ingestEpisode(
   const status = await createOnly(context, "episode", id, parseEpisodeRecord(record), operationId);
   if (status === "created") tally.episodeIds.push(id);
   else if (status === "exists_same") tally.duplicates += 1;
-  else tally.diagnostics.push(conflictDiagnostic("episode", id));
+  else {
+    tally.diagnostics.push(conflictDiagnostic("episode", id));
+    return;
+  }
+
+  // The projection's logical episodeId is a join key for observations, while
+  // the durable EpisodeRecord id is derived from sourceRecordId. Persist their
+  // relationship independently so existing episode bytes stay unchanged and
+  // an explicit re-ingest can repair a missing sidecar after a crash or upgrade.
+  const identity = parseEpisodeIdentityRecord(episodeIdentityRecord(registration, projected, id));
+  const identityStatus = await persistEpisodeIdentity(context, identity, `${operationId}/identity`);
+  if (identityStatus === "conflict") {
+    tally.diagnostics.push({
+      code: "episode.identity_conflict",
+      severity: "error",
+      message: "the durable episode has more than one source identity claim",
+      details: { episodeRecordId: id },
+    });
+  }
 }
 
 export async function runIngest(

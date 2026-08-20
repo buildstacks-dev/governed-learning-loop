@@ -21,6 +21,35 @@ import { COMPLETENESS_VALUES } from "../records/provenance.js";
 
 const OUTCOME_STATUSES = ["succeeded", "failed", "cancelled", "unknown"] as const;
 const DIAGNOSTIC_SEVERITIES = ["info", "warning", "error"] as const;
+const MAX_PROJECTION_IDENTIFIER_LENGTH = 1_000;
+
+const parseProjectionIdentifier: Parse<string> = (input, path) => {
+  const value = parseNonEmptyText(input, path);
+  if (value.length > MAX_PROJECTION_IDENTIFIER_LENGTH) {
+    throw new LearningLoopError("schema.invalid", [
+      {
+        code: "schema.invalid",
+        severity: "error",
+        message: `projection identifier exceeds ${MAX_PROJECTION_IDENTIFIER_LENGTH} characters`,
+        path,
+      },
+    ]);
+  }
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new LearningLoopError("schema.invalid", [
+        {
+          code: "schema.invalid",
+          severity: "error",
+          message: "projection identifier contains a control character",
+          path,
+        },
+      ]);
+    }
+  }
+  return value;
+};
 
 /** Re-prefixes the diagnostics of a root-anchored parser with the local path. */
 function atPath<T>(parse: (input: unknown) => T): Parse<T> {
@@ -91,10 +120,10 @@ export const parseProjectedObservationAt: Parse<ProjectedObservation> = (input, 
   const fields = readFields(input, path);
   const occurredAt = fields.opt("occurredAt", parseText);
   return {
-    sourceRecordId: fields.req("sourceRecordId", parseNonEmptyText),
-    episodeId: fields.req("episodeId", parseNonEmptyText),
+    sourceRecordId: fields.req("sourceRecordId", parseProjectionIdentifier),
+    episodeId: fields.req("episodeId", parseProjectionIdentifier),
     ...(occurredAt !== undefined ? { occurredAt } : {}),
-    kind: fields.req("kind", parseNonEmptyText),
+    kind: fields.req("kind", parseProjectionIdentifier),
     data: fields.req("data", parseJson),
     completeness: fields.req("completeness", parseOneOf(COMPLETENESS_VALUES)),
   };
@@ -104,11 +133,11 @@ export const parseProjectedMeasurementAt: Parse<ProjectedMeasurement> = (input, 
   const fields = readFields(input, path);
   const measuredAt = fields.opt("measuredAt", parseText);
   return {
-    sourceRecordId: fields.req("sourceRecordId", parseNonEmptyText),
-    episodeId: fields.req("episodeId", parseNonEmptyText),
+    sourceRecordId: fields.req("sourceRecordId", parseProjectionIdentifier),
+    episodeId: fields.req("episodeId", parseProjectionIdentifier),
     metric: fields.req("metric", atPath(parseMetricDefinition)),
     value: fields.req("value", parseScalar),
-    evidenceSourceRecordIds: fields.req("evidenceSourceRecordIds", parseArrayOf(parseNonEmptyText)),
+    evidenceSourceRecordIds: fields.req("evidenceSourceRecordIds", parseArrayOf(parseProjectionIdentifier)),
     ...(measuredAt !== undefined ? { measuredAt } : {}),
   };
 };
@@ -117,9 +146,15 @@ export const parseProjectedEpisodeAt: Parse<ProjectedEpisode> = (input, path) =>
   const fields = readFields(input, path);
   const closedAt = fields.opt("closedAt", parseText);
   const status = fields.opt("status", parseOneOf(OUTCOME_STATUSES));
+  const completeness = fields.opt("completeness", parseOneOf(COMPLETENESS_VALUES));
+  const parentEpisodeId = fields.opt("parentEpisodeId", parseProjectionIdentifier);
+  const episodeClass = fields.opt("episodeClass", parseProjectionIdentifier);
   return {
-    sourceRecordId: fields.req("sourceRecordId", parseNonEmptyText),
-    episodeId: fields.req("episodeId", parseNonEmptyText),
+    sourceRecordId: fields.req("sourceRecordId", parseProjectionIdentifier),
+    episodeId: fields.req("episodeId", parseProjectionIdentifier),
+    ...(parentEpisodeId !== undefined ? { parentEpisodeId } : {}),
+    ...(episodeClass !== undefined ? { episodeClass } : {}),
+    ...(completeness !== undefined ? { completeness } : {}),
     scope: fields.req("scope", parseScopeShapeAt),
     openedAt: fields.req("openedAt", parseNonEmptyText),
     ...(closedAt !== undefined ? { closedAt } : {}),

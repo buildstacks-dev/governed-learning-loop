@@ -34,6 +34,11 @@ between code and contract, open an issue — never silently drift either one.
 - **Public surface is budgeted.** New exported symbols from the root are an
   explicit decision (export-ratchet test). Orchestration internals stay
   private.
+- **Public reads are domain-typed and bounded.** Consumers, including examples,
+  use the façade's observation, measurement, episode, and candidate views.
+  Engine namespaces and record kinds are private implementation details. Query
+  cursors are opaque, and append-visible page revisions are never treated as a
+  frozen detector, calibration, or experiment population.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

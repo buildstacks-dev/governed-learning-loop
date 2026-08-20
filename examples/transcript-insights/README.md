@@ -88,12 +88,12 @@ writes only after the scan, when it proposes qualifying inert candidates.
   demo's own `demo` namespace holding per-day aggregate ingest summaries
   (counts and diagnostic codes only).
 
-The first list in a process validates the namespace's record files and builds
-an insertion-ordered path catalog in memory. Later cursor pages seek through
-that catalog and reopen only the records in the requested page. A report over
-an existing large state therefore performs linear filesystem work rather than
-re-reading the whole namespace for every 200-record page; no derived index or
-transcript data is persisted.
+Reports and distillation stream typed, bounded observation and episode pages
+through the kernel façade. The app never knows the kernel's store namespace or
+record kinds. Cursor pages remain insertion ordered, so a report over an
+existing large state performs linear filesystem work rather than accumulating
+the raw store in memory. The demo persists no transcript content or app-owned
+derived index.
 
 ## What the report claims — and what it doesn't
 
@@ -102,11 +102,6 @@ signals, tool failures, task aborts, usage totals), and the inert candidate
 queue with the engine's governance view. All evidence is advisory and
 transcript-derived: it demonstrates recurrence, not causation, and the report
 never claims measured outcomes.
-
-Known caveat: Claude Code usage totals currently undercount to zero because
-of an upstream adapter defect (same-line projections share a source record
-id; the engine keeps the first and drops the rest as `store.conflict` — the
-counts appear honestly in the report's diagnostics section).
 
 ## Launcher note
 

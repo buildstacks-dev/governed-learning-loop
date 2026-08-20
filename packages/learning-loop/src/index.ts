@@ -40,6 +40,8 @@ export { conservativePolicy } from "./engine/policy.js";
 export type { GovernanceView } from "./engine/governance.js";
 export type { IngestReceipt } from "./engine/ingest.js";
 export type { CandidateInput, ProposeOutcome } from "./engine/propose.js";
+export type { CandidateView, EpisodeQuery, EpisodeView } from "./engine/query.js";
+export type { MeasurementQuery, ObservationQuery, QueryPage } from "./engine/query.js";
 export type { CandidateReviewer, CandidateReviewInput } from "./engine/review.js";
 export type { LearningReport, LearningReportQuery } from "./engine/report.js";
 export type { LearningLoop, LearningLoopConfig } from "./engine/loop.js";

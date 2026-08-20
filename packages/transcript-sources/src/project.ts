@@ -215,6 +215,7 @@ export function assemblePage(input: {
   const episode: ProjectedEpisode = {
     sourceRecordId: recordId(0),
     episodeId,
+    completeness,
     scope: [
       { type: "provider", id: draft.provider },
       { type: "project", id: slug },

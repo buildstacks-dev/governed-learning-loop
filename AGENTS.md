@@ -76,6 +76,23 @@ between code and contract, open an issue — never silently drift either one.
   record family, packs grant no authority, and only verified `propose` may
   create a Candidate. #30a records do not imply the deferred detector engine,
   reference packs, semantic-provider workflow, or measured candidate utility.
+- **Semantic capability is host-granted and registry-bound.** A
+  `SourceSemanticProfile` belongs to one exact configured source registration;
+  it is never an adapter claim. Absence grants zero detector capabilities while
+  preserving generic ingest compatibility. When present, undeclared normalized
+  observation kinds are rejected. The optional semantic registry snapshots
+  full installed records and exact selected detector/pack/lens refs; omitting it
+  preserves the prior loop-registry bytes. Installation and selection grant no
+  authority.
+- **Detector execution facts are closed and engine-owned.** An execution binds
+  one exact invocation/window, required pack, output-dependent lens, immutable
+  episode-view population, full input/output evidence-health records, and the
+  exact sorted capability union. Its key excludes the result and its full
+  digest includes it; a different result for the same key is a conflict. Only
+  `applied`, `not_applicable`, and `incomplete` exist—never `pass`. Public
+  parsing does not authorize public execution minting; callable pairing,
+  persistence, queries, and Candidate derivation resolution remain kernel
+  work.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

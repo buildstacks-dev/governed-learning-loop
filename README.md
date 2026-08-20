@@ -72,11 +72,29 @@ learning applies; a lens answers what good means; a learning class identifies
 mechanical, interaction, role/craft, or system/meta altitude. Support,
 Documentation, Cormidia roles, and personal-project names remain host data.
 
-These content-digested records and unknown-first parsers are the implemented
-#30a seam. They do not claim that a detector ran or that a recommendation is
-useful. Detector execution records and registry selection are #30b; the
-deterministic engine is #30c; reference packs/examples are #30d; optional
-semantic providers are #13; held-out candidate-utility calibration is #26.
+The implemented #30b1 registry now snapshots full installed records plus exact
+selected detector, pack, and lens refs. A host-granted `SourceSemanticProfile`
+binds normalized capabilities and observation kinds to one exact source
+registration revision; adapters cannot claim those capabilities themselves.
+An unprofiled source remains compatible with generic Observe ingest but grants
+zero detector capabilities, while profiled ingest rejects undeclared
+normalized observation kinds. Omitting the optional semantic registry preserves
+the prior loop-registry bytes.
+
+`DetectorExecutionRecord` now provides an immutable, unknown-first-parsed fact
+for one exact invocation, evidence window, and closed
+`applied | not_applicable | incomplete` result. Its required pack, output-bound
+lens, source profiles, episode-view population, evidence, full evidence-health
+inputs/outputs, and exact capability union are content-bound. The execution key
+excludes the result; the full execution digest includes it. There is no `pass`,
+and a detected condition still does not claim harm, authority, candidate
+utility, or improvement.
+
+These #30a/#30b1 records do not expose arbitrary execution persistence.
+Callable implementation pairing, kernel-controlled persistence and queries,
+and Candidate derivation resolution remain #30b2/#30c; the deterministic
+detector engine is #30c; reference packs/examples are #30d; optional semantic
+providers are #13; held-out candidate-utility calibration is #26.
 Evidence-health findings stay separate from behavioral derivations, and only
 the verified `propose` path may turn a derivation into an inert Candidate.
 

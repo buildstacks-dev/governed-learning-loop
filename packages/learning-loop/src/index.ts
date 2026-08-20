@@ -39,6 +39,12 @@ export { detectorRegistrationDigest, parseDetectorRegistration } from "./records
 export { detectorPackManifestDigest, parseDetectorPackManifest } from "./records/semantic.js";
 export { learningLensRegistrationDigest, parseLearningLensRegistration } from "./records/semantic.js";
 export { insightDerivationDigest, parseInsightDerivation, scopeDigest } from "./records/semantic.js";
+export type { SourceSemanticProfile, SemanticRegistryConfig } from "./records/semantic.js";
+export { sourceSemanticProfileDigest, parseSourceSemanticProfile } from "./records/semantic.js";
+export { semanticRegistryDigest, parseSemanticRegistryConfig } from "./records/semantic.js";
+export type { DetectorExecutionRecord, DetectorExecutionStatus } from "./records/semantic.js";
+export { detectorExecutionKeyDigest, detectorExecutionDigest } from "./records/semantic.js";
+export { parseDetectorExecutionRecord } from "./records/semantic.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";

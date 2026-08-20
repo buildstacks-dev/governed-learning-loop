@@ -12,6 +12,7 @@ import type { Parse } from "../parse/toolkit.js";
 import type { Candidate, RiskTier } from "../records/candidate.js";
 import { parseCandidate } from "../records/candidate.js";
 import type { DetectorPackManifest } from "../records/detector-pack.js";
+import { DETECTOR_RECURRENCE_GROUP_MEMBER_LIMIT } from "../records/detector-recurrence.js";
 import type { DetectorRegistration } from "../records/detector-registration.js";
 import type { LearningLensRegistration } from "../records/learning-lens.js";
 import type { IdentityPort } from "../records/principal.js";
@@ -42,7 +43,9 @@ export type RecordKind =
   | "semantic-registry-snapshot"
   | "insight-derivation"
   | "derivation-execution"
-  | "detector-execution";
+  | "detector-execution"
+  | "detector-recurrence-binding"
+  | "detector-recurrence-group";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -158,11 +161,26 @@ const parseStreamEntryIdAt: Parse<string> = (input, path) => {
 };
 
 function expectedStoredDigest(kind: RecordKind, value: unknown): string {
+  if (kind === "detector-recurrence-group") {
+    if (!Array.isArray(value)) {
+      throw invalid("store.corrupt", "detector recurrence group must be a stream-entry array", ["value"]);
+    }
+    if (value.length > DETECTOR_RECURRENCE_GROUP_MEMBER_LIMIT) {
+      throw new LearningLoopError("detector.limit_exceeded", [
+        {
+          code: "detector.limit_exceeded",
+          severity: "error",
+          message: "detector recurrence group exceeds its ceiling",
+        },
+      ]);
+    }
+  }
   if (
     kind === "episode-identity" ||
     kind === "episode-outcome" ||
     kind === "source-revision" ||
-    kind === "derivation-execution"
+    kind === "derivation-execution" ||
+    kind === "detector-recurrence-group"
   ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
     return sha256HexOfCanonicalJson(entryIds);

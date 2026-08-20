@@ -124,8 +124,22 @@ between code and contract, open an issue — never silently drift either one.
   child. Dry-run writes
   nothing; commit persists exact child graphs sequentially and is not a batch
   transaction. C2a creates no pack receipt, durable cap/suppression policy,
-  Candidate, provider turn, or authority. Keyed recurrence, durable grouping,
-  rejection suppression, and host-configured policy belong to #30c2b.
+  Candidate, provider turn, or authority. Durable recurrence policy,
+  rejection suppression, and host-configured caps remain #30c2b2.
+- **Recurrence lineage is privacy-treated and receipt-last.** A detector may
+  optionally emit one canonical public structural locator or tenant-keyed
+  private digest permitted by its exact privacy registration; raw private key
+  material never crosses or persists. Group identity binds exact
+  detector/lens/scope semantics but excludes pack distribution and population.
+  The create-only execution scope index locks the result, then a create-only
+  nullable recurrence decision locks locator availability before any qualified
+  member append; the execution receipt remains last.
+  Orphan crash remnants do not count, and historical unbound receipts are
+  never backfilled. Folds fail closed above 5,000 members, 50,000 total episode
+  references, or 5,000 distinct episode identities. Counts are descriptive
+  only. C2b1 grants no deduplication, suppression, Candidate, policy,
+  authority, utility, or efficacy claim; those governance records remain
+  #30c2b2.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

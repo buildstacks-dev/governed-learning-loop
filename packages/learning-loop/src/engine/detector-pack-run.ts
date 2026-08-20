@@ -20,6 +20,7 @@ import type { DetectorRunInput, DetectorRunResult } from "./detector-run.js";
 import { detectorRunFailureCallbackInvoked, runDetector } from "./detector-run.js";
 import { semanticGraphSnapshotRevision } from "./semantic-graph.js";
 import { persistDetectorExecution } from "./semantic-persistence.js";
+import { recurrenceForExecution, recurrenceLocatorOf } from "./detector-recurrence.js";
 
 const MAX_EPISODE_IDS = 500;
 const MAX_CONSIDERED_SELECTIONS = 5_000;
@@ -197,7 +198,18 @@ function outputKeys(result: DetectorRunResult): readonly string[] {
 }
 
 function retainedBytes(result: DetectorRunResult): number {
-  return Buffer.byteLength(canonicalJsonText(toJsonValue(result)), "utf8");
+  const boundedResult =
+    result.recurrence.status === "grouped"
+      ? {
+          ...result,
+          recurrence: {
+            ...result.recurrence,
+            distinctEpisodeCount: 5_000,
+            executionCount: 5_000,
+          },
+        }
+      : result;
+  return Buffer.byteLength(canonicalJsonText(toJsonValue(boundedResult)), "utf8");
 }
 
 function refusablePlanningError(error: unknown): error is LearningLoopError {
@@ -369,7 +381,12 @@ export async function runDetectorPack(
       if (item.disposition === "capped" || item.disposition === "refused" || result?.execution === undefined) continue;
       if (result.persistence === "existing") continue;
       try {
-        await persistDetectorExecution(context, result.execution, result.derivations);
+        await persistDetectorExecution(
+          context,
+          result.execution,
+          result.derivations,
+          recurrenceLocatorOf(result.recurrence),
+        );
       } catch (error) {
         const code =
           error instanceof LearningLoopError
@@ -382,6 +399,17 @@ export async function runDetectorPack(
         if (code === undefined) throw error;
         items[index] = refusedItem(item, item.callbackInvoked, code, "detector pack invocation commit was refused");
       }
+    }
+    for (const [index, item] of items.entries()) {
+      const result = item.result;
+      if (result?.execution === undefined) continue;
+      items[index] = {
+        ...item,
+        result: {
+          ...result,
+          recurrence: await recurrenceForExecution(context, result.execution, undefined),
+        },
+      };
     }
   }
   return resultWithStatus(input, items);

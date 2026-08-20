@@ -30,8 +30,15 @@ import {
 } from "../src/index.js";
 import type { EngineContext } from "../src/engine/context.js";
 import { runDetectorPack } from "../src/engine/detector-pack-run.js";
+import { persistDetectorExecution } from "../src/engine/semantic-persistence.js";
 import { detectorRefKey, lensRefKey, packRefKey } from "../src/records/semantic-shared.js";
 import { createInMemoryStore } from "../src/testing/index.js";
+import {
+  PRIVATE_LOCATOR,
+  createRecurrenceRunnerHarness,
+  detectedInsightDraft,
+  recurrenceRunInput,
+} from "./detector-recurrence-harness.js";
 import type { SemanticEngineHarness } from "./semantic-engine-harness.js";
 import { SEMANTIC_SCOPE_B, createSemanticEngineHarness } from "./semantic-engine-harness.js";
 
@@ -906,5 +913,43 @@ describe("pack dry-run/commit exactness and aggregate caps", () => {
       callbackInvoked: false,
       result: { mode: "commit", status: "not_applicable", persistence: "none", callbackInvoked: false },
     });
+  });
+
+  it("keeps historical applied-positive receipts without a decision binding read-only during runner and pack refresh", async () => {
+    const harness = await createRecurrenceRunnerHarness({
+      label: "pack-historical-unbound",
+      evaluate: (window) => detectedInsightDraft(window, PRIVATE_LOCATOR),
+    });
+    const projected = await harness.learning.runDetector(recurrenceRunInput(harness, "dry_run"));
+    if (projected.execution === undefined) throw new Error("expected projected historical execution");
+    await persistDetectorExecution(harness.context, projected.execution, projected.derivations);
+    expect(
+      (await harness.store.list({ namespace: "learning", kind: "detector-recurrence-binding", limit: 10 })).records,
+    ).toEqual([]);
+
+    const existing = await harness.learning.runDetector(recurrenceRunInput(harness, "commit"));
+    expect(existing).toMatchObject({
+      persistence: "existing",
+      callbackInvoked: false,
+      recurrence: { status: "locator_unavailable" },
+    });
+    const packResult = await harness.learning.runDetectorPack({
+      mode: "commit",
+      pack: packRef(harness.pack),
+      scope: harness.scope,
+      episodeRecordIds: harness.episodeRecordIds,
+    });
+    expect(packResult.items[0]).toMatchObject({
+      disposition: "existing",
+      callbackInvoked: false,
+      result: { persistence: "existing", recurrence: { status: "locator_unavailable" } },
+    });
+    expect(
+      (await harness.store.list({ namespace: "learning", kind: "detector-recurrence-binding", limit: 10 })).records,
+    ).toEqual([]);
+    expect(
+      (await harness.store.list({ namespace: "learning", kind: "detector-recurrence-group", limit: 10 })).records,
+    ).toEqual([]);
+    expect(harness.callbacks()).toBe(1);
   });
 });

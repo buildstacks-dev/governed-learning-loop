@@ -77,11 +77,11 @@ are specified together.
    suppression policy. Repeated calls may observe earlier children as existing
    and must not be presented as one frozen campaign.
 9. **Pack execution grants no learning authority.** Neither mode calls
-   `propose`, creates a Candidate, writes active context, invokes a provider,
-   schedules work, routes publication, authorizes content, or claims utility.
-   The kernel supplies no provider capability; as in c1, it cannot sandbox
-   side effects hidden in host callback closures. A detected condition still
-   does not establish harm or efficacy.
+   `propose`, creates a Candidate, writes active context, receives a provider
+   capability, schedules work, routes publication, authorizes content, or
+   claims utility. As in c1, the kernel cannot sandbox side effects hidden in
+   host callback closures. A detected condition still does not establish harm
+   or efficacy.
 10. **The public-surface increase is three types.** C2a exports
     DetectorOrchestrationDisposition, DetectorPackRunInput, and
     DetectorPackRunResult. `LearningLoop.runDetectorPack` adds no standalone
@@ -109,12 +109,16 @@ selection, stable ordering, explicit per-item dispositions, callback-attempt
 visibility, aggregate dry planning, fixed safety ceilings, dry-run zero-write
 behavior, and sequential private child persistence.
 
-**Deferred to immediate #30c2b:** privacy-treated recurrence locators,
-distinct comparable recurrence groups, clustering, deduplication, decisive
-rejection suppression and override evidence, host-configured digested lower
-caps, durable pack-run/disposition receipts, and exact-scope audit reads. C2b
-must preserve tenant-keyed treatment for low-entropy private recurrence and may
-not expose a public receipt writer.
+**Implemented next in #30c2b1 by decision 0013:** privacy-treated recurrence
+locators, pack-independent group identity, private create-only execution
+bindings, append-only members, bounded committed folds, crash recovery, and
+dry-run group previews. Counts remain descriptive and grant no authority.
+
+**Deferred to #30c2b2:** comparable-group availability policy,
+deduplication, decisive-rejection suppression and override evidence,
+host-configured digested lower caps, Candidate-to-group claims, durable
+pack-run/disposition receipts, and exact-scope audit reads. C2b2 may not expose
+a public receipt writer.
 
 Reference detector contents and synthetic controls remain #30d. Optional
 semantic/model workflows remain #13. Candidate-utility calibration and every

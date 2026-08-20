@@ -33,6 +33,12 @@ import {
 } from "./semantic-validation.js";
 import { persistHealthFinding } from "./source-receipts.js";
 import { persistDetectorExecutionScopeIndex, persistInsightDerivationScopeIndex } from "./semantic-scope-index.js";
+import type { ExecutionRecurrenceBinding } from "./detector-recurrence.js";
+import {
+  persistPreparedExecutionRecurrence,
+  prepareExecutionRecurrence,
+  recurrenceForExecution,
+} from "./detector-recurrence.js";
 
 const MAX_SNAPSHOT_ATTEMPTS = 3;
 
@@ -104,14 +110,17 @@ export async function persistDetectorExecution(
   context: EngineContext,
   executionInput: unknown,
   derivationsInput: unknown,
+  recurrenceLocatorInput?: unknown,
 ): Promise<void> {
   const execution = parseDetectorExecutionRecord(executionInput);
   const derivations = parseDerivations(derivationsInput);
   let stable = false;
+  let recurrenceBinding: ExecutionRecurrenceBinding | undefined;
   for (let attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt += 1) {
     const before = await semanticGraphSnapshotRevision(context);
     try {
       await validatePrewriteBundle(context, execution, derivations);
+      recurrenceBinding = await prepareExecutionRecurrence(context, execution, recurrenceLocatorInput);
     } catch (error) {
       if (
         error instanceof LearningLoopError &&
@@ -146,11 +155,24 @@ export async function persistDetectorExecution(
     await persistDerivationAndIndex(context, derivation);
   }
   await persistDetectorExecutionScopeIndex(context, execution);
+  if (recurrenceBinding !== undefined) {
+    await persistPreparedExecutionRecurrence(context, recurrenceBinding);
+  }
   await persistExecutionReceipt(context, execution);
 
   const reloaded = await loadDetectorExecutionRecord(context, execution.id);
   if (reloaded === undefined || reloaded.executionDigest !== execution.executionDigest) {
     throw invalid("store.corrupt", "detector execution receipt was not preserved", []);
+  }
+  if (recurrenceBinding !== undefined) {
+    const recurrence = await recurrenceForExecution(context, reloaded, recurrenceBinding.locator);
+    if (
+      (recurrenceBinding.locator === null && recurrence.status !== "locator_unavailable") ||
+      (recurrenceBinding.locator !== null &&
+        (recurrence.status !== "grouped" || recurrence.groupKeyDigest !== recurrenceBinding.groupKeyDigest))
+    ) {
+      throw invalid("store.corrupt", "detector recurrence lineage was not preserved", []);
+    }
   }
   for (const derivation of derivations) {
     const stored = await loadInsightDerivationRecord(context, derivation.id);

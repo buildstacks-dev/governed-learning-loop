@@ -5,9 +5,14 @@ import type {
   DetectorExecutionView,
   DetectorPackManifest,
   DetectorRegistration,
+  DetectorResultDraft,
+  DetectorRunInput,
+  DetectorRunResult,
+  DetectorWindow,
   EvidenceSource,
   InsightDerivationQuery,
   InsightDerivationView,
+  RegisteredDetectorImplementation,
   SemanticRegistryConfig,
   SourceSemanticProfile,
 } from "@cormidia/learning-loop";
@@ -19,6 +24,7 @@ import {
   detectorExecutionKeyDigest,
   detectorPackManifestDigest,
   detectorRegistrationDigest,
+  defineDetectorImplementation,
   defineSourceRegistration,
   parseDetectorExecutionRecord,
   parseDetectorPackManifest,
@@ -360,4 +366,30 @@ test("strict consumer can construct and parse host-neutral semantic records from
     true,
     true,
   ]);
+
+  const strictDraft: DetectorResultDraft = { conditionDetected: false, insights: [], findings: [] };
+  const strictImplementation: RegisteredDetectorImplementation = defineDetectorImplementation({
+    registration,
+    evaluate: (window: DetectorWindow) => {
+      expect(window.outputKind).toBe("evidence_health");
+      return strictDraft;
+    },
+  });
+  const strictRunInput: DetectorRunInput = {
+    mode: "dry_run",
+    detector: strictImplementation.detector,
+    pack: packRef,
+    lens: null,
+    scope: executionScope,
+    episodeRecordIds: [],
+  };
+  const acceptsRunResult = (result: DetectorRunResult): string =>
+    `${result.mode}/${result.status}/${result.persistence}`;
+  expect(strictImplementation).toMatchObject({
+    detector: detectorRef,
+    implementationDigest: registration.implementationDigest,
+    registrationDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+  });
+  expect(strictRunInput.mode).toBe("dry_run");
+  expect(typeof acceptsRunResult).toBe("function");
 });

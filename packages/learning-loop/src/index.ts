@@ -70,3 +70,8 @@ export type { CandidateReviewer, CandidateReviewInput } from "./engine/review.js
 export type { LearningReport, LearningReportQuery } from "./engine/report.js";
 export type { LearningLoop, LearningLoopConfig } from "./engine/loop.js";
 export { createLearningLoop } from "./engine/loop.js";
+export type { RegisteredDetectorImplementation } from "./engine/detector-implementation.js";
+export { defineDetectorImplementation } from "./engine/detector-implementation.js";
+export type { DetectorWindow } from "./engine/detector-window.js";
+export type { DetectorResultDraft } from "./engine/detector-draft.js";
+export type { DetectorRunInput, DetectorRunResult } from "./engine/detector-run.js";

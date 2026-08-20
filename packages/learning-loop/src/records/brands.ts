@@ -10,3 +10,6 @@ export const identityPortBrand: unique symbol = Symbol("cormidia.learning-loop/i
 export const verifiedPrincipalBrand: unique symbol = Symbol("cormidia.learning-loop/verified-principal");
 
 export const registeredSourceBrand: unique symbol = Symbol("cormidia.learning-loop/registered-source");
+export const registeredDetectorImplementationBrand: unique symbol = Symbol(
+  "cormidia.learning-loop/registered-detector-implementation",
+);

@@ -130,6 +130,7 @@ derivation digest.
   evidence remains invalid.
 - No new root export, store record kind, provider SDK, or public execution
   writer is introduced.
-- #30c owns detector execution and scheduling. #13 owns semantic-provider and
-  reviewer calibration workflows. #26 owns candidate-utility measurement and
-  any quality claim.
+- Decision 0011 implements exact deterministic single-detector execution in
+  #30c1; pack orchestration and scheduling remain #30c2. #13 owns
+  semantic-provider and reviewer calibration workflows. #26 owns
+  candidate-utility measurement and any quality claim.

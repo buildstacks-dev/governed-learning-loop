@@ -140,10 +140,11 @@ These private identities add no public canonicalization API.
   Decision 0010 implements verified `propose` resolution requiring committed,
   configured, evidence-health-ready lineage and exact derived Candidate
   content.
-- #30c owns callable detector pairing, windows, eligibility, caps,
-  deduplication, suppression, dry-run execution, and no-provider-on-empty
-  behavior. #13 owns optional semantic-provider generation. #26 owns
-  candidate-utility calibration and any quality claim.
+- Decision 0011 implements exact capability pairing, explicit windows,
+  dry-run, and commit execution in #30c1. Pack orchestration, automatic
+  windows, recurrence, suppression, and policy caps remain #30c2. #13 owns
+  optional semantic-provider generation. #26 owns candidate-utility
+  calibration and any quality claim.
 
 ## 2026-08-20 Candidate amendment
 
@@ -151,3 +152,9 @@ Decision 0010 makes the existing derivationRef executable through the verified
 propose path, adds the narrow episode-population evidence exception, and keeps
 review independent from both Candidate proposer and attributed derivation
 producer. No public execution writer is added.
+
+## 2026-08-20 deterministic runner amendment
+
+Decision 0011 implements exact single-detector registration, window
+materialization, dry-run, and commit execution through the existing private
+persistence path. Multi-detector orchestration remains #30c2.

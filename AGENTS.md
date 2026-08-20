@@ -104,7 +104,17 @@ between code and contract, open an issue — never silently drift either one.
   `applied`, `not_applicable`, and `incomplete` exist—never `pass`. Public
   parsing does not authorize public execution minting. Persistence is a private
   receipt-last graph whose append-only links precede derivations and whose
-  execution receipt is last; callable pairing remains later kernel work.
+  execution receipt is last.
+- **Deterministic detector code is capability-bound.** Only a factory-minted
+  RegisteredDetectorImplementation can pair synchronous code with an exact
+  DetectorRegistration. The kernel constructs provider-neutral windows and
+  mints all lifecycle/semantic lineage; callbacks cannot choose
+  not-applicable/incomplete, trust, ids, digests, Candidates, or authority.
+  Promise/thenable results are forbidden. A new dry-run evaluates eligible code
+  with zero kernel/store writes; commit rematerializes and evaluates again. An
+  exact committed receipt is terminal for either mode and skips evaluation.
+  Empty or unusable windows never invoke the callback, and hard ceilings fail
+  without truncation.
 - **Semantic audit reads require exact scope.** Public derivation/execution
   queries and gets never enumerate without a caller-supplied exact scope.
   Their private pagination/get indexes live in a namespace derived solely from

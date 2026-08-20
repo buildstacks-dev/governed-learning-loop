@@ -99,10 +99,18 @@ and current evidence health. Historical and crash-interrupted facts stay
 auditable but never become authority. Learning lenses may require exact episode
 population evidence as well as observation or measurement evidence.
 
-There is deliberately no public execution-write method. Callable detector
-pairing and orchestration remain #30c. #30b2b adds explicit derivation-backed
+There is deliberately no public arbitrary execution-record write. #30b2b adds explicit derivation-backed
 Candidate proposal with exact field mapping, population-only episode support,
 mirrored revision lineage, and review independent from proposer and producer.
+
+#30c1 adds non-forgeable deterministic detector implementations and one
+mode-driven `runDetector` façade. The kernel constructs provider-neutral
+windows, rejects asynchronous/thenable callbacks, owns non-applicable and
+incomplete results, and mints all lineage. New eligible dry runs evaluate but
+write nothing; commit rematerializes and evaluates again before private
+persistence. An exact committed receipt is returned without re-evaluation.
+No detector run creates a Candidate. Pack-wide orchestration remains #30c2.
+
 Reference packs/examples are #30d; optional semantic providers are #13;
 held-out candidate-utility calibration is #26.
 Evidence-health findings stay separate from behavioral derivations, and only

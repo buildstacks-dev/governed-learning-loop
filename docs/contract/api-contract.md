@@ -965,10 +965,125 @@ export interface DetectorExecutionView {
     | {
         readonly status: "invalid";
         readonly diagnostics: readonly Diagnostic[];
-        readonly derivation?: InsightDerivationView;
       };
   readonly evidenceHealth: EvidenceHealthView;
 }
+
+declare const registeredDetectorImplementationBrand: unique symbol;
+
+export interface RegisteredDetectorImplementation {
+  readonly detector: {
+    readonly id: string;
+    readonly version: string;
+    readonly registrationDigest: string;
+  };
+  readonly implementationDigest: string;
+  readonly registrationDigest: string;
+  readonly [registeredDetectorImplementationBrand]: true;
+}
+
+export interface DetectorWindow {
+  readonly schemaVersion: 1;
+  readonly loopRegistryRevision: string;
+  readonly detector: DetectorExecutionRecord["detector"];
+  readonly pack: DetectorExecutionRecord["pack"];
+  readonly lens: DetectorExecutionRecord["lens"];
+  readonly scope: Scope;
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly outputKind: DetectorOutputKind;
+  readonly sourceProfiles: readonly SourceSemanticProfile[];
+  readonly population: {
+    readonly episodes: readonly {
+      readonly view: EpisodeView;
+      readonly episodeRecordDigest: string;
+      readonly episodeIdentityDigest: string;
+      readonly outcomeClaimDigest: string | null;
+      readonly episodeViewDigest: string;
+      readonly scopeDigest: string;
+    }[];
+    readonly normalizationPolicyDigest: string;
+    readonly comparabilityPolicyDigest: string | null;
+    readonly populationDigest: string;
+  };
+  readonly evidence: readonly (
+    | {
+        readonly kind: "observation";
+        readonly record: Observation;
+        readonly reference: ObservationEvidenceRef;
+      }
+    | {
+        readonly kind: "measurement";
+        readonly record: MeasurementRecord;
+        readonly reference: MeasurementEvidenceRefV2;
+      }
+  )[];
+  readonly evidenceHealthFindings: readonly EvidenceHealthFinding[];
+  readonly availableCapabilities: readonly string[];
+  readonly windowDigest: string;
+}
+
+export type DetectorResultDraft = {
+  readonly conditionDetected: boolean;
+  readonly insights: readonly {
+    readonly learningClass: LearningClass;
+    readonly directObservation: {
+      readonly statement: string;
+      readonly data: JsonValue;
+      readonly evidenceReferenceDigests: readonly string[];
+    };
+    readonly interpretation: InsightDerivation["interpretation"];
+    readonly impactHypothesis: InsightDerivation["impactHypothesis"];
+    readonly contradictoryEvidenceReferenceDigests: readonly string[];
+    readonly evidenceHealthFindingIds: readonly string[];
+    readonly missingEvidence: InsightDerivation["missingEvidence"];
+    readonly applicability: InsightDerivation["applicability"];
+    readonly candidateIntervention: InsightDerivation["candidateIntervention"];
+    readonly validation: InsightDerivation["validation"];
+    readonly supersedes: { readonly id: string; readonly digest: string } | null;
+  }[];
+  readonly findings: readonly Omit<
+    EvidenceHealthFinding,
+    "schemaVersion" | "id" | "findingDigest"
+  >[];
+};
+
+export interface DetectorRunInput {
+  readonly mode: "dry_run" | "commit";
+  readonly detector: {
+    readonly id: string;
+    readonly version: string;
+    readonly registrationDigest: string;
+  };
+  readonly pack: {
+    readonly id: string;
+    readonly version: string;
+    readonly manifestDigest: string;
+  };
+  readonly lens: {
+    readonly id: string;
+    readonly version: string;
+    readonly registrationDigest: string;
+  } | null;
+  readonly scope: Scope;
+  readonly episodeRecordIds: readonly string[];
+}
+
+export interface DetectorRunResult {
+  readonly mode: "dry_run" | "commit";
+  readonly status: DetectorExecutionStatus;
+  readonly persistence: "none" | "committed" | "existing";
+  readonly callbackInvoked: boolean;
+  readonly execution?: DetectorExecutionRecord;
+  readonly derivations: readonly InsightDerivation[];
+  readonly evidenceHealth: EvidenceHealthView;
+  readonly diagnostics: readonly Diagnostic[];
+}
+
+export declare function defineDetectorImplementation(input: {
+  readonly registration: DetectorRegistration;
+  readonly evaluate: (window: DetectorWindow) => unknown;
+}): RegisteredDetectorImplementation;
 ```
 
 All ids, versions, capability names, observation kinds, episode classes,
@@ -1199,12 +1314,65 @@ activity. Pages remain append-visible rather than frozen populations.
 
 #30b2b implements derivation-backed Candidate proposal and requires committed,
 configured, evidence-health-ready lineage plus exact derived content and
-independent review. Callable detector pairing,
-eligibility, population construction, pack selection, recurrence,
-deduplication, suppression, caps, dry-run output, and no-provider-on-empty
-behavior remain #30c. Core/reference/host pack contents and reference consumers
-are #30d. Optional semantic-provider generation and disclosure are #13.
-Default-quality and candidate-utility claims remain #26 work.
+independent review.
+
+#30c1 registers exact deterministic implementations through
+`defineDetectorImplementation`. The returned frozen capability is backed by a
+private callback WeakMap and must resolve one installed DetectorRegistration
+with the same implementation digest. Callback availability stays outside the
+serializable SemanticRegistryConfig. Optional runtime capabilities enter
+LearningLoopConfig and the loop registry revision; omission preserves the
+pre-c1 registry bytes. Capability `registrationDigest` binds exact
+`{ detector, implementationDigest }`. Selected detectors without capabilities remain valid
+audit registrations but cannot invoke code.
+
+`DetectorWindow` is the only callback input. It contains exact selected
+invocation metadata, scope, source profiles, resolved episode population,
+normalized Observation/qualified Measurement records paired with complete
+EvidenceRefs, full evidence health, capability union, and window digest. It
+contains no provider-native events, raw transcripts, adapter payloads, source
+readers, store handles, identity capability, or publication authority. The
+kernel materializes and detaches it under a stable composite snapshot.
+
+The implementation callback is synchronous. A Promise or any thenable return
+is invalid; exceptions and malformed output produce sanitized diagnostics and
+no execution receipt. DetectorResultDraft is applied-only: it may state whether
+the registered condition was detected and provide insight or health drafts,
+but it cannot choose not-applicable/incomplete status or supply lineage,
+EvidenceRefs, producer identity, trust, ids, or canonical digests. The kernel
+owns lifecycle non-application and mints every durable field.
+A negative callback condition carries no drafts. A positive insight detector
+carries one or more insight drafts and no findings; a positive evidence-health
+detector carries one or more findings and no insight drafts.
+
+`runDetector` rematerializes enough exact input to derive the execution key on
+every call. An exact existing committed receipt is terminal for either mode and
+returns `persistence: "existing"` with no callback. Otherwise eligible
+`dry_run` and `commit` calls invoke the synchronous evaluator; commit never
+accepts earlier dry-run bytes. Dry-run returns exact would-be execution and
+derivations with zero kernel/store writes. Commit evaluates again and passes
+the exact result through private receipt-last persistence. Empty/unbindable,
+inapplicable, missing-capability, or unusable-evidence windows invoke no
+callback. Missing/invalid is never applied false, zero, or pass. No mode calls
+`propose` or creates a Candidate.
+
+`episodeRecordIds` is canonical sorted-unique input. Reordering, duplicates,
+foreign-scope ids, and more than 500 ids are refused rather than normalized or
+silently truncated.
+
+DetectorRunResult reports mode, execution status, persistence, callback
+invocation, optional execution, exact derivations, evidence health, and
+sanitized diagnostics. Execution is absent only when no bindable window can be
+formed. Current hard ceilings are 500 episode ids, 5,000 evidence records, 100
+insight drafts or 100 health findings according to output kind, 16 MiB of
+canonical window bytes, and 16 MiB of canonical callback-output bytes. Limits
+fail or produce incomplete without silent truncation.
+
+Multi-detector/pack orchestration, automatic windows, recurrence, clustering,
+deduplication, suppression, scheduling/routing, batch dry runs, and policy caps
+beyond c1 hard ceilings remain #30c2. Core/reference/host pack contents and
+reference consumers are #30d. Optional semantic-provider generation and
+disclosure are #13. Default-quality and candidate-utility claims remain #26.
 
 ### Candidate
 
@@ -2211,7 +2379,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, and configured semantic records; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while the exact-instance runtime token remains private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects a structurally similar identity object that was not created by `createIdentityPort` (or the `/testing` wrapper around it), retains the configured port in engine context, and checks its exact runtime binding before every propose or review transition. If `semanticRegistry` is present, only its exact `registryDigest` contributes to loop identity after full parsing and source/scope reconciliation; omission preserves the prior registry bytes.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry and detector implementations, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, and exact detector capability metadata/callbacks; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. Omitting either optional dimension preserves its prior registry bytes.
 
 ```ts
 export interface LearningPolicy {
@@ -2227,6 +2395,7 @@ export interface LearningLoopConfig {
   readonly contentPolicies: readonly ContentPolicy[];
   readonly sources: readonly RegisteredSource<unknown>[];
   readonly semanticRegistry?: SemanticRegistryConfig;
+  readonly detectorImplementations?: readonly RegisteredDetectorImplementation[];
   readonly queryCursorScope?: string;
   readonly outcomeSources?: readonly RegisteredOutcomeSource<unknown>[];
   readonly destinations?: readonly DestinationRegistration[];
@@ -2313,6 +2482,7 @@ export interface CandidateView {
     | {
         readonly status: "invalid";
         readonly diagnostics: readonly Diagnostic[];
+        readonly derivation?: InsightDerivationView;
       };
 }
 
@@ -2518,6 +2688,7 @@ export interface LearningLoop {
 
   propose(input: CandidateInput): Promise<ProposeOutcome>;
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
+  runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
 
   queryObservations(input: ObservationQuery): AsyncIterable<QueryPage<Observation>>;
   queryMeasurements(input: MeasurementQuery): AsyncIterable<QueryPage<MeasurementRecord>>;
@@ -3122,6 +3293,15 @@ The core suite should prove at least:
   normalized scope/filters/kind/registry/store scope into opaque cursors, page
   only a scope-derived private index namespace, never touch a foreign target
   for direct gets, and retry or fail closed on composite snapshot churn;
+- detector implementation capabilities reject structural forgery, registration
+  or implementation-digest mismatch, duplicates, deprecation, and thenable
+  callbacks;
+- dry-run and commit rematerialize independently; dry-run performs zero
+  kernel/store writes, while commit persists only kernel-minted exact lineage;
+- empty/unbindable, inapplicable, missing-capability, unhealthy, and over-limit
+  windows invoke no callback and never become applied false, zero, or pass;
+- callback drafts cannot mint lifecycle status, scope, EvidenceRefs, trust,
+  producer attribution, ids, digests, Candidates, or authority;
 - a packaged strict-TypeScript consumer compiles without deep imports or casts.
 
 Adapter suites add format drift, cursor idempotency, out-of-order and duplicate records, torn writes, path traversal, symlink escape, resource ceilings, and receipt verification.

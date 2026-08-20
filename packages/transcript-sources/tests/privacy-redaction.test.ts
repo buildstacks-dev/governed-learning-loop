@@ -3,13 +3,25 @@
 // JSON of everything the adapters emit — observations, episodes, diagnostics,
 // and probe results. This also pins that JSON.parse error text (which quotes
 // input bytes) never reaches a diagnostic.
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createClaudeCodeTranscriptSource, createCodexTranscriptSource } from "../src/index.js";
-import { allPages, inputOf, makeFixtureDir, ofKind, writeRaw } from "./support.js";
+import {
+  allPages,
+  expectedCwdLocator,
+  expectedSessionLocator,
+  expectedSourceRevision,
+  inputOf,
+  makeFixtureDir,
+  ofKind,
+  writeRaw,
+} from "./support.js";
 
 const SECRET = "SECRET-ZEBRA-4242-CANARY";
 const SESSION_ID = "eeeeeeee-ffff-4000-8111-222233334444";
-// The secret sits in a PARENT path segment: only the basename may project.
+// The secret sits in a parent path segment; no path segment may project.
 const CWD = `/tmp/${SECRET}/workspace`;
 
 function claudeFixture(): string {
@@ -18,7 +30,7 @@ function claudeFixture(): string {
       type: "user",
       sessionId: SESSION_ID,
       cwd: CWD,
-      gitBranch: "main",
+      gitBranch: `${SECRET}-branch`,
       version: "2.1.900",
       timestamp: "2026-08-05T07:00:00.000Z",
       message: { role: "user", content: `my api key is ${SECRET} please use it` },
@@ -67,7 +79,7 @@ function codexFixture(): string {
         cwd: CWD,
         cli_version: "0.99.0",
         instructions: `always use ${SECRET}`,
-        git: { branch: "main" },
+        git: { branch: `${SECRET}-branch` },
       },
     },
     {
@@ -114,8 +126,10 @@ describe("privacy redaction", () => {
 
   it("emits zero occurrences of planted secrets across all projections and diagnostics", async () => {
     const dir = fixtureDir();
-    const claudePath = writeRaw(dir, "claude.jsonl", claudeFixture());
-    const codexPath = writeRaw(dir, "codex.jsonl", codexFixture());
+    const privateSourceDir = join(dir, SECRET);
+    mkdirSync(privateSourceDir);
+    const claudePath = writeRaw(privateSourceDir, "claude.jsonl", claudeFixture());
+    const codexPath = writeRaw(privateSourceDir, "codex.jsonl", codexFixture());
 
     const claude = createClaudeCodeTranscriptSource();
     const codex = createCodexTranscriptSource();
@@ -135,14 +149,33 @@ describe("privacy redaction", () => {
     expect(ofKind(codexPage, "transcript.unknown").map((observation) => observation.data)).toEqual([
       { nativeType: "event_msg/novel_event" },
     ]);
-    // ...the cwd projects as basename + keyed locator only...
-    expect(ofKind(claudePage, "transcript.session.meta")[0]?.data).toMatchObject({ projectSlug: "workspace" });
-    expect(ofKind(codexPage, "transcript.session.meta")[0]?.data).toMatchObject({ projectSlug: "workspace" });
+    // ...private source/session/revision/cwd/branch identities project only
+    // through domain-separated tenant-keyed locators...
+    expect(ofKind(claudePage, "transcript.session.meta")[0]?.data).toMatchObject({
+      cwdLocator: expectedCwdLocator(CWD),
+    });
+    expect(ofKind(codexPage, "transcript.session.meta")[0]?.data).toMatchObject({
+      cwdLocator: expectedCwdLocator(CWD),
+    });
+    expect(claudePage.episodes[0]?.episodeId).toBe(`claude-code/${expectedSessionLocator("claude-code", SESSION_ID)}`);
+    expect(codexPage.episodes[0]?.episodeId).toBe(`codex/${expectedSessionLocator("codex", SESSION_ID)}`);
+    expect(claudePage.state).toMatchObject({ sourceRevision: expectedSourceRevision(claudePath) });
+    expect(codexPage.state).toMatchObject({ sourceRevision: expectedSourceRevision(codexPath) });
 
     // ...and the secret never appears anywhere in anything emitted.
     const everythingEmitted = JSON.stringify({ claudePages, codexPages, probes });
     expect(everythingEmitted).not.toContain(SECRET);
-    // Full filesystem paths never appear either.
+    expect(everythingEmitted).not.toContain(SESSION_ID);
+    expect(everythingEmitted).not.toContain("projectSlug");
+    expect(everythingEmitted).not.toContain("gitBranch");
+    expect(everythingEmitted).not.toContain("workspace");
+    // Full filesystem paths and portable raw byte digests never appear either.
     expect(everythingEmitted).not.toContain(CWD);
+    expect(everythingEmitted).not.toContain(claudePath);
+    expect(everythingEmitted).not.toContain(codexPath);
+    expect(everythingEmitted).not.toContain("claude.jsonl");
+    expect(everythingEmitted).not.toContain("codex.jsonl");
+    expect(everythingEmitted).not.toContain(createHash("sha256").update(readFileSync(claudePath)).digest("hex"));
+    expect(everythingEmitted).not.toContain(createHash("sha256").update(readFileSync(codexPath)).digest("hex"));
   });
 });

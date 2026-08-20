@@ -73,6 +73,8 @@ test("claude-code same-line projections get unique, stable sourceRecordIds", asy
   const ids = observations.map((observation) => observation.sourceRecordId);
 
   expect(new Set(ids).size).toBe(ids.length);
+  expect(JSON.stringify(pages)).not.toContain(SESSION_ID);
+  expect(JSON.stringify(pages)).not.toContain(path);
   // The collision previously swallowed usage observations entirely.
   expect(pages.some((page) => ofKind(page, "transcript.usage").length > 0)).toBe(true);
 
@@ -114,4 +116,6 @@ test("codex projections keep unique sourceRecordIds", async () => {
   const pages = await allPages(source, inputOf([path]));
   const ids = pages.flatMap((page) => page.observations.map((observation) => observation.sourceRecordId));
   expect(new Set(ids).size).toBe(ids.length);
+  expect(JSON.stringify(pages)).not.toContain("codex-session-1");
+  expect(JSON.stringify(pages)).not.toContain(path);
 });

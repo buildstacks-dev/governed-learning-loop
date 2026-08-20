@@ -14,7 +14,9 @@ function makeSource(id: string, adapterVersion: string): EvidenceSource<ManualIn
     probe: (input) => Promise.resolve({ supported: input.events.length >= 0, diagnostics }),
     read: () => {
       const page: EvidencePage = {
-        sourceRevision: "rev-1",
+        sourceRef: id,
+        pageRef: "page-0",
+        state: { status: "available", sourceRevision: "rev-1", completeness: "complete" },
         observations: [],
         measurements: [],
         episodes: [],

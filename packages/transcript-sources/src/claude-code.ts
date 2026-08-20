@@ -16,7 +16,7 @@ import { addBandFailure, addObservation, hasCorrectionSignal, truncateType, vali
 import type { FileRef, ParsedLine } from "./session-file.js";
 
 /** Accepted version band: Claude Code 2.x JSONL session logs (observed structure). */
-export const CLAUDE_CODE_ADAPTER_VERSION = "0.1.1-experimental+claude-code-jsonl-2.x";
+export const CLAUDE_CODE_ADAPTER_VERSION = "0.2.0-experimental+claude-code-jsonl-2.x";
 
 const PROVIDER = "claude-code";
 

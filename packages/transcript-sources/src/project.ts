@@ -2,7 +2,7 @@
 // emitted here is what a host may persist, so only minimized structural
 // features leave this module — never message text, tool arguments, tool
 // results, instructions, or full filesystem paths (AGENTS.md "Privacy rules").
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import type {
   Diagnostic,
   EvidencePage,
@@ -12,9 +12,6 @@ import type {
 } from "@cormidia/learning-loop";
 import type { FileRef } from "./session-file.js";
 import { fileDiagnostic } from "./session-file.js";
-
-/** Page revision for files that were refused before any byte could be read. */
-export const UNAVAILABLE_SOURCE_REVISION = "unavailable";
 
 export interface ObservationDraft {
   readonly lineNumber: number;
@@ -66,16 +63,26 @@ export function addBandFailure(draft: SessionDraft, ref: FileRef, lineNumber: nu
  * digest an attacker could recover by hashing candidate paths.
  */
 export function keyedCwdLocator(locatorKey: string, cwd: string): string {
-  return createHash("sha256").update(`${locatorKey}:${cwd}`, "utf8").digest("hex");
+  return createHmac("sha256", locatorKey)
+    .update("transcript-cwd-locator:v1\0", "utf8")
+    .update(cwd, "utf8")
+    .digest("hex");
 }
 
-/** Basename of the cwd only — the rest of the path never leaves the adapter. */
-export function projectSlug(cwd: string | undefined): string {
-  if (cwd === undefined) return "unknown";
-  const segments = cwd.split(/[\\/]+/).filter((segment) => segment.length > 0);
-  const last = segments.at(-1);
-  if (last === undefined || last.length === 0) return "unknown";
-  return last.slice(0, 100);
+function keyedSessionLocator(locatorKey: string, provider: string, nativeSessionId: string): string {
+  return createHmac("sha256", locatorKey)
+    .update("transcript-session-locator:v1\0", "utf8")
+    .update(provider, "utf8")
+    .update("\0", "utf8")
+    .update(nativeSessionId, "utf8")
+    .digest("hex");
+}
+
+function keyedBranchLocator(locatorKey: string, branch: string): string {
+  return createHmac("sha256", locatorKey)
+    .update("transcript-branch-locator:v1\0", "utf8")
+    .update(branch, "utf8")
+    .digest("hex");
 }
 
 // Transient correction heuristics over human text: the text is dropped, only
@@ -111,6 +118,8 @@ export function truncateType(value: string): string {
 export function assemblePage(input: {
   readonly draft: SessionDraft;
   readonly ref: FileRef;
+  readonly sourceRef: string;
+  readonly pageRef: string;
   readonly sourceRevision: string;
   readonly adapterVersion: string;
   readonly locatorKey: string;
@@ -140,12 +149,21 @@ export function assemblePage(input: {
         "no record carries a parseable timestamp; cannot establish episode boundaries; file refused (completeness unknown)",
       ),
     );
-    return { sourceRevision: input.sourceRevision, observations: [], measurements: [], episodes: [], diagnostics };
+    return {
+      sourceRef: input.sourceRef,
+      pageRef: input.pageRef,
+      state: { status: "unsupported", observedRevision: input.sourceRevision },
+      observations: [],
+      measurements: [],
+      episodes: [],
+      diagnostics,
+    };
   }
 
-  let nativeSessionId = draft.nativeSessionId;
+  const nativeSessionId = draft.nativeSessionId;
+  let sessionLocator: string;
   if (nativeSessionId === undefined) {
-    nativeSessionId = `unidentified-${input.sourceRevision.slice(0, 16)}`;
+    sessionLocator = `unidentified-${input.sourceRevision.slice(0, 16)}`;
     diagnostics.push(
       fileDiagnostic(
         "source.incomplete",
@@ -154,8 +172,10 @@ export function assemblePage(input: {
         "no native session id found; episode uses a digest-derived identifier",
       ),
     );
+  } else {
+    sessionLocator = keyedSessionLocator(input.locatorKey, draft.provider, nativeSessionId);
   }
-  const episodeId = `${draft.provider}/${nativeSessionId}`;
+  const episodeId = `${draft.provider}/${sessionLocator}`;
   // One source line can yield several projections (e.g. a Claude Code
   // assistant record projects both a message and a usage observation), so a
   // bare line number is not a unique sourceRecordId — colliding ids made the
@@ -167,7 +187,7 @@ export function assemblePage(input: {
   const recordId = (line: number): string => {
     const occurrence = lineOccurrences.get(line) ?? 0;
     lineOccurrences.set(line, occurrence + 1);
-    return `${draft.provider}/${nativeSessionId}/${line}#${occurrence}`;
+    return `${draft.provider}/${sessionLocator}/${line}#${occurrence}`;
   };
 
   let openedAt = draft.timestamps[0] ?? "";
@@ -177,7 +197,10 @@ export function assemblePage(input: {
     if (Date.parse(timestamp) > Date.parse(closedAt)) closedAt = timestamp;
   }
 
-  const slug = projectSlug(draft.cwd);
+  const cwdLocator =
+    draft.cwd === undefined ? `unresolved-${input.sourceRef}` : keyedCwdLocator(input.locatorKey, draft.cwd);
+  const branchLocator =
+    draft.gitBranch === undefined ? undefined : keyedBranchLocator(input.locatorKey, draft.gitBranch);
   const degraded = input.degraded || draft.bandFailureCount > 0;
   const completeness: ProjectedObservation["completeness"] = degraded ? "partial" : "complete";
 
@@ -185,9 +208,8 @@ export function assemblePage(input: {
     provider: draft.provider,
     adapterVersion: input.adapterVersion,
     providerVersionBand: draft.providerVersion ?? "unknown",
-    projectSlug: slug,
-    ...(draft.cwd === undefined ? {} : { cwdLocator: keyedCwdLocator(input.locatorKey, draft.cwd) }),
-    ...(draft.gitBranch === undefined ? {} : { gitBranch: draft.gitBranch }),
+    cwdLocator,
+    ...(branchLocator === undefined ? {} : { branchLocator }),
   };
   const observations: ProjectedObservation[] = [
     {
@@ -218,7 +240,7 @@ export function assemblePage(input: {
     completeness,
     scope: [
       { type: "provider", id: draft.provider },
-      { type: "project", id: slug },
+      { type: "project", id: cwdLocator },
     ],
     openedAt,
     closedAt,
@@ -226,5 +248,13 @@ export function assemblePage(input: {
     measurementSourceRecordIds: [],
   };
 
-  return { sourceRevision: input.sourceRevision, observations, measurements: [], episodes: [episode], diagnostics };
+  return {
+    sourceRef: input.sourceRef,
+    pageRef: input.pageRef,
+    state: { status: "available", sourceRevision: input.sourceRevision, completeness },
+    observations,
+    measurements: [],
+    episodes: [episode],
+    diagnostics,
+  };
 }

@@ -18,6 +18,8 @@ import type { Parse } from "../parse/toolkit.js";
 import type { ProjectedEpisode, ProjectedMeasurement, ProjectedObservation } from "../ports/evidence.js";
 import { parseMetricDefinition, parseScopeShapeAt } from "../records/episode.js";
 import { COMPLETENESS_VALUES } from "../records/provenance.js";
+import type { SourcePageState } from "../records/source-health.js";
+import { parseSourcePageStateAt } from "../records/source-health.js";
 
 const OUTCOME_STATUSES = ["succeeded", "failed", "cancelled", "unknown"] as const;
 const DIAGNOSTIC_SEVERITIES = ["info", "warning", "error"] as const;
@@ -81,7 +83,7 @@ const parseScalarPathSegment: Parse<string | number> = (input, path) => {
   return value;
 };
 
-const parseDiagnosticAt: Parse<Diagnostic> = (input, path) => {
+export const parseDiagnosticAt: Parse<Diagnostic> = (input, path) => {
   const fields = readFields(input, path);
   const diagnosticPath = fields.opt("path", parseArrayOf(parseScalarPathSegment));
   const details = fields.opt("details", parseJson);
@@ -95,7 +97,9 @@ const parseDiagnosticAt: Parse<Diagnostic> = (input, path) => {
 };
 
 export interface EvidencePageEnvelope {
-  readonly sourceRevision: string;
+  readonly sourceRef: string;
+  readonly pageRef: string;
+  readonly state: SourcePageState;
   readonly nextCursor?: string;
   readonly observations: readonly unknown[];
   readonly measurements: readonly unknown[];
@@ -106,12 +110,33 @@ export interface EvidencePageEnvelope {
 export const parseEvidencePageEnvelope: Parse<EvidencePageEnvelope> = (input, path) => {
   const fields = readFields(input, path);
   const nextCursor = fields.opt("nextCursor", parseText);
+  const sourceRef = fields.req("sourceRef", parseProjectionIdentifier);
+  const pageRef = fields.req("pageRef", parseProjectionIdentifier);
+  const state = fields.req("state", parseSourcePageStateAt);
+  const observations = fields.req("observations", parseArrayOf(parseUnknown));
+  const measurements = fields.req("measurements", parseArrayOf(parseUnknown));
+  const episodes = fields.req("episodes", parseArrayOf(parseUnknown));
+  if (
+    state.status !== "available" &&
+    (observations.length !== 0 || measurements.length !== 0 || episodes.length !== 0)
+  ) {
+    throw new LearningLoopError("schema.invalid", [
+      {
+        code: "schema.invalid",
+        severity: "error",
+        message: "an unavailable source page must not contain projections",
+        path,
+      },
+    ]);
+  }
   return {
-    sourceRevision: fields.req("sourceRevision", parseNonEmptyText),
+    sourceRef,
+    pageRef,
+    state,
     ...(nextCursor !== undefined ? { nextCursor } : {}),
-    observations: fields.req("observations", parseArrayOf(parseUnknown)),
-    measurements: fields.req("measurements", parseArrayOf(parseUnknown)),
-    episodes: fields.req("episodes", parseArrayOf(parseUnknown)),
+    observations,
+    measurements,
+    episodes,
     diagnostics: fields.req("diagnostics", parseArrayOf(parseDiagnosticAt)),
   };
 };

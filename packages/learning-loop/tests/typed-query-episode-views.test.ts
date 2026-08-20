@@ -70,7 +70,9 @@ function episodePage(input: {
   readonly status: "succeeded" | "failed" | "cancelled" | "unknown";
 }): EvidencePage {
   return {
-    sourceRevision: input.revision,
+    sourceRef: "episode-fixture-input",
+    pageRef: input.revision,
+    state: { status: "available", sourceRevision: input.revision, completeness: input.completeness },
     observations: [
       {
         sourceRecordId: input.observationId,
@@ -143,7 +145,9 @@ describe("typed learning queries", () => {
 
   it("refuses projections whose queryable identifiers exceed the ingestion bound", async () => {
     const page: EvidencePage = {
-      sourceRevision: "oversized-projection",
+      sourceRef: "oversized-fixture-input",
+      pageRef: "page-0",
+      state: { status: "available", sourceRevision: "oversized-projection", completeness: "complete" },
       observations: [
         {
           sourceRecordId: "r".repeat(1_001),
@@ -295,7 +299,9 @@ describe("typed learning queries", () => {
 
   it("preserves registered trust and folded completeness on observation and measurement queries", async () => {
     const page: EvidencePage = {
-      sourceRevision: "partial-rev-1",
+      sourceRef: "partial-fixture-input",
+      pageRef: "page-0",
+      state: { status: "available", sourceRevision: "partial-rev-1", completeness: "partial" },
       observations: [
         {
           sourceRecordId: "obs-partial",
@@ -785,12 +791,14 @@ describe("episode identity views", () => {
     const receipt = await learning.ingest(conflicting, null);
     expect(receipt.diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
+        {
           code: "episode.identity_conflict",
-          details: { episodeRecordId: "conflicting-source/same-row" },
-        }),
+          severity: "error",
+          message: "episode identity claims conflicted",
+        },
       ]),
     );
+    expect(JSON.stringify(receipt.diagnostics)).not.toContain("conflicting-source/same-row");
 
     const views = itemsOf(
       await collectPages(learning.queryEpisodes({ recordIds: ["conflicting-source/same-row"], limit: 10 })),

@@ -1,9 +1,19 @@
 // Codex adapter: emitted kinds, redacted shapes, task signals, structural
 // tool outcomes, and probe banding — over synthetic fixtures only.
-import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { CODEX_ADAPTER_VERSION, createCodexTranscriptSource } from "../src/index.js";
-import { TEST_LOCATOR_KEY, allPages, inputOf, makeFixtureDir, ofKind, writeJsonl } from "./support.js";
+import {
+  allPages,
+  expectedBranchLocator,
+  expectedCwdLocator,
+  expectedSessionLocator,
+  expectedSourceRef,
+  expectedSourceRevision,
+  inputOf,
+  makeFixtureDir,
+  ofKind,
+  writeJsonl,
+} from "./support.js";
 
 const SESSION_ID = "01990000-1111-4222-8333-444455556666";
 const CWD = "/workspaces/sample-project";
@@ -149,16 +159,24 @@ describe("codex transcript source", () => {
     expect(pages).toHaveLength(1);
     const page = pages[0];
     if (page === undefined) throw new Error("missing page");
-    expect(page.sourceRevision).toMatch(/^[0-9a-f]{64}$/);
+    const sessionLocator = expectedSessionLocator("codex", SESSION_ID);
+    const cwdLocator = expectedCwdLocator(CWD);
+    expect(page.sourceRef).toBe(expectedSourceRef(path));
+    expect(page.pageRef).toBe("session");
+    expect(page.state).toEqual({
+      status: "available",
+      sourceRevision: expectedSourceRevision(path),
+      completeness: "complete",
+    });
     expect(page.measurements).toEqual([]);
     expect(page.diagnostics).toEqual([]);
 
     const episode = page.episodes[0];
     if (episode === undefined) throw new Error("missing episode");
-    expect(episode.episodeId).toBe(`codex/${SESSION_ID}`);
+    expect(episode.episodeId).toBe(`codex/${sessionLocator}`);
     expect(episode.scope).toEqual([
       { type: "provider", id: "codex" },
-      { type: "project", id: "sample-project" },
+      { type: "project", id: cwdLocator },
     ]);
     expect(episode.openedAt).toBe(at(0));
     expect(episode.closedAt).toBe(at(19));
@@ -170,9 +188,8 @@ describe("codex transcript source", () => {
       provider: "codex",
       adapterVersion: CODEX_ADAPTER_VERSION,
       providerVersionBand: "0.99.0",
-      projectSlug: "sample-project",
-      cwdLocator: createHash("sha256").update(`${TEST_LOCATOR_KEY}:${CWD}`).digest("hex"),
-      gitBranch: "main",
+      cwdLocator,
+      branchLocator: expectedBranchLocator("main"),
     });
 
     // Messages come from response_item records only; event duplicates and
@@ -207,10 +224,15 @@ describe("codex transcript source", () => {
     ]);
 
     for (const observation of page.observations) {
-      expect(observation.episodeId).toBe(`codex/${SESSION_ID}`);
-      expect(observation.sourceRecordId).toMatch(new RegExp(`^codex/${SESSION_ID}/\\d+#\\d+$`));
+      expect(observation.episodeId).toBe(`codex/${sessionLocator}`);
+      expect(observation.sourceRecordId).toMatch(new RegExp(`^codex/${sessionLocator}/\\d+#\\d+$`));
       expect(observation.completeness).toBe("complete");
     }
+    expect(JSON.stringify(page)).not.toContain(SESSION_ID);
+    expect(JSON.stringify(page)).not.toContain(path);
+    expect(JSON.stringify(page)).not.toContain(CWD);
+    expect(JSON.stringify(page)).not.toContain("sample-project");
+    expect(JSON.stringify(page)).not.toContain('"gitBranch":"main"');
   });
 
   it("detects human correction signals transiently", async () => {

@@ -49,6 +49,12 @@ root:StoredRecord
 root:StreamEntry
 root:WriteResult
 root:EvidencePage
+root:SourcePageReceipt
+root:ImportReceipt
+root:EvidenceHealthFinding
+root:parseSourcePageReceipt
+root:parseImportReceipt
+root:parseEvidenceHealthFinding
 root:EvidenceSource
 root:ProjectedEpisode
 root:ProjectedMeasurement
@@ -68,6 +74,8 @@ root:CandidateReviewInput
 root:CandidateView
 root:EpisodeQuery
 root:EpisodeView
+root:SourcePageReceiptQuery
+root:EvidenceHealthQuery
 root:MeasurementQuery
 root:ObservationQuery
 root:QueryPage

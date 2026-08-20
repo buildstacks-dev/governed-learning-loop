@@ -39,6 +39,13 @@ between code and contract, open an issue — never silently drift either one.
   Engine namespaces and record kinds are private implementation details. Query
   cursors are opaque, and append-visible page revisions are never treated as a
   frozen detector, calibration, or experiment population.
+- **Source health is durable and separate from learning.** Every source page
+  declares an opaque, privacy-treated source/page identity and a closed
+  availability state. Receipt-last persistence binds exact registration,
+  policy, revision, derivative, count, and normalized diagnostic lineage.
+  Missing, unreadable, unsupported, corrupt, partial, or revision-changed
+  evidence produces closed evidence-health records; it is never silently an
+  empty successful page or a behavioral candidate.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`)
   with no supported deep imports.
 

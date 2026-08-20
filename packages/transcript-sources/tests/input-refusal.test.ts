@@ -3,10 +3,10 @@
 // invalid input or cursors are typed errors.
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { LearningLoopError } from "@cormidia/learning-loop";
+import { LearningLoopError, defineSourceRegistration } from "@cormidia/learning-loop";
 import { afterEach, describe, expect, it } from "vitest";
 import { createClaudeCodeTranscriptSource, createCodexTranscriptSource } from "../src/index.js";
-import { allPages, inputOf, makeFixtureDir, writeJsonl } from "./support.js";
+import { allPages, expectedSourceRef, inputOf, makeFixtureDir, writeJsonl } from "./support.js";
 
 const SESSION_ID = "dddddddd-eeee-4fff-8000-111122223333";
 
@@ -45,7 +45,9 @@ describe("input refusal", () => {
     if (page === undefined) throw new Error("missing page");
     expect(page.observations).toEqual([]);
     expect(page.episodes).toEqual([]);
-    expect(page.sourceRevision).toBe("unavailable");
+    expect(page.sourceRef).toBe(expectedSourceRef(link));
+    expect(page.pageRef).toBe("session");
+    expect(page.state).toEqual({ status: "unreadable" });
     expect(page.diagnostics[0]?.code).toBe("source.input_refused");
     expect(page.diagnostics[0]?.message).toContain("symbolic links are refused");
 
@@ -64,9 +66,11 @@ describe("input refusal", () => {
     expect(pages).toHaveLength(2);
     expect(pages[0]?.diagnostics[0]?.code).toBe("source.input_refused");
     expect(pages[0]?.diagnostics[0]?.message).toContain("not a regular file");
+    expect(pages[0]?.state).toEqual({ status: "unreadable" });
     expect(pages[0]?.nextCursor).toBe("1");
     expect(pages[1]?.diagnostics[0]?.code).toBe("source.input_refused");
     expect(pages[1]?.diagnostics[0]?.message).toContain("does not exist");
+    expect(pages[1]?.state).toEqual({ status: "missing" });
   });
 
   it("refuses malformed input and cursors as typed errors", async () => {
@@ -77,7 +81,26 @@ describe("input refusal", () => {
     await expect(allPages(source, { kind: "explicit_files", paths: ["x"], locatorKey: "" })).rejects.toThrow(
       LearningLoopError,
     );
+    await expect(allPages(source, inputOf([], "x".repeat(31)))).rejects.toThrow(LearningLoopError);
+    await expect(allPages(source, inputOf([], "é".repeat(16)))).resolves.toEqual([]);
     await expect(allPages(source, inputOf([]), "notanumber")).rejects.toThrow(LearningLoopError);
     await expect(allPages(source, inputOf([]), "1")).rejects.toThrow(LearningLoopError);
+  });
+
+  it("hard-caps transcript registrations at advisory trust", () => {
+    const source = createClaudeCodeTranscriptSource();
+    expect(Object.isFrozen(source)).toBe(true);
+    expect(Object.isFrozen(source.descriptor)).toBe(true);
+    expect(source.descriptor.maximumTrust).toBe("advisory");
+    expect(Reflect.set(source.descriptor, "maximumTrust", "verified")).toBe(false);
+    expect(source.descriptor.maximumTrust).toBe("advisory");
+    expect(() =>
+      defineSourceRegistration({ source, trustCeiling: "advisory", contentPolicyId: "synthetic-policy" }),
+    ).not.toThrow();
+    for (const trustCeiling of ["observed", "verified"] as const) {
+      expect(() => defineSourceRegistration({ source, trustCeiling, contentPolicyId: "synthetic-policy" })).toThrow(
+        LearningLoopError,
+      );
+    }
   });
 });

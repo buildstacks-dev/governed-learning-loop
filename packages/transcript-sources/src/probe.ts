@@ -22,7 +22,7 @@ export async function probeExplicitFiles(
   for (let index = 0; index < parsed.paths.length; index += 1) {
     const path = parsed.paths[index];
     if (path === undefined) continue;
-    const ref = refOf(path, index);
+    const ref = refOf(index);
     const first = await readFirstContentLine(path, ref);
     if ("diagnostic" in first) {
       supported = false;

@@ -1,15 +1,25 @@
-// Import idempotency: unchanged file bytes → identical sourceRevision and
-// identical projections (stable sourceRecordIds). The cwd locator is KEYED:
-// same key → same locator; different key → different locator (dictionary
-// recovery of paths requires the caller's secret).
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+// Import idempotency: unchanged file bytes → identical available state and
+// identical projections (stable sourceRecordIds). Source and cwd locators are
+// keyed: same key/input → same locator; changing the key changes the locator
+// (dictionary recovery of paths requires the caller's secret).
 import { afterEach, describe, expect, it } from "vitest";
 import { createClaudeCodeTranscriptSource, createCodexTranscriptSource } from "../src/index.js";
-import { allPages, inputOf, makeFixtureDir, ofKind, writeJsonl } from "./support.js";
+import {
+  allPages,
+  expectedCwdLocator,
+  expectedSessionLocator,
+  expectedSourceRef,
+  expectedSourceRevision,
+  inputOf,
+  makeFixtureDir,
+  ofKind,
+  writeJsonl,
+} from "./support.js";
 
 const SESSION_ID = "ffffffff-0000-4111-8222-333344445555";
 const CWD = "/workspaces/sample-project";
+const LOCATOR_KEY_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const LOCATOR_KEY_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 function claudeRecords(): readonly unknown[] {
   return [
@@ -74,29 +84,44 @@ describe("idempotency and keyed locator", () => {
     const secondCodex = await allPages(createCodexTranscriptSource(), inputOf([codexPath]));
     expect(JSON.stringify(secondCodex)).toBe(JSON.stringify(firstCodex));
 
-    // sourceRevision is exactly the sha256 of the file bytes.
-    expect(firstClaude[0]?.sourceRevision).toBe(createHash("sha256").update(readFileSync(claudePath)).digest("hex"));
-    expect(firstCodex[0]?.sourceRevision).toBe(createHash("sha256").update(readFileSync(codexPath)).digest("hex"));
+    // Revisions, source paths, and provider session ids are all tenant-keyed.
+    expect(firstClaude[0]?.state).toEqual({
+      status: "available",
+      sourceRevision: expectedSourceRevision(claudePath),
+      completeness: "complete",
+    });
+    expect(firstCodex[0]?.state).toEqual({
+      status: "available",
+      sourceRevision: expectedSourceRevision(codexPath),
+      completeness: "complete",
+    });
+    expect(firstClaude[0]?.sourceRef).toBe(expectedSourceRef(claudePath));
+    expect(firstCodex[0]?.sourceRef).toBe(expectedSourceRef(codexPath));
+    expect(firstClaude[0]?.pageRef).toBe("session");
 
     // sourceRecordIds are stable, line-addressed, and unique: same-line
     // projections carry a deterministic occurrence suffix.
+    const sessionLocator = expectedSessionLocator("claude-code", SESSION_ID);
     const ids = firstClaude[0]?.observations.map((observation) => observation.sourceRecordId);
     expect(ids).toEqual([
-      `claude-code/${SESSION_ID}/1#0`,
-      `claude-code/${SESSION_ID}/1#1`,
-      `claude-code/${SESSION_ID}/2#0`,
-      `claude-code/${SESSION_ID}/2#1`,
+      `claude-code/${sessionLocator}/1#0`,
+      `claude-code/${sessionLocator}/1#1`,
+      `claude-code/${sessionLocator}/2#0`,
+      `claude-code/${sessionLocator}/2#1`,
     ]);
+    expect(JSON.stringify({ firstClaude, firstCodex })).not.toContain(SESSION_ID);
+    expect(JSON.stringify(firstClaude)).not.toContain(claudePath);
+    expect(JSON.stringify(firstCodex)).not.toContain(codexPath);
   });
 
-  it("changes the cwd locator with the locator key and only then", async () => {
+  it("changes every private identity with the locator key and only then", async () => {
     const dir = fixtureDir();
     const path = writeJsonl(dir, "claude.jsonl", claudeRecords());
     const source = createClaudeCodeTranscriptSource();
 
-    const withKeyA = await allPages(source, inputOf([path], "key-a"));
-    const withKeyAAgain = await allPages(source, inputOf([path], "key-a"));
-    const withKeyB = await allPages(source, inputOf([path], "key-b"));
+    const withKeyA = await allPages(source, inputOf([path], LOCATOR_KEY_A));
+    const withKeyAAgain = await allPages(source, inputOf([path], LOCATOR_KEY_A));
+    const withKeyB = await allPages(source, inputOf([path], LOCATOR_KEY_B));
 
     const locatorOf = (pages: typeof withKeyA): unknown => {
       const page = pages[0];
@@ -107,11 +132,21 @@ describe("idempotency and keyed locator", () => {
     };
 
     const locatorA = locatorOf(withKeyA);
-    expect(locatorA).toBe(createHash("sha256").update(`key-a:${CWD}`).digest("hex"));
+    expect(locatorA).toBe(expectedCwdLocator(CWD, LOCATOR_KEY_A));
     expect(locatorOf(withKeyAAgain)).toBe(locatorA);
-    expect(locatorOf(withKeyB)).toBe(createHash("sha256").update(`key-b:${CWD}`).digest("hex"));
+    expect(locatorOf(withKeyB)).toBe(expectedCwdLocator(CWD, LOCATOR_KEY_B));
     expect(locatorOf(withKeyB)).not.toBe(locatorA);
     // The raw cwd itself never appears in the projections.
     expect(JSON.stringify(withKeyA)).not.toContain(CWD);
+
+    expect(withKeyA[0]?.sourceRef).toBe(expectedSourceRef(path, LOCATOR_KEY_A));
+    expect(withKeyAAgain[0]?.sourceRef).toBe(withKeyA[0]?.sourceRef);
+    expect(withKeyB[0]?.sourceRef).toBe(expectedSourceRef(path, LOCATOR_KEY_B));
+    expect(withKeyB[0]?.sourceRef).not.toBe(withKeyA[0]?.sourceRef);
+    expect(withKeyA[0]?.state).toMatchObject({ sourceRevision: expectedSourceRevision(path, LOCATOR_KEY_A) });
+    expect(withKeyB[0]?.state).toMatchObject({ sourceRevision: expectedSourceRevision(path, LOCATOR_KEY_B) });
+    expect(withKeyA[0]?.state).not.toEqual(withKeyB[0]?.state);
+    expect(JSON.stringify(withKeyA)).not.toContain(SESSION_ID);
+    expect(JSON.stringify(withKeyA)).not.toContain(path);
   });
 });

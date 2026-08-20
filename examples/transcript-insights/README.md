@@ -14,10 +14,13 @@ consumer: everything goes through the public package surfaces
   app — distillation is deterministic heuristics.
 - **Redacted at emission.** The transcript adapters project structural
   features only (counts, tool names, outcomes, token totals); message text,
-  tool arguments, tool results, and full paths never reach the store.
+  tool arguments, tool results, native session ids, cwd values, branch names,
+  and full paths never reach the store. Stable source, revision, session, cwd,
+  and branch identities are separate tenant-keyed HMAC locators.
 - **Advisory ceiling.** Both sources are registered at trust class
-  `advisory`; nothing here can activate anything — candidates stay inert and
-  publication is always blocked.
+  `advisory`, and their immutable descriptor prevents a stronger
+  registration. Nothing here can activate anything — candidates stay inert
+  and publication is always blocked.
 - **Aggregate output.** Diagnostics are printed as counts by code, never as
   message bodies.
 - **Explicit inputs.** THIS demo (host code) discovers session files under
@@ -81,13 +84,25 @@ writes only after the scan, when it proposes qualifying inert candidates.
 ## State directory
 
 - `locator.key` — 32 random bytes (hex, mode 0600), minted on first run and
-  reused. It salts the adapters' keyed cwd locator so paths never enter a
-  dictionary-recoverable digest. Deleting it makes future re-ingests of
-  already-imported sessions conflict on the session-meta record; keep it with
-  the store.
+  reused for the lifetime of the store. It keys independent HMAC domains for
+  source paths, source revisions, native session ids, cwd values, and branch
+  names so none enters a portable dictionary-recoverable digest. Deleting,
+  rotating, or copying this key across tenants changes durable identity and
+  can fragment or duplicate future imports; back it up with the store.
 - `store/` — the kernel's file store (append-only governed records) plus this
   demo's own `demo` namespace holding per-day aggregate ingest summaries
   (counts and diagnostic codes only).
+
+### Adapter 0.2.0 state compatibility
+
+Adapter `0.2.0` replaces the `0.1.1` raw session identifiers, cwd basenames,
+branch names, and unkeyed source revisions with tenant-keyed identities. Those
+bytes intentionally cannot be reinterpreted in place: re-ingesting a `0.1.1`
+state with `0.2.0` can create parallel identities, mix incompatible history,
+or conflict where an old durable id is reused. Preserve the old directory for
+read-only audit use and choose a fresh state directory for `0.2.0` ingestion
+until an explicit versioned migration exists. Do not delete the old directory
+as an upgrade shortcut.
 
 Reports and distillation stream typed, bounded observation and episode pages
 through the kernel façade. The app never knows the kernel's store namespace or

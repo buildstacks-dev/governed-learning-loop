@@ -14,17 +14,32 @@ const adapters = new WeakMap<RegisteredSource<unknown>, EvidenceSource<unknown>>
 /**
  * Binds an evidence-source adapter to its host-granted trust ceiling and
  * content policy (contract §Evidence source). The registry revision digests
- * the source id, adapter version, trust ceiling, and content policy id; the
- * returned capability preserves its input type so one source's input cannot
- * be fed to another registration.
+ * the source id, adapter version, optional source trust maximum, host trust
+ * ceiling, and content policy id; the returned capability preserves its input
+ * type so one source's input cannot be fed to another registration.
  */
 export function defineSourceRegistration<I>(input: {
   readonly source: EvidenceSource<I>;
   readonly trustCeiling: TrustClass;
   readonly contentPolicyId: string;
 }): RegisteredSource<I> {
-  const registered = bindPortsRegistration(input);
-  adapters.set(registered, input.source);
+  const source = input.source;
+  const configuredDescriptor = source.descriptor;
+  const maximumTrust = configuredDescriptor.maximumTrust;
+  const descriptor = Object.freeze({
+    id: configuredDescriptor.id,
+    adapterVersion: configuredDescriptor.adapterVersion,
+    ...(maximumTrust !== undefined ? { maximumTrust } : {}),
+  });
+  const probe = source.probe.bind(source);
+  const read = source.read.bind(source);
+  const adapter = Object.freeze({ descriptor, probe, read });
+  const registered = bindPortsRegistration({
+    source: adapter,
+    trustCeiling: input.trustCeiling,
+    contentPolicyId: input.contentPolicyId,
+  });
+  adapters.set(registered, adapter);
   return registered;
 }
 

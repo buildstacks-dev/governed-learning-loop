@@ -279,6 +279,7 @@ export type TrustClass =
 export interface SourceDescriptor {
   readonly id: string;
   readonly adapterVersion: string;
+  readonly maximumTrust?: TrustClass;
 }
 
 export interface ContentPolicy {
@@ -315,7 +316,13 @@ Trust classes mean:
 
 This is an upper-bound model. A “verified” source with the wrong metric or a stale revision is still invalid for the claim at hand.
 
-Trust and content policy belong to immutable host registration, not the adapter descriptor. Transcript sources have a hard advisory ceiling. A provider-native tool exit may support discovery, but only a separately authenticated human or deterministic verifier observation can raise the trust of a claim.
+Trust and content policy belong to immutable host registration, not an adapter
+claim. `SourceDescriptor.maximumTrust` is only a self-restriction: the host may
+register a lower ceiling, but registration rejects a requested ceiling above
+that maximum, and the field can never grant trust. Transcript sources declare
+a hard advisory maximum. A provider-native tool exit may support discovery,
+but only a separately authenticated human or deterministic verifier
+observation can raise the trust of a claim.
 
 ### Observation
 
@@ -375,6 +382,13 @@ export interface EpisodeRecord {
 
 Open or low-confidence transcript sessions may be indexed, but they cannot enter efficacy evaluation until an episode boundary is confirmed. Late outcomes append evidence and produce a new folded view; they do not rewrite the original events.
 
+Durable source-page receipts do not by themselves prove measurement
+ownership. Validation of `MetricDefinition.valueType`, exact
+measurement-to-episode and evidence-to-episode ownership, and
+episode-outcome measurement ownership is the later issue #31c contract slice.
+Until then, no receipt turns a structurally parsed measurement into a passing
+efficacy claim.
+
 ### Candidate
 
 ```ts
@@ -407,6 +421,12 @@ export interface Candidate {
 The core digest binds all governance-relevant fields. Cosmetic display metadata, if any, must be kept outside the binding or be clearly classified. A revised candidate receives a new digest and cannot reuse a prior review or authorization silently.
 
 `proposedRisk` is advisory. The engine computes effective risk as the monotonic maximum of the proposal, the host-registered destination floor, content classification and policy rules. `T0 < T1 < T2 < T3`; neither an adapter nor a proposer can lower the host result.
+
+The issue #31a receipt substrate does not reinterpret schema-version-1
+`evidenceIds`. Collision-safe, source-registration- and record-digest-bound
+evidence references require an explicit Candidate schema v2 and migration
+decision in #31b. Existing v1 candidates and reviews are not silently upgraded
+or made stronger by the presence of source receipts.
 
 ### Review
 
@@ -688,13 +708,96 @@ export interface ProjectedEpisode {
 }
 
 export interface EvidencePage {
-  readonly sourceRevision: string;
+  readonly sourceRef: string;
+  readonly pageRef: string;
+  readonly state:
+    | {
+        readonly status: "available";
+        readonly sourceRevision: string;
+        readonly completeness: "complete" | "partial" | "unknown";
+      }
+    | {
+        readonly status: "missing" | "unreadable" | "unsupported" | "corrupt";
+        readonly observedRevision?: string;
+      };
   readonly nextCursor?: string;
   readonly observations: readonly ProjectedObservation[];
   readonly measurements: readonly ProjectedMeasurement[];
   readonly episodes: readonly ProjectedEpisode[];
   readonly diagnostics: readonly Diagnostic[];
 }
+
+export interface SourcePageReceipt {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly adapterVersion: string;
+  readonly contentPolicyId: string;
+  readonly contentPolicyDigest: string;
+  readonly loopRegistryRevision: string;
+  readonly sourceRef: string;
+  readonly pageRef: string;
+  readonly state: EvidencePage["state"];
+  readonly derivatives: readonly {
+    readonly kind: "observation" | "measurement" | "episode";
+    readonly id: string;
+    readonly digest: string;
+  }[];
+  readonly projectionCounts: {
+    readonly observations: number;
+    readonly measurements: number;
+    readonly episodes: number;
+    readonly rejected: number;
+  };
+  readonly diagnosticCounts: readonly {
+    readonly code: string;
+    readonly severity: Diagnostic["severity"];
+    readonly count: number;
+  }[];
+  readonly healthFindingIds: readonly string[];
+  readonly receiptDigest: string;
+}
+
+export interface EvidenceHealthFinding {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly code:
+    | "source.missing"
+    | "source.unreadable"
+    | "source.unsupported"
+    | "source.corrupt"
+    | "source.partial"
+    | "source.revision_changed"
+    | "source.record_rejected"
+    | "source.content_policy_refused"
+    | "source.adapter_diagnostic";
+  readonly effect: "limits_claims" | "blocks_audit" | "blocks_use";
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly sourceRef: string;
+  readonly pageRef: string;
+  readonly completeness: "complete" | "partial" | "unknown";
+  readonly affectedRecords: number;
+  readonly findingDigest: string;
+}
+
+export interface ImportReceipt {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly sourceId: string;
+  readonly sourceRegistrationRevision: string;
+  readonly loopRegistryRevision: string;
+  readonly pageReceiptIds: readonly string[];
+  readonly sourceRevisions: readonly string[];
+  readonly completeness: "complete" | "partial" | "unknown";
+  readonly healthFindingIds: readonly string[];
+  readonly receiptDigest: string;
+}
+
+export declare function parseSourcePageReceipt(input: unknown): SourcePageReceipt;
+export declare function parseEvidenceHealthFinding(input: unknown): EvidenceHealthFinding;
+export declare function parseImportReceipt(input: unknown): ImportReceipt;
 
 export interface EvidenceSource<I> {
   readonly descriptor: SourceDescriptor;
@@ -731,6 +834,60 @@ export declare function defineSourceRegistration<I>(input: {
 The host binds the adapter to a `trustCeiling` and content policy before constructing the loop. The resulting capability preserves its input type, so `learning.ingest(source, input)` cannot accept another source's input. The registry is immutable and content-digested; changing it creates a new loop configuration revision. Registered source ids must not contain `/`, which is the reserved separator between the source id and an opaque source-record id in schema-version-1 durable record ids. The engine adds canonical digests, stable IDs, effective trust, import receipts, and idempotency. The adapter never receives network, authority, publication or active-context capabilities.
 
 Projection source-record ids, logical episode ids, observation kinds, metric names, parent ids, and episode classes are bounded to 1,000 control-free characters at ingestion. This keeps every accepted value addressable by the bounded query surface; durable ids may be longer because they frame a source id and source-record id. `ProjectedEpisode.completeness` is the adapter's assessment of that episode projection. An omitted value is `unknown`, never an implied complete record. `parentEpisodeId` records provider-neutral parent/child lineage, and `episodeClass` is a host-defined applicability label such as an interactive, automation, benchmark, or replay class. Both are data, not authority; adapters omit them rather than guess.
+
+`sourceRef` and `pageRef` are bounded, control-free, opaque identifiers that
+the adapter has already made safe to persist. A private or low-entropy locator
+uses a tenant-scoped keyed digest; raw paths and native private identifiers do
+not enter a receipt. An `available` page may be empty and says that the adapter
+observed no projections. A `missing`, `unreadable`, `unsupported`, or `corrupt`
+page must contain no projections. `observedRevision` is present only when the
+adapter could authenticate exact bytes despite being unable to project them;
+absence is unknown evidence, never an implied revision.
+
+The engine persists accepted derivatives first, closed evidence-health
+findings second, and the `SourcePageReceipt` last. The receipt is the commit
+marker: derivatives without their valid receipt are incomplete. Receipt and
+finding ids are deterministic functions of `receiptDigest` and
+`findingDigest`. The page receipt binds exactly the source registration
+revision, adapter version, content-policy id and digest, loop registry
+revision, source/page references, state, ordered derivative
+`(kind, id, digest)` tuples, projection counts (including rejected records),
+normalized diagnostic counts, and health-finding ids. `schemaVersion`, `id`,
+and `receiptDigest` are excluded. Counts are non-negative safe integers and
+must agree with the relevant arrays. Diagnostic tuples are sorted by code then
+severity, unique, and carry positive safe-integer counts; they never contain a
+message, path, raw details, or source content. Every derivative id must use the
+receipt source's schema-version-1 `<sourceId>/<sourceRecordId>` prefix, and a
+page cannot bind the same `(kind, id)` tuple twice.
+
+An evidence-health `findingDigest` binds exactly `code`, `effect`, `sourceId`,
+`sourceRegistrationRevision`, `sourceRef`, `pageRef`, `completeness`, and
+`affectedRecords`; `schemaVersion`, `id`, and `findingDigest` are excluded.
+`affectedRecords` is a non-negative safe integer. `limits_claims` requires
+downstream claims to state the finding's constraint, `blocks_audit` excludes
+the affected evidence from audit-grade comparisons, and `blocks_use` refuses
+the affected derivatives. None of these effects creates a learning candidate.
+
+Revision claims are append-only per exact source registration, `sourceRef`,
+and `pageRef`. An authenticated `observedRevision` on an unavailable page is a
+claim just like an available `sourceRevision`; it cannot be bypassed by later
+calling the same bytes available under a different revision. Repeating the
+same revision is idempotent. A second distinct revision records
+`source.revision_changed`, persists a receipt with no derivatives from the
+unverifiable claim, and refuses those derivatives rather than guessing that
+the source intentionally superseded its prior bytes. Explicit supersession
+and deletion lineage is a later issue #31 slice.
+
+An `ImportReceipt` is a durable, deterministic fold of committed page
+receipts. `receiptDigest` binds every field except `schemaVersion`, `id`, and
+`receiptDigest`; `pageReceiptIds` preserves source order, while
+`sourceRevisions` is the sorted unique set of available and observed exact
+revisions. The content-addressed page receipts transitively bind their adapter,
+content-policy, derivative, count, and diagnostic lineage. Re-ingesting
+identical committed pages under the same source and loop registrations
+produces the same import id and bytes. Receipts and findings are
+evidence-health records, not behavioral detector results, candidates,
+authority, or efficacy evidence.
 
 ### Storage
 
@@ -980,7 +1137,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while the exact-instance runtime token remains private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects a structurally similar identity object that was not created by `createIdentityPort` (or the `/testing` wrapper around it), retains the configured port in engine context, and checks its exact runtime binding before every propose or review transition.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, and scope-policy metadata/behavior; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while the exact-instance runtime token remains private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects a structurally similar identity object that was not created by `createIdentityPort` (or the `/testing` wrapper around it), retains the configured port in engine context, and checks its exact runtime binding before every propose or review transition.
 
 ```ts
 export interface LearningPolicy {
@@ -1031,7 +1188,9 @@ export interface CandidateReviewInput {
 export interface IngestReceipt {
   readonly id: string;
   readonly sourceId: string;
-  readonly sourceRevision: string;
+  readonly sourceRevisions: readonly string[];
+  readonly pageReceiptIds: readonly string[];
+  readonly importReceipt: ImportReceipt;
   readonly registryRevision: string;
   readonly observationIds: readonly string[];
   readonly measurementIds: readonly string[];
@@ -1167,6 +1326,28 @@ export interface EpisodeQuery {
   readonly limit: number;
 }
 
+export interface SourcePageReceiptQuery {
+  readonly receiptIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly sourceRefs?: readonly string[];
+  readonly pageRefs?: readonly string[];
+  readonly sourceRevisions?: readonly string[];
+  readonly states?: readonly EvidencePage["state"]["status"][];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface EvidenceHealthQuery {
+  readonly findingIds?: readonly string[];
+  readonly sourceIds?: readonly string[];
+  readonly sourceRefs?: readonly string[];
+  readonly pageRefs?: readonly string[];
+  readonly codes?: readonly EvidenceHealthFinding["code"][];
+  readonly effects?: readonly EvidenceHealthFinding["effect"][];
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
 export interface EpisodeView {
   readonly episode: EpisodeRecord;
   readonly identity:
@@ -1219,6 +1400,9 @@ export interface LearningLoop {
   queryObservations(input: ObservationQuery): AsyncIterable<QueryPage<Observation>>;
   queryMeasurements(input: MeasurementQuery): AsyncIterable<QueryPage<MeasurementRecord>>;
   queryEpisodes(input: EpisodeQuery): AsyncIterable<QueryPage<EpisodeView>>;
+  querySourcePageReceipts(input: SourcePageReceiptQuery): AsyncIterable<QueryPage<SourcePageReceipt>>;
+  queryEvidenceHealthFindings(input: EvidenceHealthQuery): AsyncIterable<QueryPage<EvidenceHealthFinding>>;
+  getImportReceipt(input: { readonly importReceiptId: string }): Promise<ImportReceipt | undefined>;
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
 
   preparePublication(input: {
@@ -1253,9 +1437,15 @@ export interface LearningLoop {
 }
 ```
 
+`IngestReceipt.id` equals `IngestReceipt.importReceipt.id`; it is not a fresh
+attempt identifier. `sourceRevisions` and `pageReceiptIds` are the exact values
+bound by the durable receipt. The returned derivative id arrays describe
+records newly created by this call, and `diagnostics` is a sanitized transient
+outcome; neither changes the deterministic durable import bytes.
+
 `RegisteredSource<I>` ties each input to its preconfigured adapter, trust ceiling and content policy. `recordOutcomes` accepts only the distinct `RegisteredOutcomeSource<I>` capability. The strict-consumer test must prove the two cannot be substituted or widened, never paper over the distinction with a cast.
 
-The three query methods are read-only, domain-specific views over engine-owned records. `limit` is required and must be an integer from 1 through 500; it bounds each page, not the whole iterable. Items retain deterministic insertion order. Identifier arrays match exact identifiers, values within one array are alternatives, and different populated filters combine by intersection. Unknown query fields are rejected so a misspelled isolation filter cannot broaden a read. Each filter array is capped at 1,000 values, each string value at 4,096 characters (wide enough for framed durable ids), and an encoded cursor at 16,384 characters. `sourceIds`, `trust`, and `completeness` select observation/measurement provenance; `sourceIds` also selects resolved episode identity, whose view exposes its trust ceiling and completeness. `parentEpisodeIds` and `episodeClasses` select exact adapter-declared lineage/applicability values. Parent traversal should pair `parentEpisodeIds` with `sourceIds`; callers can stream repeated parent queries to traverse descendants without a provider-specific graph API. `scope` is validated by the configured `ScopePolicy` and matches the stored episode scope exactly; it does not invent ancestor inheritance. `statuses` excludes episodes with no outcome.
+The five query methods are read-only, domain-specific views over engine-owned records. `limit` is required and must be an integer from 1 through 500; it bounds each page, not the whole iterable. Items retain deterministic insertion order. Identifier arrays match exact identifiers, values within one array are alternatives, and different populated filters combine by intersection. Unknown query fields are rejected so a misspelled isolation filter cannot broaden a read. Each filter array is capped at 1,000 values, each string value at 4,096 characters (wide enough for framed durable ids), and an encoded cursor at 16,384 characters. `sourceIds`, `trust`, and `completeness` select observation/measurement provenance; `sourceIds` also selects resolved episode identity, whose view exposes its trust ceiling and completeness. `parentEpisodeIds` and `episodeClasses` select exact adapter-declared lineage/applicability values. Parent traversal should pair `parentEpisodeIds` with `sourceIds`; callers can stream repeated parent queries to traverse descendants without a provider-specific graph API. `scope` is validated by the configured `ScopePolicy` and matches the stored episode scope exactly; it does not invent ancestor inheritance. `statuses` excludes episodes with no outcome. Receipt and evidence-health queries use only their closed state/code/effect vocabularies and exact persisted references; they never search diagnostic messages or raw details.
 
 `since` and `until` are inclusive canonical RFC 3339 UTC timestamps with milliseconds. They apply to `Observation.occurredAt`, `MeasurementRecord.measuredAt`, and `EpisodeRecord.openedAt`, respectively; a record without the relevant optional timestamp does not satisfy a time-bounded observation or measurement query. `recordIds` addresses durable `EpisodeRecord.id` values, while `episodeIds` addresses the provider-neutral episode identity shared by projections.
 
@@ -1263,6 +1453,9 @@ Query cursors are opaque and bind the domain kind, normalized filters, immutable
 
 `EpisodeView.identity` comes from an engine-private, append-only sidecar claim stream created during ingestion. Each claim preserves source id, source record id, projected episode id, optional parent and episode class, registry revision, trust ceiling, and episode completeness without changing historical `EpisodeRecord` bytes. One distinct claim resolves; two claims atomically fold to conflict. Re-ingesting an existing episode idempotently backfills a missing claim. Conflicting or unavailable lineage produces `status: "unresolved"` with typed diagnostics and never a fabricated identity.
 
+`getImportReceipt` is an exact, pure read of one durable import receipt and
+returns `undefined` only when that id does not exist. It reparses and verifies
+the stored receipt digest; corruption is a typed error rather than absence.
 `getCandidateView` is a pure read: it validates the stored candidate and folds its reviews into `GovernanceView`. It does not call `propose`, claim a content digest, or mutate the store.
 
 `LearningReportQuery` uses the same closed-key, bounded-string/array, exact-scope, and canonical-time rules as typed queries. `sourceIds` alone filters candidates to evidence from those sources. `episodeIds` addresses logical projected episode ids and therefore requires `sourceIds`; the pair is the collision-safe identity. Raw source-record references are included only when globally unambiguous and do not collide with a durable observation id. An unscoped or ambiguous logical episode-id report is rejected or excluded rather than merging evidence from two sources.
@@ -1368,7 +1561,7 @@ If any bound field changes between plan and publication, `publish` refuses. A re
 ### Import a transcript without trusting it
 
 ```ts
-const importReceipt = await transcriptLearning.ingest(
+const ingestReceipt = await transcriptLearning.ingest(
   codexExplicitExportSource,
   {
     kind: "explicit_file",
@@ -1380,9 +1573,12 @@ const importReceipt = await transcriptLearning.ingest(
 );
 
 console.log({
-  imported: importReceipt.observationIds.length,
-  completeness: importReceipt.completeness,
-  diagnostics: importReceipt.diagnostics,
+  imported: ingestReceipt.observationIds.length,
+  sourceRevisions: ingestReceipt.sourceRevisions,
+  pageReceiptIds: ingestReceipt.pageReceiptIds,
+  durableImportId: ingestReceipt.importReceipt.id,
+  completeness: ingestReceipt.completeness,
+  diagnostics: ingestReceipt.diagnostics,
 });
 ```
 
@@ -1549,7 +1745,14 @@ export type UntrustedTranscriptItem =
 
 `UntrustedTranscriptItem` is a transient adapter-to-content-policy value, not a durable record. Provider-native values cross as `unknown`; the adapter validates shape, then the content policy redacts and minimizes before storage. Persisting message text is explicit opt-in; the default stores extracted/redacted features and a tenant-keyed private locator. Unknown records remain visible without copying their raw payload.
 
-Adapter and provider versions are bound into import receipts. An append or rewrite creates a new immutable source revision and receipt, supersedes or tombstones affected derivatives, and voids dependent content-bound review or authorization where applicable. It never rewrites prior experiment evidence. Stable record IDs are namespaced by provider and adapter.
+Adapter and provider versions are bound into import receipts. A host-declared
+append, rewrite, or deletion will create explicit immutable revision lineage,
+supersede or tombstone affected derivatives, and void dependent content-bound
+review or authorization where applicable; it never rewrites prior experiment
+evidence. Until that declaration API is ratified, a second distinct revision
+for the same source/page identity is unverifiable: it records
+`source.revision_changed` and produces no derivatives. Stable record IDs are
+namespaced by provider and adapter.
 
 A session is not automatically an episode. The caller selects an episode-boundary strategy and its version. Heuristic segmentation records confidence. Low-confidence segments may support discovery but not efficacy claims.
 
@@ -1629,7 +1832,11 @@ export declare class LearningLoopError extends Error {
 Initial error families should cover:
 
 - `schema.unsupported_version`, `schema.invalid`, and `schema.corrupt`;
-- `source.unsupported_format`, `source.revision_changed`, and `source.incomplete`;
+- `source.unsupported_format` and `source.incomplete` for transient adapter diagnostics;
+- the closed durable evidence-health codes `source.missing`,
+  `source.unreadable`, `source.unsupported`, `source.corrupt`,
+  `source.partial`, `source.revision_changed`, `source.record_rejected`,
+  `source.content_policy_refused`, and `source.adapter_diagnostic`;
 - `store.conflict`, `store.corrupt`, and `store.unavailable`;
 - `review.not_independent` and `review.binding_mismatch`;
 - `policy.blocked`, `policy.authority_insufficient`, and `policy.risk_floor`;

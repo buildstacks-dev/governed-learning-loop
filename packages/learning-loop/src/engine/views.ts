@@ -154,7 +154,7 @@ export function assertStoredReviewValid(
   binding: CandidateDerivationBinding,
   review: CandidateReview,
 ): void {
-  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  const riskRule = context.policyRules.risks[effectiveRisk(context, candidate)];
   const producerPrincipal =
     binding.status === "resolved"
       ? binding.resolved.producerPrincipal

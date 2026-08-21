@@ -2933,6 +2933,20 @@ export interface PreparedEffect {
   readonly afterEffect: AfterEffectSemantics;
 }
 
+export interface PublicationLineage {
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
+  readonly registryRevision: string;
+  readonly destinationRegistrationDigest: string;
+  readonly derivation: {
+    readonly id: string;
+    readonly digest: string;
+    readonly detector: { readonly id: string; readonly version: string; readonly registrationDigest: string };
+    readonly lens: { readonly id: string; readonly version: string; readonly registrationDigest: string };
+    readonly pack: { readonly id: string; readonly version: string; readonly manifestDigest: string } | null;
+  } | null;
+}
+
 export interface PublicationPlan {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -2943,6 +2957,7 @@ export interface PublicationPlan {
   readonly effectClass: EffectClass;
   readonly effectiveRisk: RiskTier;
   readonly effects: readonly PreparedEffect[];
+  readonly lineage: PublicationLineage;
   readonly planDigest: string;
   readonly policyDigest: string;
   readonly createdAt: string;
@@ -2957,7 +2972,10 @@ export interface AuthorizationBinding {
   readonly action: PublicationPlan["action"];
   readonly expectedBases: readonly string[];
   readonly policyDigest: string;
+  readonly lineageClosureDigest: string;
 }
+
+declare const verifiedAuthorizationBrand: unique symbol;
 
 export interface VerifiedAuthorization {
   readonly id: string;
@@ -2966,10 +2984,41 @@ export interface VerifiedAuthorization {
   readonly bindingDigest: string;
   readonly authorizedAt: string;
   readonly expiresAt?: string;
+  readonly [verifiedAuthorizationBrand]: true;
 }
+
+export declare function parsePreparedEffect(input: unknown): PreparedEffect;
+export declare function parsePublicationPlan(input: unknown): PublicationPlan;
+export declare function publicationPlanDigest(
+  input: Omit<PublicationPlan, "schemaVersion" | "id" | "planDigest" | "createdAt">,
+): string;
+export declare function parseAuthorizationBinding(input: unknown): AuthorizationBinding;
+export declare function authorizationBindingDigest(binding: AuthorizationBinding): string;
 ```
 
 The host supplies opaque authorization evidence to its authority adapter. The core receives only a verified, exact binding. If content, base, destination, risk-relevant metadata, or policy changes, the binding changes and the authorization is unusable.
+
+A plan binds the complete semantic closure (decision 0024). `lineage` carries
+the candidate's exact scope digest, the loop scope-policy digest, the loop
+registry revision — which itself binds policy, identity, content policies,
+sources, the semantic registry, destinations, and authority — the exact host
+destination-registration digest, and, for a derivation-backed candidate, the
+exact derivation with its detector, lens, and pack references; a manual
+candidate binds `derivation: null`. A schema-version-1 candidate cannot become
+a plan. `planDigest` is the protocol digest of
+`{ candidateId, candidateDigest, destinationId, action, effectClass,
+effectiveRisk, effects, policyDigest, lineage }` under the domain tag
+`publication-plan:v1`; it excludes `schemaVersion`, `id`, `planDigest`, and
+`createdAt`, and the plan id is `plan-<planDigest>`. A plan carries between one
+and 100 prepared effects with unique ids; each `payloadDigest` is the protocol
+digest of the effect payload, recomputed on parse. The binding is a pure
+projection of the plan: `expectedBases` is the sorted unique set of effect
+bases and `lineageClosureDigest` is the digest of
+`{ candidateDigest, lineage }` under `publication-lineage-closure:v1`. The
+binding digest hashes every binding field under `authorization-binding:v1`.
+`VerifiedAuthorization` is a branded handle only a kernel-created
+`AuthorityPort` mints; its `bindingDigest` must equal the binding digest of the
+exact current plan, or the authorization is unusable.
 
 Disable, rollback and compensation use new content-bound `PublicationPlan` records and the same policy, authority and journal path as initial publication. They are never direct adapter calls. A context destination must provide disable or rollback. An outward proposal may provide compensation, such as closing a ticket. An irreversible destination must declare that fact and therefore receives the host's corresponding risk floor.
 
@@ -3438,7 +3487,15 @@ The exact low-level shape should be confirmed in an implementation spike. The no
 ### Authority
 
 ```ts
+declare const authorityPortBrand: unique symbol;
+
 export interface AuthorityPort {
+  readonly id: string;
+  readonly version: string;
+  readonly configurationDigest: string;
+  readonly registrationDigest: string;
+  readonly [authorityPortBrand]: true;
+
   verify(input: {
     readonly evidence: unknown;
     readonly binding: AuthorizationBinding;
@@ -3453,9 +3510,42 @@ export interface AuthorityPort {
       }
   >;
 }
+
+export declare function createAuthorityPort(input: {
+  readonly id: string;
+  readonly version: string;
+  readonly configurationDigest: string;
+  readonly verify: (input: {
+    readonly evidence: unknown;
+    readonly binding: AuthorizationBinding;
+  }) => Promise<unknown>;
+}): AuthorityPort;
 ```
 
 The adapter authenticates principals and maps host approvals. The kernel checks binding equality, expiry, policy, consumption, lifecycle, and idempotency. Hosts with transactional approval consumption can expose reservation and commit hooks as an advanced interface; the first contract should not pretend to provide a distributed transaction across an arbitrary approval service and destination.
+
+The authority port follows the identity-port discipline (decision 0024,
+mirroring decision 0003). The host passes its authentication and approval
+mapping to `createAuthorityPort`; `id` and `version` are non-empty,
+control-free, and at most 200 characters, and `configurationDigest` is a
+64-character lower-case hexadecimal digest the host computes over its exact
+approval policy. The host verifier receives the opaque evidence and a frozen
+copy of the exact binding; its result crosses the boundary as `unknown` and
+must parse as an authorized result carrying
+`{ id, principal, principalAttestationDigest, bindingDigest, authorizedAt,
+expiresAt? }` — canonical timestamps, `expiresAt` later than `authorizedAt`,
+bounded text — or a closed `pending | denied | invalid | expired` result with
+at most 100 diagnostics. An authorized result whose `bindingDigest` differs
+from the digest of the binding the kernel asked about is returned as a closed
+`invalid` decision carrying `publication.binding_mismatch`; no handle is
+minted. Accepted material is copied, frozen, branded, and bound through a
+private weak association to a distinct per-instance runtime token. The
+registration digest is the protocol digest of exactly
+`{ id, version, configurationDigest }` and contributes to the loop registry
+revision; a structurally similar object not created by the factory is refused
+at construction; `publish` accepts an authorization only from the exact port
+instance configured on that loop; handles are process-local and must be
+re-verified after restart.
 
 ### Publication destination
 
@@ -3496,6 +3586,40 @@ export interface DestinationRegistration {
 ```
 
 The host, not adapter code, registers immutable effect class, risk floor, permitted targets, authority and content policy. The engine computes effective risk by monotonic maximum. `prepare` is side-effect-free. Adapters parse any external `unknown` internally and return standardized effects and receipts; their conformance suite verifies those claims. The core canonicalizes prepared effects and binds authorization before `applyEffect`. A receipt proves destination, target, payload digest, base and final version, effect ID and idempotency key.
+
+`LearningLoopConfig.destinations` is parsed and snapshotted once at
+construction (decision 0024). Each registration requires an adapter object
+with a bounded control-free `id` and `prepare`/`applyEffect` functions, a
+closed `effectClass`, a closed `riskFloor`, between one and 100 unique
+control-free `permittedTargetPatterns` of at most 200 characters, an
+`authorizationRuleId`, and a `contentPolicyId` naming a configured content
+policy; duplicate destination ids are refused, every registration failure is
+`config.invalid`, and an `authority` destination must declare the `T3` floor.
+The registration digest is the protocol digest of exactly
+`{ destinationId, effectClass, riskFloor, permittedTargetPatterns,
+authorizationRuleId, contentPolicyId }` under `destination-registration:v1`;
+adapter behavior is excluded. When `destinations` is present, the loop registry
+revision gains the sorted `{ id, registrationDigest }` list; omission preserves
+prior bytes. Later mutation of the caller's registration object cannot change
+the loop. In a target pattern `*` matches a run of characters other than `/`
+and every other character is literal; there is no `**`, `?`, or character
+class, and matching is bounded so a hostile pattern cannot trigger
+backtracking blow-up.
+
+Effective risk is `max(proposedRisk, riskFloor)` of the registered destination
+the candidate's intervention names, at every policy decision — review
+independence, governance, proposal, and candidate views included; an
+unregistered destination contributes no floor. During preparation the core
+calls `prepare` exactly once with the candidate and the requested base, parses
+the returned effects from `unknown` (recomputing every payload digest, refusing
+zero, duplicate, or more than 100 effects), requires every target to match a
+registered pattern, requires any echoed `expectedBase` to equal the requested
+base, applies the after-effect matrix — a `context` destination must provide
+`disable` or `rollback` for every effect, while `proposal`, `external`, and
+`authority` destinations may additionally declare `compensate` or
+`irreversible` with a rationale — and admits every payload through the
+destination's content policy, which must return the payload unchanged and
+without error diagnostics. The default root package ships no destination.
 
 Rollback is intentionally absent from the direct port. Disable, rollback and compensation are new bound plans executed through the same `applyEffect`, policy, authority and journal path.
 
@@ -4093,7 +4217,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, detector implementations and detector-orchestration policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, exact detector capability metadata/callbacks, and orchestration-policy content; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. A configured detector-orchestration policy contributes exact `{ policyDigest }`. Omitting any optional dimension preserves its prior registry bytes.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, detector implementations and detector-orchestration policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, exact detector capability metadata/callbacks, and orchestration-policy content; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. A configured detector-orchestration policy contributes exact `{ policyDigest }`. Configured destinations contribute their sorted exact `{ id, registrationDigest }` list and a configured authority port contributes its exact `{ id, version, configurationDigest, registrationDigest }` metadata (decision 0024). Omitting any optional dimension preserves its prior registry bytes.
 
 ```ts
 export interface LearningPolicy {
@@ -4114,6 +4238,7 @@ export interface LearningLoopConfig {
   readonly queryCursorScope?: string;
   readonly outcomeSources?: readonly RegisteredOutcomeSource<unknown>[];
   readonly destinations?: readonly DestinationRegistration[];
+  readonly authority?: AuthorityPort;
   readonly replayExecutors?: readonly ReplayExecutor[];
   readonly clock?: Clock;
   readonly ids?: IdGenerator;
@@ -4528,6 +4653,32 @@ export interface LearningLoop {
   report(input: LearningReportQuery): Promise<LearningReport>;
 }
 ```
+
+Decision 0024 implements `preparePublication` and the refusal half of
+`publish`; the journaled publisher is the open second half of issue #10.
+`preparePublication` accepts only `action: "publish"` until then, resolves the
+registered destination, loads the candidate (refusing schema-version-1
+records, a candidate whose intervention names another destination, and
+non-ready evidence or invalid derivation/admission lineage), derives the
+lineage, calls the adapter's `prepare` once, validates the effects as
+§Publication destination describes, and persists exactly one create-only,
+content-addressed plan. Repeated preparation returns the first persisted plan
+and writes nothing new; a governance state short of accepted review does not
+refuse preparation and is reported in `governance`. `publish` reloads the
+plan, compares the registry revision, policy, scope policy, destination
+registration digest, and candidate digest to the current loop (`blocked`,
+`publication.binding_mismatch`), requires `accepted` or `not_required` review
+with intact lineage (`blocked`, `policy.blocked`), requires a configured
+authority (`blocked`, `policy.authority_insufficient`), and only then consults
+the loop's exact authority port: `pending` is reported as `pending`; `denied`,
+`invalid`, and `expired` as `denied`, each tagged `authority.<status>` ahead of
+the host's diagnostics; a verified authorization whose `bindingDigest` differs
+from the current binding or whose `expiresAt` is not later than the loop clock
+is `denied`. No refusal path writes to a destination or to the store. In this
+slice a fully authorized plan returns `blocked` with `policy.blocked` at the
+activation-tier gate; `PublicationOutcome` is therefore the refusal subset
+`{ status: "pending" | "denied" | "blocked" | "failed", diagnostics }` and the
+publisher widens it additively with the completion variants above.
 
 `IngestReceipt.id` equals `IngestReceipt.importReceipt.id`; it is not a fresh
 attempt identifier. `sourceRevisions` and `pageReceiptIds` are the exact values
@@ -5114,6 +5265,14 @@ Initial error families should cover:
 - `review.not_independent` and `review.binding_mismatch`;
 - `policy.blocked`, `policy.authority_insufficient`, and `policy.risk_floor`;
 - `publication.base_mismatch`, `publication.binding_mismatch`, and `publication.receipt_mismatch`;
+- the preparation refusals `publication.plan_not_found`,
+  `publication.destination_unknown`, `publication.destination_mismatch`,
+  `publication.candidate_not_found`, `publication.candidate_legacy_unbound`,
+  `publication.candidate_invalid`, `publication.action_unavailable`,
+  `publication.effect_invalid`, `publication.target_not_permitted`,
+  `publication.after_effect_invalid`, and `publication.content_policy_refused`;
+- `authority.pending`, `authority.denied`, `authority.invalid`,
+  `authority.expired`, and `authority.unverified`;
 - `experiment.not_predeclared`, `experiment.fingerprint_drift`, `experiment.missing_arm`, `experiment.guardrail_regression`, and `experiment.contaminated`.
 
 Logs and diagnostics must never echo unredacted transcript content or authorization evidence.
@@ -5177,6 +5336,30 @@ The core suite should prove at least:
 - a proposer cannot provide the decisive review;
 - content mutation voids review and authorization bindings;
 - a pending, denied, expired, or wrong-base authorization produces no destination write;
+- publication plans and bindings change digest for every bound field, effect
+  field, effect order, and lineage member; plan ids are content-addressed;
+  payload digests, plan digests, and ids are recomputed on parse; schema-
+  version-1 candidates never become plans;
+- authority ports parse host results from `unknown`, return a closed `invalid`
+  decision for an approval of a different binding, mint frozen loop-bound
+  handles, refuse lookalikes and foreign-instance handles, and contribute
+  their registration to the loop registry revision;
+- destination registrations refuse malformed, duplicate, policy-orphaned, and
+  under-floored authority registrations; snapshot caller mutation; bind every
+  host-owned field but not adapter behavior into the registry revision; and
+  raise effective risk by monotonic maximum at review;
+- preparation calls `prepare` exactly once, never `applyEffect`; persists one
+  content-addressed plan idempotently across a ticking clock; binds the
+  requested base; and refuses unpermitted targets, base mismatches, forbidden
+  after-effects, unparseable effects, and content-policy refusals with zero
+  writes;
+- a derivation-backed candidate's plan binds the exact derivation, detector,
+  lens, and pack into its lineage closure;
+- every publish refusal — host pending/denied/invalid/expired, kernel-clock
+  expiry, wrong-base or stale approval, missing authority, missing or rejected
+  review, registry or registration drift, unregistered destination, unknown
+  plan — and the activation-tier gate perform zero destination and zero store
+  writes, and authority is consulted only after governance passes;
 - two concurrent creates cannot both win with different content;
 - a crash before or after each publication step resumes forward or no-ops exactly once;
 - publication, authorization, activation, and validation states remain distinct;
@@ -5390,6 +5573,9 @@ definition/schema properties and all bundle methods are members of those two
 symbols, not separate exports. The all-entrypoint snapshot is therefore 158;
 the root snapshot is unchanged. Decision 0023 extends the same two symbols
 with advisory-review methods and statics and keeps the snapshot at 158.
+Decision 0024 adds nineteen root names for the Activate records, the authority
+port factory, the destination port and registration types, and the
+preparation/publication outcome types; the all-entrypoint snapshot is 177.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 

@@ -157,7 +157,7 @@ async function outcomeFor(
   candidate: Candidate,
   extraReasons: readonly Diagnostic[],
 ): Promise<ProposeOutcome> {
-  const requiresIndependentReview = context.policyRules.risks[effectiveRisk(candidate)].independentReview;
+  const requiresIndependentReview = context.policyRules.risks[effectiveRisk(context, candidate)].independentReview;
   const state = await candidateGovernanceStateOf(context, candidate, requiresIndependentReview);
   const governance =
     extraReasons.length === 0

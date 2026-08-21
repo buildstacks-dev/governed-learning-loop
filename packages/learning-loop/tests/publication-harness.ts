@@ -1,7 +1,8 @@
-// Shared fixtures for the Activate records/authority/destination tests
-// (decision 0025). Not a test file. Builds a loop with one inert spy
-// destination and one scripted authority port on top of the engine harness
-// evidence, and exposes store snapshots so tests can prove "no write".
+// Shared fixtures for the Activate tests (decisions 0025 and 0026). Not a
+// test file. Builds a loop with one spy destination (scripted `prepare`,
+// `applyEffect` delegated to an inert in-memory destination unless scripted)
+// and one scripted authority port on top of the engine harness evidence, and
+// exposes store snapshots so tests can prove "no write".
 import type {
   AuthorityPort,
   AuthorizationBinding,
@@ -13,6 +14,8 @@ import type {
   LearningStore,
   PreparedEffect,
   PublicationDestination,
+  PublicationOutcome,
+  PublicationReceipt,
   RegisteredSource,
   VerifiedPrincipal,
 } from "../src/index.js";
@@ -25,10 +28,11 @@ import {
   scopeDigest,
   sha256HexOfCanonicalJson,
 } from "../src/index.js";
-import type { FixedClock, ManualEvidenceInput } from "../src/testing/index.js";
+import type { FixedClock, InMemoryDestination, ManualEvidenceInput } from "../src/testing/index.js";
 import {
   createExactScopePolicy,
   createFixedClock,
+  createInMemoryDestination,
   createInMemoryStore,
   createManualEvidenceSource,
   createSequentialIds,
@@ -48,38 +52,52 @@ export interface DestinationSpy {
   readonly adapter: PublicationDestination;
   readonly calls: { prepare: number; applyEffect: number };
   readonly prepareInputs: unknown[];
+  readonly applyInputs: { readonly effect: PreparedEffect; readonly idempotencyKey: string }[];
+  /** The inert in-memory destination that backs `applyEffect` unless it was scripted. */
+  readonly memory: InMemoryDestination;
 }
 
 /** A well-formed context effect derived from the candidate's intervention content. */
 export function effectFor(candidate: Candidate, overrides: Partial<PreparedEffect> = {}): PreparedEffect {
   const payload = overrides.payload ?? candidate.intervention.content;
+  const id = overrides.id ?? "effect-1";
+  const target = overrides.target ?? `${DESTINATION_ID}/CLAUDE.md`;
   const base: PreparedEffect = {
-    id: "effect-1",
+    id,
     kind: "instruction.write",
-    target: `${DESTINATION_ID}/CLAUDE.md`,
+    target,
     payload,
     payloadDigest: sha256HexOfCanonicalJson(payload),
-    afterEffect: { kind: "disable", payload: { disable: "effect-1" } },
+    // The in-memory destination executes this declared payload on disable.
+    afterEffect: { kind: "disable", payload: { disables: { target, effectId: id } } },
   };
   return { ...base, ...overrides };
 }
 
 /**
- * Inert destination: `prepare` answers from a script (default: one effect
- * echoing the requested base) and `applyEffect` must never be reached in
- * this slice — it counts the call and rejects.
+ * Spy destination: `prepare` answers from a script (default: one effect
+ * echoing the requested base, with no base when none was requested) and
+ * `applyEffect` counts the call, records its input, and delegates to an inert
+ * in-memory destination unless `applyEffect` is scripted. Refusal tests
+ * assert the count stays zero.
  */
 export function inertDestination(
   options: {
     readonly id?: string;
     readonly prepare?: (input: { readonly candidate: Candidate; readonly expectedBase?: string }) => unknown;
+    readonly applyEffect?: (input: { readonly effect: PreparedEffect; readonly idempotencyKey: string }) => unknown;
+    readonly clock?: FixedClock;
   } = {},
 ): DestinationSpy {
   const calls = { prepare: 0, applyEffect: 0 };
   const prepareInputs: unknown[] = [];
+  const applyInputs: { readonly effect: PreparedEffect; readonly idempotencyKey: string }[] = [];
   const script = options.prepare;
+  const applyScript = options.applyEffect;
+  const id = options.id ?? DESTINATION_ID;
+  const memory = createInMemoryDestination({ id, clock: options.clock ?? createFixedClock(NOW) });
   const adapter: PublicationDestination = {
-    id: options.id ?? DESTINATION_ID,
+    id,
     prepare: (input) => {
       calls.prepare += 1;
       prepareInputs.push(input);
@@ -91,12 +109,22 @@ export function inertDestination(
       // cast lives in test code only.
       return Promise.resolve(effects as readonly PreparedEffect[]);
     },
-    applyEffect: () => {
+    applyEffect: async (input) => {
       calls.applyEffect += 1;
-      return Promise.reject(new Error("applyEffect must never be called by the records/authority slice"));
+      applyInputs.push(input);
+      if (applyScript !== undefined) {
+        const receipt: unknown = await applyScript(input);
+        return receipt as PublicationReceipt;
+      }
+      // The spy accepts whatever base the test bound (the in-memory
+      // destination's own base discipline is exercised in its own tests) and
+      // echoes that base in the receipt, as the kernel requires.
+      const { expectedBase, ...unbased } = input.effect;
+      const receipt = await memory.applyEffect({ effect: unbased, idempotencyKey: input.idempotencyKey });
+      return expectedBase === undefined ? receipt : { ...receipt, expectedBase };
     },
   };
-  return { adapter, calls, prepareInputs };
+  return { adapter, calls, prepareInputs, applyInputs, memory };
 }
 
 export function registrationFor(
@@ -256,6 +284,7 @@ export async function createPublicationHarness(options: PublicationHarnessOption
   });
   await learning.ingest(manual, journeyEvidence());
   const scopeNamespace = `learning-candidate-scope-${scopeDigest(SCOPE)}`;
+  const interventionNamespace = `learning-intervention-scope-${scopeDigest(SCOPE)}`;
   return {
     store,
     learning,
@@ -279,7 +308,7 @@ export async function createPublicationHarness(options: PublicationHarnessOption
     },
     storeSnapshot: async () => {
       const listing: unknown[] = [];
-      for (const namespace of ["learning", scopeNamespace]) {
+      for (const namespace of ["learning", scopeNamespace, interventionNamespace]) {
         const page = await store.list({ namespace, limit: 10_000 });
         for (const record of page.records) listing.push([record.key.kind, record.key.id, record.digest]);
       }
@@ -289,3 +318,91 @@ export async function createPublicationHarness(options: PublicationHarnessOption
 }
 
 export { CONTENT_POLICY_ID, SCOPE, candidateInput, reviewerFor };
+
+export interface StoreFault {
+  readonly operation: "create" | "append";
+  /** Record kind of the write to fault (`key.kind`), in any namespace. */
+  readonly kind: string;
+  /** 1-based occurrence of that write after arming; default the first. */
+  readonly occurrence?: number;
+  /** `before` throws instead of writing; `after` writes and then throws (a lost acknowledgement). */
+  readonly when: "before" | "after";
+}
+
+export interface FaultedStore {
+  readonly store: LearningStore;
+  readonly fired: () => boolean;
+  /** Starts counting occurrences; faults created with `armed: false` ignore writes until armed. */
+  readonly arm: () => void;
+}
+
+/** Wraps a store so exactly one write crashes, before or after it lands. */
+export function faultStore(
+  base: LearningStore,
+  fault: StoreFault,
+  options: { readonly armed?: boolean } = {},
+): FaultedStore {
+  let armed = options.armed ?? true;
+  let seen = 0;
+  let fired = false;
+  const target = fault.occurrence ?? 1;
+  async function guard<T>(operation: StoreFault["operation"], kind: string, run: () => Promise<T>): Promise<T> {
+    if (fired || !armed || operation !== fault.operation || kind !== fault.kind) return run();
+    seen += 1;
+    if (seen !== target) return run();
+    fired = true;
+    if (fault.when === "before") throw new Error(`injected crash before ${operation} ${kind} #${seen}`);
+    await run();
+    throw new Error(`injected crash after ${operation} ${kind} #${seen}`);
+  }
+  return {
+    store: {
+      get: (key) => base.get(key),
+      create: (key, value, digest, operationId) =>
+        guard("create", key.kind, () => base.create(key, value, digest, operationId)),
+      compareAndSet: (key, expectedRevision, value, digest, operationId) =>
+        base.compareAndSet(key, expectedRevision, value, digest, operationId),
+      append: (stream, expectedRevision, entries, operationId) =>
+        guard("append", stream.kind, () => base.append(stream, expectedRevision, entries, operationId)),
+      tombstone: (input) => base.tombstone(input),
+      list: (query) => base.list(query),
+    },
+    fired: () => fired,
+    arm: () => {
+      armed = true;
+    },
+  };
+}
+
+export const JOURNAL_KINDS = [
+  "publication-authorization",
+  "intervention",
+  "intervention-transition",
+  "publication-receipt",
+] as const;
+
+/** Sorted listing of every journal record (learning namespace kinds plus the scope membership index). */
+export async function journalSnapshot(store: LearningStore): Promise<string> {
+  const listing: string[] = [];
+  for (const kind of JOURNAL_KINDS) {
+    const page = await store.list({ namespace: "learning", kind, limit: 10_000 });
+    for (const record of page.records) listing.push(JSON.stringify([kind, record.key.id, record.digest]));
+  }
+  const scoped = await store.list({ namespace: `learning-intervention-scope-${scopeDigest(SCOPE)}`, limit: 10_000 });
+  for (const record of scoped.records) listing.push(JSON.stringify([record.key.kind, record.key.id, record.digest]));
+  return JSON.stringify(listing.sort());
+}
+
+/** Narrows a completion outcome or throws with the refusal diagnostics. */
+export function completed(
+  outcome: PublicationOutcome,
+): Extract<PublicationOutcome, { readonly intervention: unknown }> {
+  if ("intervention" in outcome) return outcome;
+  throw new Error(`publish returned ${outcome.status}: ${JSON.stringify(outcome.diagnostics)}`);
+}
+
+/** Narrows a refusal outcome or throws. */
+export function refused(outcome: PublicationOutcome): Extract<PublicationOutcome, { readonly diagnostics: unknown }> {
+  if ("diagnostics" in outcome) return outcome;
+  throw new Error(`publish returned ${outcome.status} instead of a refusal`);
+}

@@ -97,6 +97,16 @@ export const parseDigestAt: Parse<string> = (input, path) => {
   return digest;
 };
 
+/** Canonical RFC 3339 UTC timestamp with milliseconds, exactly as `Date#toISOString` renders it. */
+export const parseCanonicalTimestampAt: Parse<string> = (input, path) => {
+  const value = parseNonEmptyText(input, path);
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+    throw invalid("schema.invalid", "timestamp must be canonical RFC 3339 UTC with milliseconds", path);
+  }
+  return value;
+};
+
 export function parseNullable<T>(parse: Parse<T>): Parse<T | null> {
   return (input, path) => (input === null ? null : parse(input, path));
 }

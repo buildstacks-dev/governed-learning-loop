@@ -5,18 +5,21 @@
 // risk, every prepared effect, policy, and the semantic lineage closure; the
 // binding a host approves derives from the plan and carries one closure
 // digest. Changing content, destination, scope, base, risk, action, policy,
-// or lineage changes both digests. These records are inert: parsing or
-// holding one grants no authority, publication, activation, or validation.
+// or lineage changes both digests. A disable, rollback, or compensate plan
+// additionally binds the exact parent intervention it reverses (decision
+// 0026); a publish plan never carries one. These records are inert: parsing
+// or holding one grants no authority, publication, activation, or validation.
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
-import { invalid, parseJson, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
+import { invalid, parseJson, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Parse, ParsePath } from "../parse/toolkit.js";
 import type { RiskTier } from "./candidate.js";
 import type { DetectorRef, LensRef, PackRef } from "./semantic-shared.js";
 import {
   assertSortedUnique,
   parseBoundedArray,
+  parseCanonicalTimestampAt,
   parseDetectorRefAt,
   parseDigestAt,
   parseDurableId,
@@ -41,6 +44,7 @@ const BINDING_DIGEST_DOMAIN = "authorization-binding:v1";
 const LINEAGE_CLOSURE_DOMAIN = "publication-lineage-closure:v1";
 const PLAN_ID_PREFIX = "plan-";
 const INSIGHT_ID_PREFIX = "insight-";
+const IDEMPOTENCY_KEY_DOMAIN = "publication-effect-idempotency:v1";
 
 export type AfterEffectSemantics =
   | { readonly kind: "disable"; readonly payload: JsonValue }
@@ -64,7 +68,10 @@ export interface PreparedEffect {
  * identity, content policies, sources, semantic registry, destinations, and
  * authority), the exact host destination registration, and — for a
  * derivation-backed candidate — the exact derivation with its detector, lens,
- * and pack references. A manual candidate binds `derivation: null`.
+ * and pack references. A manual candidate binds `derivation: null`. A
+ * disable, rollback, or compensate plan binds `parentInterventionId`, the
+ * exact published intervention it reverses; a publish plan omits it, which
+ * keeps every publish-plan digest byte-stable.
  */
 export interface PublicationLineage {
   readonly scopeDigest: string;
@@ -78,6 +85,7 @@ export interface PublicationLineage {
     readonly lens: LensRef;
     readonly pack: PackRef | null;
   } | null;
+  readonly parentInterventionId?: string;
 }
 
 export interface PublicationPlan {
@@ -118,15 +126,6 @@ export interface PublicationReceipt {
   readonly idempotencyKey: string;
   readonly appliedAt: string;
 }
-
-const parseTimestampAt: Parse<string> = (input, path) => {
-  const value = parseNonEmptyText(input, path);
-  const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
-    throw invalid("schema.invalid", "timestamp must be canonical RFC 3339 UTC with milliseconds", path);
-  }
-  return value;
-};
 
 const parseAfterEffectAt: Parse<AfterEffectSemantics> = (input, path) => {
   const fields = readFields(input, path);
@@ -187,12 +186,14 @@ const parseLineageDerivationAt: Parse<NonNullable<PublicationLineage["derivation
 
 export const parsePublicationLineageAt: Parse<PublicationLineage> = (input, path) => {
   const fields = readFields(input, path);
+  const parentInterventionId = fields.opt("parentInterventionId", parseDurableId);
   return {
     scopeDigest: fields.req("scopeDigest", parseDigestAt),
     scopePolicyDigest: fields.req("scopePolicyDigest", parseDigestAt),
     registryRevision: fields.req("registryRevision", parseDigestAt),
     destinationRegistrationDigest: fields.req("destinationRegistrationDigest", parseDigestAt),
     derivation: fields.req("derivation", parseNullable(parseLineageDerivationAt)),
+    ...(parentInterventionId !== undefined ? { parentInterventionId } : {}),
   };
 };
 
@@ -224,6 +225,7 @@ function lineageContent(lineage: PublicationLineage): JsonValue {
             lens: lineage.derivation.lens,
             pack: lineage.derivation.pack,
           },
+    ...(lineage.parentInterventionId !== undefined ? { parentInterventionId: lineage.parentInterventionId } : {}),
   });
 }
 
@@ -315,6 +317,15 @@ export function parsePublicationPlan(input: unknown): PublicationPlan {
     lineage: fields.req("lineage", parsePublicationLineageAt),
     policyDigest: fields.req("policyDigest", parseDigestAt),
   };
+  if ((content.action === "publish") !== (content.lineage.parentInterventionId === undefined)) {
+    throw invalid(
+      "schema.invalid",
+      content.action === "publish"
+        ? "a publish plan cannot bind a parent intervention"
+        : `a ${content.action} plan must bind the parent intervention it reverses`,
+      ["lineage", "parentInterventionId"],
+    );
+  }
   const planDigest = fields.req("planDigest", parseDigestAt);
   const recomputed = publicationPlanDigest(content);
   if (planDigest !== recomputed) {
@@ -328,7 +339,7 @@ export function parsePublicationPlan(input: unknown): PublicationPlan {
   if (id !== publicationPlanIdFor(planDigest)) {
     throw invalid("schema.corrupt", "publication plan id does not match its content digest", ["id"]);
   }
-  const createdAt = fields.req("createdAt", parseTimestampAt);
+  const createdAt = fields.req("createdAt", parseCanonicalTimestampAt);
   return { schemaVersion, id, ...content, planDigest, createdAt };
 }
 
@@ -367,4 +378,69 @@ export function parseAuthorizationBinding(input: unknown): AuthorizationBinding 
     policyDigest: fields.req("policyDigest", parseDigestAt),
     lineageClosureDigest: fields.req("lineageClosureDigest", parseDigestAt),
   };
+}
+
+export const parsePublicationReceiptAt: Parse<PublicationReceipt> = (input, path) => {
+  const fields = readFields(input, path);
+  const destinationId = fields.req("destinationId", parseId);
+  const effectId = fields.req("effectId", parseId);
+  const target = fields.req("target", parseDurableId);
+  const expectedBase = fields.opt("expectedBase", parseId);
+  const finalVersion = fields.opt("finalVersion", parseId);
+  const payloadDigest = fields.req("payloadDigest", parseDigestAt);
+  const idempotencyKey = fields.req("idempotencyKey", parseDurableId);
+  const appliedAt = fields.req("appliedAt", parseCanonicalTimestampAt);
+  return {
+    destinationId,
+    effectId,
+    target,
+    ...(expectedBase !== undefined ? { expectedBase } : {}),
+    ...(finalVersion !== undefined ? { finalVersion } : {}),
+    payloadDigest,
+    idempotencyKey,
+    appliedAt,
+  };
+};
+
+/** Unknown-first parser for a destination receipt; the engine separately verifies it against the exact effect. */
+export function parsePublicationReceipt(input: unknown): PublicationReceipt {
+  return parsePublicationReceiptAt(input, []);
+}
+
+/**
+ * Kernel idempotency key for one effect of one exact plan. The key binds the
+ * plan digest (and therefore candidate, destination, base, risk, action,
+ * policy, and lineage) plus the effect id; a re-prepared plan yields new keys.
+ */
+export function publicationEffectIdempotencyKey(planDigest: string, effectId: string): string {
+  return sha256HexOfCanonicalJson({ domain: IDEMPOTENCY_KEY_DOMAIN, planDigest, effectId });
+}
+
+/** Diagnostics proving a parsed receipt does not bind the exact effect the kernel applied. */
+export function publicationReceiptMismatchReasons(
+  receipt: PublicationReceipt,
+  expected: {
+    readonly destinationId: string;
+    readonly effect: PreparedEffect;
+    readonly idempotencyKey: string;
+  },
+): readonly { readonly field: string; readonly message: string }[] {
+  const reasons: { readonly field: string; readonly message: string }[] = [];
+  if (receipt.destinationId !== expected.destinationId) {
+    reasons.push({ field: "destinationId", message: "receipt names another destination" });
+  }
+  if (receipt.effectId !== expected.effect.id)
+    reasons.push({ field: "effectId", message: "receipt names another effect" });
+  if (receipt.target !== expected.effect.target)
+    reasons.push({ field: "target", message: "receipt names another target" });
+  if (receipt.payloadDigest !== expected.effect.payloadDigest) {
+    reasons.push({ field: "payloadDigest", message: "receipt proves another payload" });
+  }
+  if (receipt.idempotencyKey !== expected.idempotencyKey) {
+    reasons.push({ field: "idempotencyKey", message: "receipt carries another idempotency key" });
+  }
+  if (receipt.expectedBase !== expected.effect.expectedBase) {
+    reasons.push({ field: "expectedBase", message: "receipt proves another base than the effect bound" });
+  }
+  return reasons;
 }

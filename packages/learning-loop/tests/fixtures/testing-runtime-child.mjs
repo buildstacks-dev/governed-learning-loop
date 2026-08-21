@@ -3,9 +3,11 @@
 import assert from "node:assert/strict";
 import {
   createFixedClock,
+  createInMemoryDestination,
   createInMemoryStore,
   createSequentialIds,
   runLearningStoreConformance,
+  runPublicationDestinationConformance,
 } from "@cormidia/learning-loop/testing";
 
 assert.deepEqual(
@@ -29,6 +31,24 @@ runLearningStoreConformance(() => createInMemoryStore(), {
   },
 });
 
+const destinationTestNames = [];
+runPublicationDestinationConformance(() => createInMemoryDestination(), {
+  describe(name, suite) {
+    suiteNames.push(name);
+    suite();
+  },
+  it(name, test) {
+    assert.equal(typeof test, "function");
+    destinationTestNames.push(name);
+  },
+  expect() {
+    throw new Error("registration must not execute a conformance test body");
+  },
+});
+
+const destination = createInMemoryDestination({ id: "standalone-destination" });
+assert.equal(destination.read("standalone-destination/procedure").currentVersion, "v0");
+
 const store = createInMemoryStore();
 const created = await store.create(
   { namespace: "standalone", kind: "observation", id: "one" },
@@ -49,6 +69,7 @@ process.stdout.write(
     suiteNames,
     registeredTestCount: testNames.length,
     firstRegisteredTest: testNames[0],
+    destinationTestCount: destinationTestNames.length,
     firstTime,
     secondTime,
     ids: [ids.next("record"), ids.next("record")],

@@ -69,7 +69,11 @@ export type RecordKind =
   | "semantic-workflow-advisory-plan"
   | "semantic-workflow-advisory-completion"
   | "semantic-workflow-advisory-assessment"
-  | "publication-plan";
+  | "publication-plan"
+  | "publication-authorization"
+  | "publication-receipt"
+  | "intervention"
+  | "intervention-transition";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -207,6 +211,9 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
   if (kind === "candidate-recurrence-admission" && Array.isArray(value) && value.length > 5_000) {
     throw invalid("store.corrupt", "Candidate admission stream exceeds its ceiling", ["value"]);
   }
+  if (kind === "intervention-transition" && Array.isArray(value) && value.length > 1_000) {
+    throw invalid("store.corrupt", "intervention transition stream exceeds its ceiling", ["value"]);
+  }
   if (kind === "detector-recurrence-group") {
     if (!Array.isArray(value)) {
       throw invalid("store.corrupt", "detector recurrence group must be a stream-entry array", ["value"]);
@@ -230,7 +237,8 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
     kind === "detector-recurrence-group-candidate" ||
     kind === "candidate-review" ||
     kind === "candidate-recurrence-admission" ||
-    kind === "detector-recurrence-group"
+    kind === "detector-recurrence-group" ||
+    kind === "intervention-transition"
   ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
     return sha256HexOfCanonicalJson(entryIds);

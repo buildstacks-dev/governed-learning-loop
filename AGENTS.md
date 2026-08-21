@@ -176,33 +176,49 @@ between code and contract, open an issue — never silently drift either one.
   index or governance view, and grants no admission, publication, activation,
   validation, authority, utility, efficacy, or calibration claim. Reviewer
   calibration and every decisive or default-quality claim remain #26.
-- **Activate records are exact, inert, and refusal-first.** Decision 0025
-  ships the first half of #10: `PreparedEffect`, `PublicationLineage`,
-  `PublicationPlan`, `AuthorizationBinding`, and `VerifiedAuthorization`
-  records, `createAuthorityPort`, host `DestinationRegistration`,
-  `preparePublication`, and the refusal half of `publish`. A plan is
-  content-addressed (`plan-<planDigest>`) over candidate, destination, action,
-  effect class, effective risk, every effect, policy, and a lineage closure
-  (scope, scope policy, registry revision, destination registration, and the
-  exact derivation/detector/lens/pack for derivation-backed candidates); the
-  binding is a pure projection carrying one `lineageClosureDigest`. Changing
-  content, destination, scope, base, risk, action, policy, or lineage voids
-  the binding (kernel invariant 4). v1 candidates never become plans. The
-  authority port follows the identity-port discipline: kernel-minted,
-  registry-digested, frozen branded handles bound to the exact configured
-  instance, host results parsed from `unknown`, and an approval of a different
-  binding returned as a closed `invalid` decision. Destination registrations
-  are host-owned, parsed and snapshotted at construction, digested into the
-  registry revision, and an `authority` destination must declare the `T3`
-  floor; effective risk is `max(proposed, floor)` at every policy decision.
-  `preparePublication` calls `prepare` exactly once, validates targets, bases,
-  after-effects, and content policy, and persists exactly one plan
-  idempotently; `publish` refuses binding drift, missing review, missing
-  authority, and pending/denied/invalid/expired/wrong-base authorizations
-  before any write, and in this slice stops every authorized plan at the
-  activation-tier gate. Nothing writes to a destination; the journaled
-  publisher, receipts, intervention state, crash-resume, and
-  disable/rollback/compensate plans remain open on #10.
+- **Activate is journaled, idempotent, and refusal-first.** Decision 0025
+  ships the records and refusals: `PreparedEffect`, `PublicationLineage`,
+  `PublicationPlan`, `AuthorizationBinding`, `VerifiedAuthorization`,
+  `createAuthorityPort`, host `DestinationRegistration`, and
+  `preparePublication`. A plan is content-addressed (`plan-<planDigest>`)
+  over candidate, destination, action, effect class, effective risk, every
+  effect, policy, and a lineage closure (scope, scope policy, registry
+  revision, destination registration, the exact derivation/detector/lens/pack
+  for derivation-backed candidates, and — for reversal plans only — the exact
+  parent intervention); the binding is a pure projection carrying one
+  `lineageClosureDigest`. Changing content, destination, scope, base, risk,
+  action, policy, or lineage voids the binding (kernel invariant 4). v1
+  candidates never become plans. The authority port follows the identity-port
+  discipline; destination registrations are host-owned, snapshotted, digested
+  into the registry revision, and an `authority` destination must declare the
+  `T3` floor; effective risk is `max(proposed, floor)` at every policy
+  decision. `publish` (decision 0026) keeps every refusal check — binding
+  drift, superseded candidate, decisive review, configured authority,
+  pending/denied/invalid/expired/wrong-base/stale authorizations — before any
+  write, then consumes the verified authorization into a durable record and
+  runs a fixed-order journal: consumption, private intervention header, scope
+  membership, `authorize` edge, one journaled receipt per effect applied
+  under the kernel idempotency key `sha256({ planDigest, effectId })`, the
+  parent's reversal edge for reversal plans, and the `publish` edge last.
+  Every writer reloads first and forward-completes, so a crash before or
+  after any write resumes to the same bytes on a reconstructed host, a
+  journaled effect is never re-applied, a consumed plan never re-consults
+  authority, resume waits on the exact destination registration, and an
+  adapter failure or non-proving receipt is journaled as `failed` and stays
+  resumable. Outcomes are exact: `published`, `resumed`, `no_op`, or a
+  refusal. Disable, rollback, and compensate are new bound plans through the
+  same path — derived from the parent's journaled receipts and declared
+  after-effects with no second adapter call, needing authority but not a
+  fresh decisive review, transitioning the parent without rewriting its
+  history; there is no side door. Intervention state has four independent
+  dimensions and an append-only, content-addressed transition history under a
+  closed legal-transition table (135 edges, pinned): validation never leaves
+  `untested` here, and no edge mints revocation. `GovernanceView.publication`
+  is `eligible` only with decisive review, a registered destination, and a
+  configured authority — a policy statement, never a grant. `/testing` ships
+  the inert `createInMemoryDestination` and
+  `runPublicationDestinationConformance`; every destination adapter must
+  pass it. The only shipped destination is the in-memory one.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports

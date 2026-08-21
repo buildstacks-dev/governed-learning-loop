@@ -120,9 +120,17 @@ describe("derivation-backed publication lineage", () => {
       planId: plan.id,
       authorizationEvidence: { decision: "authorized", expiresAt: "2026-08-21T00:00:00.000Z" },
     });
-    expect(outcome.status).toBe("blocked");
-    expect(outcome.diagnostics[0]?.code).toBe("policy.blocked");
-    expect(destination.calls.applyEffect).toBe(0);
+    // The authorized branch now runs the journaled publisher (decision 0026):
+    // a proposal-class destination publishes an inert, inactive intervention.
+    expect(outcome.status).toBe("published");
+    if (outcome.status !== "published") throw new Error("expected a published outcome");
+    expect(outcome.intervention.state).toEqual({
+      publication: "published",
+      authorization: "authorized",
+      activation: "inactive",
+      validation: "untested",
+    });
+    expect(destination.calls.applyEffect).toBe(1);
     expect(
       JSON.stringify(
         (await harness.store.list({ namespace: "learning", limit: 10_000 })).records.map((record) => [
@@ -131,7 +139,7 @@ describe("derivation-backed publication lineage", () => {
           record.digest,
         ]),
       ),
-    ).toBe(snapshot);
+    ).not.toBe(snapshot);
     expect(authority.calls).toHaveLength(1);
   });
 });

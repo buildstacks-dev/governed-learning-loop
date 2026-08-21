@@ -63,9 +63,15 @@ root:parsePublicationPlan
 root:publicationPlanDigest
 root:authorizationBindingDigest
 root:parseAuthorizationBinding
+root:parsePublicationReceipt
 root:AuthorityPort
 root:VerifiedAuthorization
 root:createAuthorityPort
+root:InterventionRecord
+root:InterventionState
+root:InterventionTransition
+root:parseInterventionRecord
+root:parseInterventionTransition
 root:DestinationRegistration
 root:PublicationDestination
 root:PreparedPublication
@@ -177,3 +183,8 @@ testing:createTestIdentityPort
 testing:ManualEvidenceInput
 testing:createManualEvidenceSource
 testing:createStructuredContentPolicy
+testing:InMemoryDestination
+testing:InMemoryDestinationOptions
+testing:createInMemoryDestination
+testing:PublicationDestinationFactory
+testing:runPublicationDestinationConformance

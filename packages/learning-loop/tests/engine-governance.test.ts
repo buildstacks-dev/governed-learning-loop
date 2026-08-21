@@ -1,7 +1,8 @@
-// GovernanceView fold, tested as a pure function. The standing invariants of
-// the Observe+Govern milestone: publication is NEVER eligible and validation
-// is always "untested" — authorized ≠ validated, missing measurement is never
-// a pass.
+// GovernanceView fold, tested as a pure function. Publication is eligible
+// only with decisive review, a registered destination, and a configured
+// authority — and eligibility is never an authorization; validation is
+// always "untested" here — authorized ≠ validated, missing measurement is
+// never a pass.
 import { describe, expect, it } from "vitest";
 import type { CandidateReview, ReviewDisposition, ReviewFinding } from "../src/index.js";
 import { computeGovernanceView } from "../src/engine/governance.js";
@@ -29,8 +30,15 @@ function review(
   };
 }
 
-function view(reviews: readonly CandidateReview[], requiresIndependentReview = true) {
-  return computeGovernanceView({ candidateDigest: CURRENT_DIGEST, requiresIndependentReview, reviews });
+function view(
+  reviews: readonly CandidateReview[],
+  requiresIndependentReview = true,
+  loop: { readonly destinationRegistered: boolean; readonly authorityConfigured: boolean } = {
+    destinationRegistered: true,
+    authorityConfigured: true,
+  },
+) {
+  return computeGovernanceView({ candidateDigest: CURRENT_DIGEST, requiresIndependentReview, reviews, ...loop });
 }
 
 describe("computeGovernanceView", () => {
@@ -73,21 +81,39 @@ describe("computeGovernanceView", () => {
     expect(view([], false).review).toBe("not_required");
   });
 
-  it("NEVER reports publication eligible in this milestone, whatever the review state", () => {
-    const states = [
+  it("reports publication eligible only with decisive review, a registered destination, and a configured authority", () => {
+    for (const governance of [view([review("rev-1", "accept")]), view([], false)]) {
+      expect(governance.publication).toBe("eligible");
+      expect(governance.validation).toBe("untested");
+      expect(governance.reasons.some((reason) => reason.code === "policy.blocked")).toBe(false);
+    }
+    for (const governance of [
       view([]),
-      view([review("rev-1", "accept")]),
       view([review("rev-1", "reject")]),
       view([review("rev-1", "revise")]),
       view([review("rev-1", "escalate")]),
-      view([], false),
-    ];
-    for (const governance of states) {
+    ]) {
       expect(governance.publication).toBe("blocked");
       expect(governance.validation).toBe("untested");
       expect(governance.reasons.some((reason) => reason.code === "policy.blocked" && reason.severity === "error")).toBe(
         true,
       );
     }
+    const unregistered = view([review("rev-1", "accept")], true, {
+      destinationRegistered: false,
+      authorityConfigured: true,
+    });
+    expect(unregistered.publication).toBe("blocked");
+    expect(unregistered.reasons.map((reason) => reason.code)).toEqual(["publication.destination_unknown"]);
+    const unauthorized = view([review("rev-1", "accept")], true, {
+      destinationRegistered: true,
+      authorityConfigured: false,
+    });
+    expect(unauthorized.publication).toBe("blocked");
+    expect(unauthorized.reasons.map((reason) => reason.code)).toEqual(["policy.authority_insufficient"]);
+  });
+
+  it("validation never leaves untested through governance: eligibility is not a measured improvement", () => {
+    expect(view([review("rev-1", "accept")]).validation).toBe("untested");
   });
 });

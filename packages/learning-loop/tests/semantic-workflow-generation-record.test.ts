@@ -257,8 +257,8 @@ describe("semantic workflow execution binding", () => {
     expect(parsed).toEqual(binding);
     expect(JSON.stringify(parsed)).not.toContain("drop-me");
     expectDeepFrozen(parsed);
-    expect(binding.workflowExecutionKeyDigest).toBe("929de71028d644392c5683795468b52ea609fded3cc368d9d88b7fe98517c696");
-    expect(binding.workflowExecutionDigest).toBe("1ac556d4d81ae0debaa94ffbdc8fb003c412d2c51be73d33d50361f12f487f6f");
+    expect(binding.workflowExecutionKeyDigest).toBe("ce8af84d63c74108b680e9202ad449aad8a082c85a27377283dded23064daab9");
+    expect(binding.workflowExecutionDigest).toBe("3337ee900f402ff4f98aa0b91dbfb20c8e395e3a7a7b4bd78e01e259ec32b4df");
   });
 
   it("rejects malformed schema, ids, keys, full digests, execution refs, and derivation refs", async () => {
@@ -322,8 +322,8 @@ describe("semantic workflow execution binding", () => {
     expect(parseSemanticWorkflowCompletionIntent({ ...completion, unknown: true })).toEqual(completion);
     expectDeepFrozen(planLock);
     expectDeepFrozen(completion);
-    expect(planLock.lockDigest).toBe("05761755f5c15f0fb4db77052abd53ac0f5dce3f6df135a0c2f0834288c96717");
-    expect(completion.intentDigest).toBe("99a776dd71e9798f476f1ff46fb01f2bacc7bb31fce1019d1d51980c17d12e4c");
+    expect(planLock.lockDigest).toBe("621dc3721d0bfdcf393dcde1a06bbfc237862568e75fac9cbca0780da26a55af");
+    expect(completion.intentDigest).toBe("b575afc1480ea21516a77336903461173e04e6e7fc2576158d3081d8d32dd237");
     for (const value of [
       { ...planLock, id: "foreign-plan" },
       { ...planLock, lockDigest: digest("foreign-plan-lock") },
@@ -370,7 +370,7 @@ describe("semantic workflow execution binding", () => {
     });
     expect(parseSemanticWorkflowAttemptIndex({ ...attempt, unknown: "drop" })).toEqual(attempt);
     expectDeepFrozen(attempt);
-    expect(attempt.attemptDigest).toBe("0f4dcfe35112bd4885737eda64e9fbf2b508bd3ecfc61429c037470d84be2874");
+    expect(attempt.attemptDigest).toBe("77ecada83c6e56bc41fec98c6699ee81ec5731c8c8f212d0627905adb8ccb85b");
     for (const value of [
       { ...attempt, id: "foreign-attempt" },
       { ...attempt, attemptId: "foreign-attempt" },

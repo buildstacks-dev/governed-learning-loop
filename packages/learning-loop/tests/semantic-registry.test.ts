@@ -701,6 +701,6 @@ describe("SemanticRegistryConfig", () => {
     const source = manualSource();
     const learning = createLoop({ source, scopePolicy: createExactScopePolicy() });
     const receipt = await learning.ingest(source, { observations: [] });
-    expect(receipt.registryRevision).toBe("f161559521583dc678083415bcecab5decb3ac8a5d3f75abe4f5506fd306ac82");
+    expect(receipt.registryRevision).toBe("b6dc7dc1d6bd957a078e0b746a28f2aa7a51efa70c46d56295b9249b08d00b99");
   });
 });

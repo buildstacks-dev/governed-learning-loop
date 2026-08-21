@@ -26,9 +26,10 @@ describe("the TypeScript /testing entrypoint", () => {
       throw new Error(`standalone /testing import failed:\n${result.stderr}`);
     }
     expect(JSON.parse(result.stdout)).toEqual({
-      suiteNames: ["LearningStore conformance"],
+      suiteNames: ["LearningStore conformance", "PublicationDestination conformance"],
       registeredTestCount: 10,
       firstRegisteredTest: "create-only: same key + same digest is an idempotent exists_same",
+      destinationTestCount: 7,
       firstTime: "2026-08-20T00:00:00.000Z",
       secondTime: "2026-08-20T00:00:00.250Z",
       ids: ["standalone-record-1", "standalone-record-2"],

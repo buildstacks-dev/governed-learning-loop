@@ -1,9 +1,7 @@
-// Refusal conformance (contract §Conformance suites; decision 0025): a
-// pending, denied, invalid, expired, or wrong-base authorization produces no
-// destination write — and in this slice, no store write at all. The
-// authorized branch stops at the activation-tier gate with the same
-// guarantee; the journaled publisher (issue #10, second half) continues
-// from there.
+// Refusal conformance (contract §Conformance suites; decisions 0025 and
+// 0026): a pending, denied, invalid, expired, or wrong-base authorization
+// produces no destination write and no store write at all. Only the fully
+// authorized branch reaches the journaled publisher.
 import { describe, expect, it } from "vitest";
 import type { PublicationOutcome } from "../src/index.js";
 import { authorizationBindingDigest } from "../src/index.js";
@@ -37,7 +35,11 @@ async function expectNoWrite(context: Prepared): Promise<void> {
 }
 
 function codes(outcome: PublicationOutcome): readonly string[] {
-  return outcome.diagnostics.map((diagnostic) => diagnostic.code);
+  return messagesAndCodes(outcome).map((diagnostic) => diagnostic.code);
+}
+
+function messagesAndCodes(outcome: PublicationOutcome): readonly { readonly code: string; readonly message: string }[] {
+  return "diagnostics" in outcome ? outcome.diagnostics : [];
 }
 
 describe("publish refusal conformance: no destination write", () => {
@@ -70,15 +72,14 @@ describe("publish refusal conformance: no destination write", () => {
     await expectNoWrite(context);
   });
 
-  it("an authorization that never expires is accepted by the clock check and still writes nothing", async () => {
+  it("an authorization that never expires is accepted by the clock check and publishes", async () => {
     const context = await preparedHarness();
     const outcome = await context.harness.learning.publish({
       planId: context.plan.id,
       authorizationEvidence: { decision: "authorized", expiresAt: null },
     });
-    expect(outcome.status).toBe("blocked");
-    expect(codes(outcome)).toEqual(["policy.blocked"]);
-    await expectNoWrite(context);
+    expect(outcome.status).toBe("published");
+    expect(context.harness.destination.calls.applyEffect).toBe(1);
   });
 
   it("a wrong-base authorization (approval of a binding with another base) produces no destination write", async () => {
@@ -113,17 +114,16 @@ describe("publish refusal conformance: no destination write", () => {
     expect(await context.harness.storeSnapshot()).toBe(snapshot);
   });
 
-  it("a fully authorized plan stops at the activation-tier gate with no destination or store write", async () => {
+  it("only a fully authorized plan reaches the destination, exactly once, after one authority call", async () => {
     const context = await preparedHarness();
     const outcome = await context.harness.learning.publish({
       planId: context.plan.id,
       authorizationEvidence: { decision: "authorized" },
     });
-    expect(outcome.status).toBe("blocked");
-    expect(codes(outcome)).toEqual(["policy.blocked"]);
-    expect(outcome.diagnostics[0]?.message).toMatch(/activation tier/);
-    await expectNoWrite(context);
+    expect(outcome.status).toBe("published");
+    expect(context.harness.destination.calls.applyEffect).toBe(1);
     expect(context.harness.authority?.calls).toHaveLength(1);
+    expect(await context.harness.storeSnapshot()).not.toBe(context.snapshot);
   });
 
   it("publish without a configured authority port is blocked before any destination call", async () => {
@@ -195,7 +195,7 @@ describe("publish refusal conformance: no destination write", () => {
     });
     expect(outcome.status).toBe("blocked");
     expect(codes(outcome)).toEqual(["publication.binding_mismatch", "publication.binding_mismatch"]);
-    expect(outcome.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect(messagesAndCodes(outcome).map((diagnostic) => diagnostic.message)).toEqual([
       expect.stringMatching(/registry revision/),
       expect.stringMatching(/registration changed/),
     ]);
@@ -213,7 +213,7 @@ describe("publish refusal conformance: no destination write", () => {
     });
     expect(outcome.status).toBe("blocked");
     expect(codes(outcome)).toContain("publication.binding_mismatch");
-    expect(outcome.diagnostics.some((diagnostic) => /not registered/.test(diagnostic.message))).toBe(true);
+    expect(messagesAndCodes(outcome).some((diagnostic) => /not registered/.test(diagnostic.message))).toBe(true);
     expect(without.authority?.calls).toHaveLength(0);
   });
 
@@ -236,15 +236,18 @@ describe("publish refusal conformance: no destination write", () => {
     await expectNoWrite(context);
   });
 
-  it("publication, authorization, and governance remain distinct in the candidate view after a refused publish", async () => {
+  it("governance eligibility, authorization, and validation remain distinct after a refused publish", async () => {
     const context = await preparedHarness();
-    await context.harness.learning.publish({
+    const outcome = await context.harness.learning.publish({
       planId: context.plan.id,
-      authorizationEvidence: { decision: "authorized" },
+      authorizationEvidence: { decision: "denied" },
     });
+    expect(outcome.status).toBe("denied");
     const view = await context.harness.learning.getCandidateView({ candidateId: context.candidate.id });
     expect(view?.governance.review).toBe("accepted");
-    expect(view?.governance.publication).toBe("blocked");
+    // Eligible means policy permits a plan; it is not an authorization and not a publication.
+    expect(view?.governance.publication).toBe("eligible");
     expect(view?.governance.validation).toBe("untested");
+    await expectNoWrite(context);
   });
 });

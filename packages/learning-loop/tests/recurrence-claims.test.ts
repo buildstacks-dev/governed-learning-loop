@@ -362,7 +362,7 @@ describe("derivation recurrence claims", () => {
       episodeIdentityDigests: [harness.episodeView.episodeIdentityDigest],
       distinctEpisodeCount: 1,
     });
-    expect(claims[0]?.claimDigest).toBe("1d535899d7915366f7e56128f991dc75ca8f4b74d2ce040a3abc2ea645bfb903");
+    expect(claims[0]?.claimDigest).toBe("56f5688b62a99ad74bac84c32461f7536cabcf65c526859984a46416ef9b2254");
     expect(await countKind(base, "derivation-recurrence-claim")).toBe(1);
     expect(await countKind(base, "derivation-recurrence")).toBe(1);
     expect(writes.indexOf("derivation-recurrence-claim")).toBeLessThan(writes.indexOf("detector-execution"));
@@ -759,7 +759,7 @@ describe("Candidate recurrence decisions and views", () => {
     if (claim?.status === "grouped") {
       expect(claim.proposalMemberSnapshotDigest).toBe(sha256HexOfCanonicalJson(toJsonValue(claim.proposalMembers)));
     }
-    expect(claim?.claimDigest).toBe("ae3f68b8b5495ef1bce51e36ca79810f2ca2115aa337d701097926dc8a10148f");
+    expect(claim?.claimDigest).toBe("0b037ef0db2dd8abe46488e4008b5779818cd3cc3847fe41012b17ea7ff7794d");
     const view = await harness.learning.getCandidateView({ candidateId: outcome.candidate.id });
     expect(view).toMatchObject({
       recurrenceLineage: {

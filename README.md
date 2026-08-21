@@ -21,13 +21,15 @@ here says a learned intervention has been shown to improve later agent work.
 | --- | --- | --- |
 | Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account plus bounded typed episode and evidence views |
 | Govern | Receipt-bound candidates, independent review, policy, rejection | Proposed lessons with exact evidence/episode lineage that stay **inert** until independently reviewed |
-| Activate *(in progress)* | Content-bound plans and bindings, loop-bound authority, host destination registrations; journaled publication and rollback pending | Exact plans whose approvals void on any content/destination/scope/base change and that refuse pending, denied, expired, or wrong-base authority before any write — nothing activates yet |
+| Activate | Content-bound plans and bindings, loop-bound authority, host destination registrations, a journaled idempotent publisher, and bound disable/rollback/compensate plans | Exact plans whose approvals void on any content/destination/scope/base change, refuse pending, denied, expired, or wrong-base authority before any write, and — once authorized — apply each effect exactly once with crash-resume, a durable authorization consumption, and an append-only intervention history whose `validation` stays `untested` |
 | Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
 
-Observe and Govern are implemented first. Activate's records, authority port,
-and destination registrations are merged (decision 0025) while its journaled
-publisher stays open; Validate is tracked in the issue backlog. Both are
-orthogonal capabilities, not implied by the first two.
+Observe and Govern are implemented first. Activate is complete on the package
+side (decisions 0025 and 0026): records, authority port, destination
+registrations, the journaled idempotent publisher, and reversal plans. Context
+resolution and exposure lineage (#11) and Validate (#12) are tracked in the
+issue backlog. Activate and Validate are orthogonal capabilities, not implied
+by Observe and Govern, and authorized ≠ validated, permanently.
 
 ## Package shape
 
@@ -35,7 +37,7 @@ orthogonal capabilities, not implied by the first two.
 @cormidia/learning-loop          (working name; final npm identity undecided)
 ├── .          domain records, unknown-first parsers, deterministic engine, ports
 ├── /node      local filesystem (JSON Lines) store adapters
-├── /testing   runtime-safe stores, deterministic fixtures, injected conformance suites
+├── /testing   runtime-safe stores, inert destination, deterministic fixtures, injected conformance suites
 ├── /reference-detectors  opt-in host-bound deterministic pack bundle
 ├── /workflows  provider-neutral semantic generation capability and audit views
 └── adapters/  transcript source adapters (Claude Code, Codex) — explicit input, policy-bound
@@ -57,7 +59,10 @@ runLearningStoreConformance(makeStore, { describe, expect, it });
 
 The required second argument replaces the former one-argument call. It keeps
 the deterministic stores, clocks, ids, and builders usable outside a test
-worker without adding a test-framework runtime dependency.
+worker without adding a test-framework runtime dependency. Destination
+adapters run `runPublicationDestinationConformance(makeDestination, { describe,
+expect, it })` the same way; `createInMemoryDestination()` is the inert
+reference implementation that passes it.
 
 ## Transcript privacy policy
 

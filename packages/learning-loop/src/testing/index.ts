@@ -13,3 +13,9 @@ export { createTestIdentityPort } from "./test-identity.js";
 export type { ManualEvidenceInput } from "./manual-evidence.js";
 export { createManualEvidenceSource } from "./manual-evidence.js";
 export { createStructuredContentPolicy } from "./structured-content.js";
+// Activate (decision 0026): an inert in-memory versioned destination and the
+// injected destination conformance suite every adapter must pass.
+export type { InMemoryDestination, InMemoryDestinationOptions } from "./in-memory-destination.js";
+export { createInMemoryDestination } from "./in-memory-destination.js";
+export type { PublicationDestinationFactory } from "./destination-conformance.js";
+export { runPublicationDestinationConformance } from "./destination-conformance.js";

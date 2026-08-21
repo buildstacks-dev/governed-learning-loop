@@ -85,7 +85,7 @@ describe("learning.preparePublication", () => {
     expect(prepared.authorizationBinding).toEqual(authorizationBindingForPlan(plan));
     expect(prepared.authorizationBinding.expectedBases).toEqual([BASE]);
     expect(prepared.governance.review).toBe("accepted");
-    expect(prepared.governance.publication).toBe("blocked");
+    expect(prepared.governance.publication).toBe("eligible");
 
     expect(harness.destination.calls).toEqual({ prepare: 1, applyEffect: 0 });
     expect(harness.destination.prepareInputs[0]).toEqual({ candidate, expectedBase: BASE });
@@ -270,8 +270,8 @@ describe("learning.preparePublication", () => {
       expect(harness.destination.calls.prepare).toBe(0);
     });
 
-    it("non-publish actions until the journaled publisher exists", () =>
-      refused("publication.action_unavailable", {
+    it("a reversal action for a candidate with no published intervention", () =>
+      refused("publication.intervention_not_found", {
         request: (candidate) => ({ candidateId: candidate.id, destinationId: DESTINATION_ID, action: "disable" }),
         prepareCalled: false,
       }));

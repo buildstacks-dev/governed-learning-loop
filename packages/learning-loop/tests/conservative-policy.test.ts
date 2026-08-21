@@ -15,7 +15,6 @@ const EXPECTED_RULES = {
     T2: { independentReview: true, independentDomain: true },
     T3: { independentReview: true, independentDomain: true },
   },
-  publication: { blockedPendingActivationTier: true },
 } as const;
 
 describe("conservativePolicy", () => {
@@ -42,7 +41,6 @@ describe("conservativePolicy", () => {
         T2: { independentReview: true, independentDomain: false },
         T3: { independentReview: true, independentDomain: true },
       },
-      publication: { blockedPendingActivationTier: true },
     };
     expect(learningPolicyDigest(policy.id, weakened)).not.toBe(policy.digest);
     const renamed: JsonValue = EXPECTED_RULES;
@@ -61,7 +59,6 @@ describe("conservativePolicy", () => {
           T2: { independentReview: true, independentDomain: true },
           T3: { independentReview: true, independentDomain: true },
         },
-        publication: { blockedPendingActivationTier: true },
       },
     };
     expect(() => extractPolicyRules(tampered)).toThrow(/digest does not bind/);

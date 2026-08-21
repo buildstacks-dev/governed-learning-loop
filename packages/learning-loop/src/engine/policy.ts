@@ -27,9 +27,6 @@ export interface PolicyRules {
     readonly T2: PolicyRiskRule;
     readonly T3: PolicyRiskRule;
   };
-  readonly publication: {
-    readonly blockedPendingActivationTier: boolean;
-  };
 }
 
 const parseRiskRuleAt: Parse<PolicyRiskRule> = (input, path) => {
@@ -50,18 +47,10 @@ const parseRisksAt: Parse<PolicyRules["risks"]> = (input, path) => {
   };
 };
 
-const parsePublicationAt: Parse<PolicyRules["publication"]> = (input, path) => {
-  const fields = readFields(input, path);
-  return {
-    blockedPendingActivationTier: fields.req("blockedPendingActivationTier", parseBool),
-  };
-};
-
 const parsePolicyRulesAt: Parse<PolicyRules> = (input, path) => {
   const fields = readFields(input, path);
   return {
     risks: fields.req("risks", parseRisksAt),
-    publication: fields.req("publication", parsePublicationAt),
   };
 };
 
@@ -71,7 +60,10 @@ export function learningPolicyDigest(id: string, rules: JsonValue): string {
 }
 
 // Rule data of the conservative default policy. Any change here changes the
-// canonical bytes and therefore the policy digest.
+// canonical bytes and therefore the policy digest. Decision 0026 retired the
+// `publication.blockedPendingActivationTier` placeholder of decisions
+// 0001–0025: publication is now governed by decisive review, a registered
+// destination, and loop-bound authority, never by a standing block.
 const CONSERVATIVE_RULES = {
   risks: {
     T0: { independentReview: true, independentDomain: false },
@@ -79,15 +71,14 @@ const CONSERVATIVE_RULES = {
     T2: { independentReview: true, independentDomain: true },
     T3: { independentReview: true, independentDomain: true },
   },
-  publication: { blockedPendingActivationTier: true },
 } as const;
 
 /**
  * Conservative default policy (contract §Policy model): every risk tier
  * requires an independent review; T2 and above additionally require a
- * reviewer from a distinct independence domain; publication stays blocked
- * pending the activation tier. The rule data is serialized to JsonValue and
- * bound into the digest, so a rule change is a policy-digest change.
+ * reviewer from a distinct independence domain. The rule data is serialized
+ * to JsonValue and bound into the digest, so a rule change is a policy-digest
+ * change.
  */
 export function conservativePolicy(): LearningPolicy {
   const id = "conservative-v1";

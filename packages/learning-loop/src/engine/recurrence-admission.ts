@@ -606,7 +606,9 @@ async function completeAdmissionReservation(
       terminalBefore.schemaVersion !== 2 ||
       recordDigest(toJsonValue(terminalBefore)) !== recordDigest(toJsonValue(reservation.candidate)) ||
       storedBinding === undefined ||
-      scopeMembership?.candidateDigest !== reservation.candidateDigest ||
+      // A terminal written before the scope index existed legitimately has no
+      // membership record; only a mismatched membership is corruption.
+      (scopeMembership !== undefined && scopeMembership.candidateDigest !== reservation.candidateDigest) ||
       recordDigest(toJsonValue(storedBinding)) !== recordDigest(toJsonValue(exactBinding))
     ) {
       throw invalid("store.corrupt", "terminal Candidate admission graph is mismatched", []);

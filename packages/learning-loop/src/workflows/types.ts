@@ -108,7 +108,7 @@ interface SemanticWorkflowTurnView {
           readonly derivationRef: {
             readonly id: string;
             readonly derivationDigest: string;
-            readonly derivationViewDigest: string;
+            readonly scopeDigest: string;
           } | null;
           readonly admission:
             | {

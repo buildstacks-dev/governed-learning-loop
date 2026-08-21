@@ -242,7 +242,11 @@ function defineWorkflow(
       version: rendererFields.req("version", parseSemVer),
       rendererDigest: rendererFields.req("rendererDigest", parseDigestAt),
     },
-    outputSchema: options.outputSchema,
+    outputSchema: {
+      id: options.outputSchema.id,
+      version: options.outputSchema.version,
+      schemaDigest: options.outputSchema.schemaDigest,
+    },
     toolPolicy,
     budgetPolicy,
     disclosurePolicy,

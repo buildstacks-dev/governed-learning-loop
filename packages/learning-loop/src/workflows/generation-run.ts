@@ -7,17 +7,12 @@ import { assertVerifiedPrincipal } from "../engine/identity.js";
 import { assembleSemanticWorkflowDetectorResult, parseDetectorResultDraft } from "../engine/detector-draft.js";
 import { persistSemanticWorkflowDetectorExecution } from "../engine/semantic-persistence.js";
 import { buildUnavailableExecutionRecurrenceBinding } from "../engine/detector-recurrence.js";
-import { parseDigestAt, parseDurableId, scopeDigest } from "../records/semantic-shared.js";
+import { parseDurableId, scopeDigest } from "../records/semantic-shared.js";
 import type { EngineContext } from "../engine/context.js";
 import { loadStoredRecord } from "../engine/context.js";
 import type { SemanticDisclosureAuthorization } from "./semantic-turn-intent.js";
 import { buildSemanticDisclosureAuthorization, parseSemanticTurnReservation } from "./semantic-turn-intent.js";
-import type {
-  SemanticDispatchMarker,
-  SemanticResultBinding,
-  SemanticTurnReceipt,
-  SemanticUsage,
-} from "./semantic-turn-outcome.js";
+import type { SemanticDispatchMarker, SemanticResultBinding, SemanticTurnReceipt } from "./semantic-turn-outcome.js";
 import {
   buildSemanticResultBinding,
   buildSemanticTurnReceipt,
@@ -44,36 +39,26 @@ import {
   loadRequiredGlobal,
   loadSemanticDefinitionTurn,
   persistSemanticDisclosureAuthorization,
-  persistSemanticResultBinding,
   persistSemanticTurnReservation,
-  persistSemanticTurnTerminal,
 } from "./semantic-turn-persistence.js";
 import type { SemanticWorkflowBundle } from "./types.js";
 import type { SemanticWorkflowDefinition } from "./workflow-definition.js";
 import { readSemanticWorkflowFields as readFields, snapshotSemanticWorkflowJson } from "./workflow-structure.js";
 import { GENERATION_RESULT_SCHEMA_ID, GENERATION_RESULT_SCHEMA_VERSION } from "./generation-schema.js";
-import type { CapabilityCallbacks, PreparedPlanBinding } from "./generation-internal.js";
+import type { PreparedPlanBinding } from "./generation-internal.js";
 import { authorizationCapabilities, bytesOf, preparedPlans } from "./generation-internal.js";
-
-function parseCanonicalTimestamp(input: unknown, path: readonly (string | number)[]): string {
-  if (typeof input !== "string") throw invalid("schema.invalid", "timestamp must be a string", path);
-  const milliseconds = Date.parse(input);
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== input) {
-    throw invalid("schema.invalid", "timestamp must be canonical RFC 3339 UTC with milliseconds", path);
-  }
-  return input;
-}
-
-function parseNonnegativeInteger(input: unknown, path: readonly (string | number)[]): number {
-  if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0) {
-    throw invalid("schema.invalid", "value must be a nonnegative safe integer", path);
-  }
-  return input;
-}
-
-function parseKeyedDigest(callback: CapabilityCallbacks["digest"], bytes: Uint8Array): string {
-  return parseDigestAt(callback(new Uint8Array(bytes)), ["keyedDigester", "result"]);
-}
+import type { ParsedProviderEnvelope } from "./run-shared.js";
+import {
+  authorizationFor,
+  buildKnownFailureResult,
+  commitNoncompletedTurn,
+  invokeProviderWithTimeout,
+  parseCanonicalTimestamp,
+  parseKeyedDigest,
+  parseProviderEnvelope,
+  usageExceedsBudget,
+  usageMeasurementInvalid,
+} from "./run-shared.js";
 
 function planFor(
   token: object,
@@ -141,157 +126,6 @@ export async function authorizeGeneration(
   return { authorization: handle, authorizedAt, expiresAt };
 }
 
-interface ParsedProviderEnvelope {
-  readonly status: "completed" | "provider_refused" | "provider_failed";
-  readonly providerReceiptId: string;
-  readonly providerReceiptDigest: string;
-  readonly usage: Extract<SemanticUsage, { readonly status: "reported" }> | null;
-  readonly result: unknown;
-}
-
-function parseReportedUsage(input: unknown): Extract<SemanticUsage, { readonly status: "reported" }> {
-  const fields = readFields(input, ["providerResponse", "usage"]);
-  const status = fields.req("status", (value, path): "reported" => {
-    if (value !== "reported") throw invalid("schema.invalid", "provider usage status must be reported", path);
-    return value;
-  });
-  const costMinorUnits = fields.req("costMinorUnits", (value, path) =>
-    value === null ? null : parseNonnegativeInteger(value, path),
-  );
-  const currency = fields.req("currency", (value, path) => {
-    if (value === null) return null;
-    if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value)) {
-      throw invalid("schema.invalid", "provider usage currency must be null or an upper-case code", path);
-    }
-    return value;
-  });
-  if ((costMinorUnits === null) !== (currency === null)) {
-    throw invalid("schema.invalid", "provider usage cost and currency must be present together", []);
-  }
-  return {
-    status,
-    inputTokens: fields.req("inputTokens", parseNonnegativeInteger),
-    outputTokens: fields.req("outputTokens", parseNonnegativeInteger),
-    durationMs: fields.req("durationMs", parseNonnegativeInteger),
-    costMinorUnits,
-    currency,
-  };
-}
-
-function parseProviderEnvelope(input: unknown): ParsedProviderEnvelope {
-  const fields = readFields(input, ["providerResponse"]);
-  fields.schemaVersion1();
-  const id = fields.req("id", (value, path) => {
-    if (value !== GENERATION_RESULT_SCHEMA_ID) throw invalid("schema.invalid", "provider result id is invalid", path);
-    return value;
-  });
-  const version = fields.req("version", (value, path) => {
-    if (value !== GENERATION_RESULT_SCHEMA_VERSION) {
-      throw invalid("schema.invalid", "provider result version is invalid", path);
-    }
-    return value;
-  });
-  void id;
-  void version;
-  const status = fields.req("status", (value, path) => {
-    if (value !== "completed" && value !== "provider_refused" && value !== "provider_failed") {
-      throw invalid("schema.invalid", "provider response status is invalid", path);
-    }
-    return value;
-  });
-  const receiptFields = readFields(
-    fields.req("providerReceipt", (value) => value),
-    ["providerResponse", "providerReceipt"],
-  );
-  const usage = fields.req("usage", (value) => (value === null ? null : parseReportedUsage(value)));
-  const result = fields.req("result", (value) => value);
-  if ((status === "completed" && (usage === null || result === null)) || (status !== "completed" && result !== null)) {
-    throw invalid("schema.invalid", "provider response result does not match its status", []);
-  }
-  return {
-    status,
-    providerReceiptId: receiptFields.req("id", parseDurableId),
-    providerReceiptDigest: receiptFields.req("digest", parseDigestAt),
-    usage,
-    result,
-  };
-}
-
-function unreportedUsage(
-  status: Exclude<SemanticResultBinding["status"], "completed" | "outcome_unknown">,
-): SemanticUsage {
-  void status;
-  return { status: "unreported", reasonCode: "usage.not_reported" };
-}
-
-function buildKnownFailureResult(input: {
-  readonly plan: PreparedPlanBinding;
-  readonly dispatch: SemanticDispatchMarker;
-  readonly status: "provider_refused" | "provider_failed" | "result_invalid" | "result_limit";
-  readonly response: SemanticResultBinding["response"];
-  readonly usage?: Extract<SemanticUsage, { readonly status: "reported" }> | null;
-}): SemanticResultBinding {
-  return buildSemanticResultBinding({
-    turnKeyDigest: input.plan.reservation.turnKeyDigest,
-    reservationDigest: input.plan.reservation.reservationDigest,
-    dispatchDigest: input.dispatch.dispatchDigest,
-    status: input.status,
-    response: input.response,
-    usage: input.usage ?? unreportedUsage(input.status),
-    normalizedResult: null,
-    normalizedResultDigest: null,
-    reasonCodes: [`workflow.${input.status}`],
-  });
-}
-
-function usageExceedsBudget(
-  definition: SemanticWorkflowDefinition,
-  usage: Extract<SemanticUsage, { readonly status: "reported" }>,
-): boolean {
-  const maximumCost = definition.budgetPolicy.maximumCost;
-  return (
-    usage.inputTokens > definition.budgetPolicy.maximumInputTokens ||
-    usage.outputTokens > definition.budgetPolicy.maximumOutputTokens ||
-    usage.durationMs > definition.budgetPolicy.maximumDurationMs ||
-    (maximumCost !== null &&
-      usage.costMinorUnits !== null &&
-      usage.currency === maximumCost.currency &&
-      usage.costMinorUnits > maximumCost.minorUnits)
-  );
-}
-
-function usageMeasurementInvalid(
-  definition: SemanticWorkflowDefinition,
-  usage: Extract<SemanticUsage, { readonly status: "reported" }> | null,
-  completed: boolean,
-): boolean {
-  if (completed && usage === null) return true;
-  const maximumCost = definition.budgetPolicy.maximumCost;
-  return (
-    maximumCost !== null && usage !== null && (usage.costMinorUnits === null || usage.currency !== maximumCost.currency)
-  );
-}
-
-function authorizationFor(
-  token: object,
-  planHandle: object,
-  plan: PreparedPlanBinding,
-  input: unknown,
-): { readonly handle: object | null; readonly record: SemanticDisclosureAuthorization | null } {
-  if (plan.definition.transport === "local") {
-    if (input !== null) throw invalid("schema.invalid", "local generation cannot carry authorization", []);
-    return { handle: null, record: null };
-  }
-  if (typeof input !== "object" || input === null) {
-    throw invalid("semantic.workflow_authorization_invalid", "outbound generation requires authorization", []);
-  }
-  const binding = authorizationCapabilities.get(input);
-  if (binding === undefined || binding.token !== token || binding.plan !== planHandle) {
-    throw invalid("semantic.workflow_authorization_invalid", "authorization belongs to another prepared plan", []);
-  }
-  return { handle: input, record: binding.record };
-}
-
 function assertAttemptMatchesPreparedPlan(
   winningAttempt: Awaited<ReturnType<typeof loadSemanticWorkflowAttempt>>,
   plan: PreparedPlanBinding,
@@ -310,47 +144,21 @@ function assertAttemptMatchesPreparedPlan(
 
 type PersistedGeneration = Pick<PreparedPlanBinding, "context" | "definition" | "reservation">;
 
-async function commitNoncompletedTurn(input: {
+function commitNoncompletedGenerationTurn(input: {
   readonly plan: PersistedGeneration;
   readonly authorization: SemanticDisclosureAuthorization | null;
   readonly dispatch: SemanticDispatchMarker;
   readonly result: SemanticResultBinding;
 }): Promise<string> {
-  const { plan, authorization, dispatch, result } = input;
-  await persistSemanticResultBinding(plan.context, {
-    reservation: plan.reservation,
-    authorization,
-    dispatch,
-    result,
-  });
-  const turn = buildSemanticTurnReceipt({
-    turnKeyDigest: plan.reservation.turnKeyDigest,
-    reservation: { id: plan.reservation.id, reservationDigest: plan.reservation.reservationDigest },
-    authorization:
-      authorization === null ? null : { id: authorization.id, authorizationDigest: authorization.authorizationDigest },
-    dispatch: { id: dispatch.id, dispatchDigest: dispatch.dispatchDigest },
-    result: { id: result.id, bindingDigest: result.bindingDigest },
+  return commitNoncompletedTurn({
+    context: input.plan.context,
+    reservation: input.plan.reservation,
+    definitionDigest: input.plan.definition.definitionDigest,
     lane: "generation",
-    scopeDigest: plan.reservation.scopeDigest,
-    status: result.status,
-    output: { kind: "none", reasonCode: `workflow.${result.status}` },
+    authorization: input.authorization,
+    dispatch: input.dispatch,
+    result: input.result,
   });
-  const scopeIndex = buildSemanticTurnScopeIndex({
-    scopeDigest: plan.reservation.scopeDigest,
-    definitionDigest: plan.definition.definitionDigest,
-    turnId: turn.id,
-    turnKeyDigest: turn.turnKeyDigest,
-    turnDigest: turn.turnDigest,
-  });
-  await persistSemanticTurnTerminal(plan.context, {
-    reservation: plan.reservation,
-    authorization,
-    dispatch,
-    result,
-    scopeIndex,
-    turn,
-  });
-  return turn.id;
 }
 
 async function completeFromIntent(input: {
@@ -432,40 +240,6 @@ async function completeFromIntent(input: {
     execution: intent.execution,
     derivations: intent.derivations,
   };
-}
-
-async function invokeProviderWithTimeout(
-  callback: CapabilityCallbacks["invokeProvider"],
-  providerInput: Omit<Parameters<CapabilityCallbacks["invokeProvider"]>[0], "signal">,
-  maximumDurationMs: number,
-): Promise<{ readonly status: "resolved"; readonly value: unknown } | { readonly status: "unknown" }> {
-  const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  let returned: Promise<unknown>;
-  try {
-    returned = callback({ ...providerInput, signal: controller.signal });
-  } catch {
-    return { status: "unknown" };
-  }
-  const provider = Promise.resolve(returned).then(
-    (value) => {
-      const status: "resolved" = "resolved";
-      return { status, value };
-    },
-    () => {
-      const status: "unknown" = "unknown";
-      return { status };
-    },
-  );
-  const expired = new Promise<{ readonly status: "unknown" }>((resolve) => {
-    timeout = setTimeout(() => {
-      controller.abort();
-      resolve({ status: "unknown" });
-    }, maximumDurationMs);
-  });
-  const settled = await Promise.race([provider, expired]);
-  if (timeout !== undefined) clearTimeout(timeout);
-  return settled;
 }
 
 export async function recoverGeneration(
@@ -560,7 +334,7 @@ export async function recoverGeneration(
         callbackInvoked: false,
       });
     }
-    const turnId = await commitNoncompletedTurn({
+    const turnId = await commitNoncompletedGenerationTurn({
       plan: persisted,
       authorization: state.authorization,
       dispatch: state.dispatch,
@@ -617,7 +391,7 @@ export async function runGeneration(
   const authorization = authorizationFor(
     token,
     exact.handle,
-    plan,
+    plan.definition.transport,
     fields.req("authorization", (value) => value),
   ).record;
   const winningAttempt = await loadSemanticWorkflowAttempt(plan.context, {
@@ -685,7 +459,7 @@ export async function runGeneration(
     }
     const state = await classifySemanticGenerationTurnPersistence(plan.context, plan.reservation);
     if (state.status === "result_recorded") {
-      const turnId = await commitNoncompletedTurn({
+      const turnId = await commitNoncompletedGenerationTurn({
         plan,
         authorization,
         dispatch: state.dispatch,
@@ -766,12 +540,12 @@ export async function runGeneration(
         ? "result_limit"
         : "result_invalid";
     const result = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status,
       response: null,
     });
-    const turnId = await commitNoncompletedTurn({ plan, authorization, dispatch: claim.dispatch, result });
+    const turnId = await commitNoncompletedGenerationTurn({ plan, authorization, dispatch: claim.dispatch, result });
     return {
       status,
       persistence: "committed",
@@ -783,7 +557,10 @@ export async function runGeneration(
   const responseByteLength = Buffer.byteLength(responseText, "utf8");
   let envelope: ParsedProviderEnvelope | undefined;
   try {
-    envelope = parseProviderEnvelope(responseValue);
+    envelope = parseProviderEnvelope(responseValue, {
+      id: GENERATION_RESULT_SCHEMA_ID,
+      version: GENERATION_RESULT_SCHEMA_VERSION,
+    });
   } catch (error) {
     void error;
   }
@@ -804,13 +581,13 @@ export async function runGeneration(
   };
   if (responseByteLength > plan.definition.budgetPolicy.maximumResponseBytes) {
     const result = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: "result_limit",
       response,
       ...(envelope === undefined ? {} : { usage: envelope.usage }),
     });
-    const turnId = await commitNoncompletedTurn({ plan, authorization, dispatch: claim.dispatch, result });
+    const turnId = await commitNoncompletedGenerationTurn({ plan, authorization, dispatch: claim.dispatch, result });
     return {
       status: "result_limit",
       persistence: "committed",
@@ -821,12 +598,12 @@ export async function runGeneration(
   }
   if (envelope === undefined) {
     const result = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: "result_invalid",
       response,
     });
-    const turnId = await commitNoncompletedTurn({ plan, authorization, dispatch: claim.dispatch, result });
+    const turnId = await commitNoncompletedGenerationTurn({ plan, authorization, dispatch: claim.dispatch, result });
     return {
       status: "result_invalid",
       persistence: "committed",
@@ -837,12 +614,12 @@ export async function runGeneration(
   }
   if (usageMeasurementInvalid(plan.definition, envelope.usage, envelope.status === "completed")) {
     const invalidUsage = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: "result_invalid",
       response,
     });
-    const turnId = await commitNoncompletedTurn({
+    const turnId = await commitNoncompletedGenerationTurn({
       plan,
       authorization,
       dispatch: claim.dispatch,
@@ -858,13 +635,13 @@ export async function runGeneration(
   }
   if (envelope.usage !== null && usageExceedsBudget(plan.definition, envelope.usage)) {
     const limitedUsage = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: "result_limit",
       response,
       usage: envelope.usage,
     });
-    const turnId = await commitNoncompletedTurn({
+    const turnId = await commitNoncompletedGenerationTurn({
       plan,
       authorization,
       dispatch: claim.dispatch,
@@ -880,13 +657,13 @@ export async function runGeneration(
   }
   if (envelope.status !== "completed") {
     const result = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: envelope.status,
       response,
       usage: envelope.usage,
     });
-    const turnId = await commitNoncompletedTurn({ plan, authorization, dispatch: claim.dispatch, result });
+    const turnId = await commitNoncompletedGenerationTurn({ plan, authorization, dispatch: claim.dispatch, result });
     return {
       status: envelope.status,
       persistence: "committed",
@@ -903,13 +680,13 @@ export async function runGeneration(
   } catch (error) {
     void error;
     const result = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: "result_invalid",
       response,
       usage: envelope.usage,
     });
-    const turnId = await commitNoncompletedTurn({ plan, authorization, dispatch: claim.dispatch, result });
+    const turnId = await commitNoncompletedGenerationTurn({ plan, authorization, dispatch: claim.dispatch, result });
     return {
       status: "result_invalid",
       persistence: "committed",
@@ -942,13 +719,13 @@ export async function runGeneration(
   } catch (error) {
     void error;
     const invalidResult = buildKnownFailureResult({
-      plan,
+      reservation: plan.reservation,
       dispatch: claim.dispatch,
       status: "result_invalid",
       response,
       usage: envelope.usage,
     });
-    const turnId = await commitNoncompletedTurn({
+    const turnId = await commitNoncompletedGenerationTurn({
       plan,
       authorization,
       dispatch: claim.dispatch,

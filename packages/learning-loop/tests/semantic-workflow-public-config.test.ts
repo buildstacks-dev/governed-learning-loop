@@ -9,7 +9,12 @@ import { createGenerationHarness } from "./semantic-workflow-generation-harness.
 describe("@cormidia/learning-loop/workflows capability factory", () => {
   it("exports one runtime factory plus one type and returns a frozen exact-definition bundle", async () => {
     expect(Object.keys(workflowEntrypoint)).toEqual(["createSemanticWorkflowBundle"]);
-    expect(Object.keys(createSemanticWorkflowBundle).sort()).toEqual(["defineGeneration", "generationResultSchema"]);
+    expect(Object.keys(createSemanticWorkflowBundle).sort()).toEqual([
+      "advisoryReviewResultSchema",
+      "defineAdvisoryReview",
+      "defineGeneration",
+      "generationResultSchema",
+    ]);
     expect(createSemanticWorkflowBundle.generationResultSchema).toMatchObject({
       schemaVersion: 1,
       id: "cormidia.semantic-generation-result",
@@ -20,23 +25,46 @@ describe("@cormidia/learning-loop/workflows capability factory", () => {
     expect(createSemanticWorkflowBundle.generationResultSchema.schemaDigest).toBe(
       "e9275ce28d92bb7fff915466757d6eba6cac32840c08ec1dc5f455d85d682a1f",
     );
+    expect(createSemanticWorkflowBundle.advisoryReviewResultSchema).toMatchObject({
+      schemaVersion: 1,
+      id: "cormidia.semantic-advisory-review-result",
+      version: "1.0.0",
+      schemaDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    // A schema-byte change requires a public schema-version bump before this golden moves.
+    expect(createSemanticWorkflowBundle.advisoryReviewResultSchema.schemaDigest).toBe(
+      "e34155e3439b6520c7fd794b5672e661b7d1dcaa67a6bb48916e031d9b5746a4",
+    );
     expect(Object.isFrozen(createSemanticWorkflowBundle.generationResultSchema)).toBe(true);
+    expect(Object.isFrozen(createSemanticWorkflowBundle.advisoryReviewResultSchema)).toBe(true);
     const harness = await createGenerationHarness();
     const bundle: SemanticWorkflowBundle = harness.bundle;
     expect(bundle).toMatchObject({ schemaVersion: 1, definitionDigest: harness.definition.definitionDigest });
     expect(Object.isFrozen(bundle)).toBe(true);
     expect(Object.keys(bundle).sort()).toEqual(
       [
+        "authorizeAdvisoryReview",
         "authorizeGeneration",
         "definitionDigest",
         "getTurn",
+        "prepareAdvisoryReview",
         "prepareGeneration",
         "queryTurns",
+        "recoverAdvisoryReview",
         "recoverGeneration",
+        "runAdvisoryReview",
         "runGeneration",
         "schemaVersion",
       ].sort(),
     );
+    for (const method of [
+      () => bundle.prepareAdvisoryReview({ candidateId: "candidate", scope: harness.scope, expiresAt: "x" }),
+      () => bundle.authorizeAdvisoryReview({ plan: {}, evidence: null }),
+      () => bundle.runAdvisoryReview({ plan: {}, authorization: null }),
+      () => bundle.recoverAdvisoryReview({ attemptId: "attempt", scope: harness.scope }),
+    ]) {
+      await expect(method()).rejects.toMatchObject({ code: "semantic.workflow_lane_unavailable" });
+    }
   });
 
   it("pins definition identity to every provider, model, prompt, renderer, implementation, budget, and disclosure fingerprint", async () => {

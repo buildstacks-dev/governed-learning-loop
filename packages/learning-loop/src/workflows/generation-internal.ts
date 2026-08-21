@@ -1,9 +1,17 @@
 import { Buffer } from "node:buffer";
 import type { DetectorWindow } from "../engine/detector-window.js";
 import type { EngineContext } from "../engine/context.js";
+import type { JsonValue } from "../canonical/json.js";
+import type { Scope } from "../records/scope.js";
+import type { CandidateV2 } from "../records/candidate.js";
 import type { SemanticWorkflowDefinition } from "./workflow-definition.js";
 import type { SemanticTurnReservation, SemanticDisclosureAuthorization } from "./semantic-turn-intent.js";
 import type { SemanticWorkflowAttemptIndex, SemanticWorkflowExecutionPlanLock } from "./semantic-generation-record.js";
+import type {
+  AdvisoryAdmissionProjection,
+  SemanticAdvisoryAttemptIndex,
+  SemanticAdvisoryReviewPlanLock,
+} from "./advisory-review-record.js";
 import type { DetectorOrchestrationPolicy } from "../records/detector-orchestration-policy.js";
 import type { buildRegistrySnapshot } from "../engine/semantic-graph.js";
 import type { assembleAppliedDetectorResult } from "../engine/detector-draft.js";
@@ -76,7 +84,45 @@ export interface AuthorizationCapabilityBinding {
   readonly record: SemanticDisclosureAuthorization;
 }
 
+/** The exact kernel-materialized advisory subject handed to the renderer. */
+export interface SemanticAdvisoryReviewSubject {
+  readonly schemaVersion: 1;
+  readonly candidate: JsonValue;
+  readonly derivation: JsonValue | null;
+  readonly admission: AdvisoryAdmissionProjection;
+  readonly evidenceSetDigest: string;
+}
+
+export interface AdvisoryCapabilityCallbacks {
+  readonly render: (input: {
+    readonly subject: SemanticAdvisoryReviewSubject;
+    readonly definitionDigest: string;
+  }) => unknown;
+  readonly minimize: (input: { readonly rendered: unknown; readonly subjectSnapshotDigest: string }) => unknown;
+  readonly digest: CapabilityCallbacks["digest"];
+  readonly estimateInputTokens: CapabilityCallbacks["estimateInputTokens"];
+  readonly invokeProvider: CapabilityCallbacks["invokeProvider"];
+  readonly authorize?: CapabilityCallbacks["authorize"];
+}
+
+export interface AdvisoryPreparedPlanBinding {
+  readonly token: object;
+  readonly context: EngineContext;
+  readonly definition: SemanticWorkflowDefinition;
+  readonly callbacks: AdvisoryCapabilityCallbacks;
+  readonly scope: Scope;
+  readonly candidate: CandidateV2;
+  readonly subject: SemanticAdvisoryReviewSubject;
+  readonly subjectSnapshotDigest: string;
+  readonly admissionLineageDigest: string;
+  readonly reservation: SemanticTurnReservation;
+  readonly planLock: SemanticAdvisoryReviewPlanLock;
+  readonly attempt: SemanticAdvisoryAttemptIndex;
+  readonly requestText: string;
+}
+
 export const preparedPlans = new WeakMap<object, PreparedPlanBinding>();
+export const advisoryPreparedPlans = new WeakMap<object, AdvisoryPreparedPlanBinding>();
 export const authorizationCapabilities = new WeakMap<object, AuthorizationCapabilityBinding>();
 
 export function bytesOf(text: string): Uint8Array {

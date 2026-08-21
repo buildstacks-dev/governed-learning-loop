@@ -34,7 +34,14 @@ import {
 } from "./generation-schema.js";
 import { getTurn, queryTurns } from "./generation-query.js";
 import { authorizeGeneration, recoverGeneration, runGeneration } from "./generation-run.js";
-import type { CapabilityCallbacks, PreparedPlanBinding } from "./generation-internal.js";
+import {
+  authorizeAdvisoryReview,
+  prepareAdvisoryReview,
+  recoverAdvisoryReview,
+  revalidateAdvisoryPlan,
+  runAdvisoryReview,
+} from "./advisory-review-run.js";
+import type { AdvisoryCapabilityCallbacks, CapabilityCallbacks, PreparedPlanBinding } from "./generation-internal.js";
 import { bytesOf, preparedPlans } from "./generation-internal.js";
 import { parseSemanticWorkflowDefinition, SEMANTIC_WORKFLOW_MAX_DURATION_MS } from "./workflow-definition.js";
 import {
@@ -672,9 +679,7 @@ function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBund
     requireFunction(authorityCallback, ["disclosureAuthority", "authorize"]);
   }
 
-  const callbacks: CapabilityCallbacks = Object.freeze({
-    render: (value: Parameters<CapabilityCallbacks["render"]>[0]) => callSync(renderCallback, value),
-    minimize: (value: Parameters<CapabilityCallbacks["minimize"]>[0]) => callSync(minimizeCallback, value),
+  const sharedCallbacks = {
     digest: (value: Uint8Array) => callSync(digestCallback, value),
     estimateInputTokens: (value: Uint8Array) => callSync(estimateInputTokensCallback, value),
     invokeProvider: (value: Parameters<CapabilityCallbacks["invokeProvider"]>[0]) => callAsync(providerCallback, value),
@@ -684,6 +689,16 @@ function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBund
           authorize: (value: Parameters<NonNullable<CapabilityCallbacks["authorize"]>>[0]) =>
             callAsync(authorityCallback, value),
         }),
+  };
+  const callbacks: CapabilityCallbacks = Object.freeze({
+    render: (value: Parameters<CapabilityCallbacks["render"]>[0]) => callSync(renderCallback, value),
+    minimize: (value: Parameters<CapabilityCallbacks["minimize"]>[0]) => callSync(minimizeCallback, value),
+    ...sharedCallbacks,
+  });
+  const advisoryCallbacks: AdvisoryCapabilityCallbacks = Object.freeze({
+    render: (value: Parameters<AdvisoryCapabilityCallbacks["render"]>[0]) => callSync(renderCallback, value),
+    minimize: (value: Parameters<AdvisoryCapabilityCallbacks["minimize"]>[0]) => callSync(minimizeCallback, value),
+    ...sharedCallbacks,
   });
   const token = Object.freeze({});
   const bundle: SemanticWorkflowBundle = {
@@ -696,12 +711,18 @@ function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBund
       generation ? await runGeneration(token, value, revalidatePreparedPlan) : laneUnavailable(),
     recoverGeneration: async (value) =>
       generation ? await recoverGeneration(context, definition, value) : laneUnavailable(),
-    prepareAdvisoryReview: async () => laneUnavailable(),
-    authorizeAdvisoryReview: async () => laneUnavailable(),
-    runAdvisoryReview: async () => laneUnavailable(),
-    recoverAdvisoryReview: async () => laneUnavailable(),
-    getTurn: async (value) => await getTurn(context, definition.definitionDigest, value),
-    queryTurns: (value) => queryTurns(context, definition.definitionDigest, value),
+    prepareAdvisoryReview: async (value) =>
+      generation
+        ? laneUnavailable()
+        : await prepareAdvisoryReview(token, context, definition, advisoryCallbacks, value),
+    authorizeAdvisoryReview: async (value) =>
+      generation ? laneUnavailable() : await authorizeAdvisoryReview(token, value),
+    runAdvisoryReview: async (value) =>
+      generation ? laneUnavailable() : await runAdvisoryReview(token, value, revalidateAdvisoryPlan),
+    recoverAdvisoryReview: async (value) =>
+      generation ? laneUnavailable() : await recoverAdvisoryReview(context, definition, value),
+    getTurn: async (value) => await getTurn(context, definition, value),
+    queryTurns: (value) => queryTurns(context, definition, value),
   };
   return Object.freeze(bundle);
 }

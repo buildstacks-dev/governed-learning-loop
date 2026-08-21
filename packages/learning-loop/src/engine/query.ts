@@ -30,6 +30,7 @@ import {
   loadRecordValue,
   readRecordKindRevision,
 } from "./context.js";
+import { loadEpisodeExposureIds } from "./context-resolution.js";
 import { loadEpisodeIdentityState } from "./episode-identity.js";
 import { loadLatestEpisodeOutcomeClaim } from "./episode-outcome.js";
 import type { GovernanceView } from "./governance.js";
@@ -996,7 +997,9 @@ export async function* runEpisodeQuery(
         ]);
       }
       items.push({
-        episode: viewedOutcome.episode,
+        // Exposure sets are folded by the host episode id the identity resolved;
+        // the stored EpisodeRecord bytes keep their ingested `exposureIds`.
+        episode: { ...viewedOutcome.episode, exposureIds: await loadEpisodeExposureIds(context, identity.episodeId) },
         identity: {
           status: "resolved",
           sourceId: identity.sourceId,

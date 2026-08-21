@@ -374,13 +374,17 @@ export function reversalTarget(
   return { kind: "transition", to: { ...current, activation: "disabled" } };
 }
 
-interface ParentIntervention {
+/** An intervention whose header, transition stream, and plan all resolve with bound digests. */
+export interface BoundIntervention {
   readonly fold: InterventionFold;
   readonly record: InterventionRecord;
   readonly plan: PublicationPlan;
 }
 
-async function loadParent(context: EngineContext, interventionId: string): Promise<ParentIntervention | undefined> {
+export async function loadBoundIntervention(
+  context: EngineContext,
+  interventionId: string,
+): Promise<BoundIntervention | undefined> {
   const fold = await loadInterventionFold(context, interventionId);
   if (fold === undefined || fold.record === undefined) return undefined;
   const plan = await loadPlan(context, fold.header.planId);
@@ -390,7 +394,7 @@ async function loadParent(context: EngineContext, interventionId: string): Promi
   return { fold, record: fold.record, plan };
 }
 
-function parentMismatch(parent: ParentIntervention, candidate: Candidate, destinationId: string): string | undefined {
+function parentMismatch(parent: BoundIntervention, candidate: Candidate, destinationId: string): string | undefined {
   if (parent.fold.header.action !== "publish") return "names an intervention that is itself a reversal";
   if (parent.fold.header.candidateId !== candidate.id) return "belongs to another candidate";
   if (parent.fold.header.candidateDigest !== candidate.contentDigest) return "binds another candidate digest";
@@ -404,9 +408,9 @@ async function resolveParentIntervention(
   destinationId: string,
   action: ReversalAction,
   interventionId: string | undefined,
-): Promise<ParentIntervention> {
+): Promise<BoundIntervention> {
   if (interventionId !== undefined) {
-    const parent = await loadParent(context, interventionId);
+    const parent = await loadBoundIntervention(context, interventionId);
     if (parent === undefined) {
       throw refusal("publication.intervention_not_found", `intervention "${interventionId}" does not exist`);
     }
@@ -423,7 +427,7 @@ async function resolveParentIntervention(
     return parent;
   }
   const memberships = await listInterventionScopeMemberships(context, candidateScopeDigest(candidate.scope));
-  const qualifying: ParentIntervention[] = [];
+  const qualifying: BoundIntervention[] = [];
   for (const membership of memberships) {
     if (
       membership.action !== "publish" ||
@@ -432,7 +436,7 @@ async function resolveParentIntervention(
     ) {
       continue;
     }
-    const parent = await loadParent(context, membership.interventionId);
+    const parent = await loadBoundIntervention(context, membership.interventionId);
     if (parent === undefined) continue; // unborn header: an orphan remnant, not an intervention
     if (parentMismatch(parent, candidate, destinationId) !== undefined) continue;
     if (reversalTarget(action, parent.record.state).kind === "transition") qualifying.push(parent);
@@ -464,7 +468,7 @@ async function resolveParentIntervention(
 async function deriveReversalEffects(
   context: EngineContext,
   destination: BoundDestination,
-  parent: ParentIntervention,
+  parent: BoundIntervention,
   action: ReversalAction,
 ): Promise<readonly PreparedEffect[]> {
   const receipts = await loadFoldReceipts(context, parent.record, parent.plan);
@@ -690,7 +694,7 @@ async function parentReadiness(
   if (parentId === undefined || !isReversalAction(plan.action)) {
     throw invalid("store.corrupt", "a reversal plan must bind its parent intervention", ["lineage"]);
   }
-  const parent = await loadParent(context, parentId);
+  const parent = await loadBoundIntervention(context, parentId);
   if (parent === undefined) {
     return [diagnostic("publication.intervention_not_found", `parent intervention "${parentId}" does not exist`)];
   }
@@ -1023,7 +1027,7 @@ export async function runGetIntervention(
 ): Promise<InterventionRecord | undefined> {
   const fields = readFields(input, ["getIntervention"]);
   const interventionId = fields.req("interventionId", parseDurableId);
-  const parent = await loadParent(context, interventionId);
+  const parent = await loadBoundIntervention(context, interventionId);
   if (parent === undefined) return undefined;
   await loadFoldReceipts(context, parent.record, parent.plan);
   if (parent.record.authorizationIds.length > 0) {

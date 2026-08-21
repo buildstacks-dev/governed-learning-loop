@@ -3116,7 +3116,11 @@ export interface ExposureSetRecord {
   readonly fingerprintId: string;
   readonly evidenceIds: readonly string[];
   readonly exposedAt: string;
+  readonly exposureDigest: string;
 }
+
+export declare function parseResolvedContext(input: unknown): ResolvedContext;
+export declare function parseExposureSetRecord(input: unknown): ExposureSetRecord;
 ```
 
 An intervention may be published but inactive, authorized but untested, active but inconclusive, or disabled after regression. Pairwise-distinct fields make false claims harder than a convenient “approved” status. State history is append-only: the engine folds `InterventionTransition` records into the current view.
@@ -3148,6 +3152,42 @@ intervention's append-only transition stream, where `authorizationIds` cite
 the durable authorization consumption and `publicationReceiptIds` cite the
 journaled receipts of the intervention's own plan; `evaluationIds` stay empty
 until the Validate tier. `learning.getIntervention` is the pure exact read.
+
+Decision 0027 ships the read side of Activate. `resolveContext` reads only
+the scope membership index and the folded intervention journal of the exact
+scope and of every ancestor the configured scope policy permits (revalidated,
+isolation-preserving, ordered by policy precedence after the exact scope,
+then by journal birth); it serves an entry only for a `publish` intervention
+at a `context` destination whose state is published, authorized (or not
+required), and active, so a candidate, a plan, a pending authorization, a
+proposal-class publication, and every failed, disabled, or rolled-back
+intervention structurally never resolves. Two conditions refuse the whole
+resolution instead of dropping an entry: an active intervention whose
+candidate was superseded by the candidate of another active intervention in
+the same scope (`resolution.intervention_stale`), and a destination whose
+current registration digest or effect class differs from the one the plan
+bound (`resolution.destination_drift`); registry, policy, and scope-policy
+drift are bound into the receipt rather than refused. The budget is a
+precedence-ordered prefix over the canonical-JSON character cost of each
+entry's content, and every intervention the budget excluded is listed in
+`omittedInterventionIds`. The receipt is content-addressed
+(`resolution-<receiptDigest>` under `context-resolution:v1`, excluding only
+`schemaVersion`, `id`, `resolvedAt`, and the digest), create-only, and
+idempotent across a ticking clock; the caller query persists only as a
+domain-tagged digest. Each entry serves the exact `intervention.content`
+the plan's candidate digest covers and binds intervention, candidate, plan,
+destination, matched scope, and the intervention's transition head.
+`acknowledgeExposure` binds one set per receipt (`exposure-<receiptDigest>`)
+with exactly one entry per applied receipt entry, in receipt order; a subset
+or an empty application is a recorded exposure, a retry with the same
+content is idempotent, and a different second acknowledgement is
+`exposure.already_acknowledged`. Every evidence id must be a durable
+observation of the resolved episode carrying `observed` or `verified` trust;
+an experiment arm is refused until the Validate tier declares experiments.
+The set is appended to a private per-episode index before it is created, so
+a crash leaves at most an orphan index entry that readers ignore, and
+`EpisodeView.episode.exposureIds` folds the acknowledged sets of an episode
+whose identity resolved without rewriting the ingested record.
 
 ### Fingerprint and experiment
 
@@ -4497,16 +4537,30 @@ export interface ResolveContextInput {
 export interface ResolvedEntry {
   readonly id: string;
   readonly interventionId: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly planDigest: string;
+  readonly destinationId: string;
+  readonly scopeDigest: string;
+  readonly transitionId: string;
   readonly content: JsonValue;
   readonly contentDigest: string;
 }
 
 export interface ResolvedContext {
+  readonly schemaVersion: 1;
   readonly id: string;
   readonly episodeId: string;
-  readonly entries: readonly ResolvedEntry[];
+  readonly scope: Scope;
+  readonly scopeDigest: string;
+  readonly scopePolicyDigest: string;
   readonly registryRevision: string;
   readonly policyDigest: string;
+  readonly queryDigest: string;
+  readonly budget: ResolveContextInput["budget"];
+  readonly entries: readonly ResolvedEntry[];
+  readonly omittedInterventionIds: readonly string[];
+  readonly resolvedAt: string;
   readonly receiptDigest: string;
 }
 
@@ -4921,7 +4975,7 @@ await learning.acknowledgeExposure({
 });
 ```
 
-Only active, authorized, scope-matching entries resolve. The resolution receipt fixes exact content for the episode, so a mid-run publication cannot change treatment. Exposure acknowledgement requires host-observed evidence that the declared entries and fingerprint were actually applied; a free caller assertion is not efficacy evidence.
+Only active, authorized, scope-matching entries resolve. The resolution receipt fixes exact content for the episode, so a mid-run publication cannot change treatment. Exposure acknowledgement requires host-observed evidence that the declared entries and fingerprint were actually applied; a free caller assertion is not efficacy evidence. The evidence ids are durable observation ids of the resolved episode with `observed` or `verified` trust, `resolved.id` is the content-addressed receipt id, and the returned `ExposureSetRecord` carries one entry per applied intervention (decision 0027).
 
 ### Review and publish an exact intervention
 
@@ -5375,6 +5429,13 @@ Initial error families should cover:
   `publication.after_effect_invalid`, and `publication.content_policy_refused`;
 - `authority.pending`, `authority.denied`, `authority.invalid`,
   `authority.expired`, and `authority.unverified`;
+- the resolution refusals `resolution.destination_drift`,
+  `resolution.intervention_stale`, and `resolution.limit_exceeded`;
+- the exposure refusals `exposure.resolution_not_found`,
+  `exposure.entry_unknown`, `exposure.evidence_required`,
+  `exposure.evidence_not_found`, `exposure.evidence_untrusted`,
+  `exposure.evidence_mismatch`, `exposure.experiment_unavailable`,
+  `exposure.already_acknowledged`, and `exposure.limit_exceeded`;
 - `experiment.not_predeclared`, `experiment.fingerprint_drift`, `experiment.missing_arm`, `experiment.guardrail_regression`, and `experiment.contaminated`.
 
 Logs and diagnostics must never echo unredacted transcript content or authorization evidence.
@@ -5486,6 +5547,25 @@ The core suite should prove at least:
 - publication, authorization, activation, and validation states remain distinct;
 - governance eligibility is never an authorization: a denied publish leaves
   the candidate eligible and a successful one leaves validation untested;
+- candidate records never resolve into active context: a proposed, accepted,
+  planned, or pending-authority candidate, a proposal-class publication, a
+  non-context destination, and every failed, disabled, or rolled-back
+  intervention yield no resolved entry, and a candidate-shaped record planted
+  in the intervention scope index fails visibly;
+- a superseded version that is still active and a drifted or missing
+  destination registration refuse resolution visibly with zero writes, while
+  registry drift that leaves the registration intact resolves and is bound;
+- a resolution receipt is content-addressed and idempotent across a ticking
+  clock, freezes exact content against a mid-run publication, serves policy
+  ancestors after the exact scope without crossing an isolation boundary,
+  and applies its budget as a precedence-ordered prefix with every omission
+  listed;
+- one resolution yields one exposure set with exactly one entry per applied
+  intervention bound to the frozen content digest; a retry is idempotent, a
+  different second acknowledgement is refused, an unknown receipt or entry,
+  missing, advisory, or other-episode evidence, an empty evidence list, and
+  an experiment arm are refused with zero writes, and a crash before or after
+  the index append or the set create converges on retry;
 - every destination adapter passes `runPublicationDestinationConformance`;
 - a replay with identical control and treatment fingerprints is invalid;
 - missing arms, metrics, guardrails, or grader identity are invalid rather than neutral;
@@ -5704,7 +5784,10 @@ Decision 0026 adds six root names (the intervention state, record, and
 transition types with their parsers, and `parsePublicationReceipt`) and five
 `/testing` names (the in-memory destination and options, its factory, the
 destination factory type, and `runPublicationDestinationConformance`); the
-all-entrypoint snapshot is 188.
+all-entrypoint snapshot is 188. Decision 0027 adds eight root names (the
+resolution receipt and entry types with their parser, the exposure entry and
+set types with their parser, and the two façade input types); the
+all-entrypoint snapshot is 196.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 

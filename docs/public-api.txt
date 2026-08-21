@@ -72,6 +72,14 @@ root:InterventionState
 root:InterventionTransition
 root:parseInterventionRecord
 root:parseInterventionTransition
+root:ResolvedContext
+root:ResolvedEntry
+root:parseResolvedContext
+root:ExposureEntry
+root:ExposureSetRecord
+root:parseExposureSetRecord
+root:ExposureInput
+root:ResolveContextInput
 root:DestinationRegistration
 root:PublicationDestination
 root:PreparedPublication

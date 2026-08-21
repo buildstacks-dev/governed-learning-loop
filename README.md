@@ -21,15 +21,15 @@ here says a learned intervention has been shown to improve later agent work.
 | --- | --- | --- |
 | Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account plus bounded typed episode and evidence views |
 | Govern | Receipt-bound candidates, independent review, policy, rejection | Proposed lessons with exact evidence/episode lineage that stay **inert** until independently reviewed |
-| Activate | Content-bound plans and bindings, loop-bound authority, host destination registrations, a journaled idempotent publisher, and bound disable/rollback/compensate plans | Exact plans whose approvals void on any content/destination/scope/base change, refuse pending, denied, expired, or wrong-base authority before any write, and — once authorized — apply each effect exactly once with crash-resume, a durable authorization consumption, and an append-only intervention history whose `validation` stays `untested` |
+| Activate | Content-bound plans and bindings, loop-bound authority, host destination registrations, a journaled idempotent publisher, bound disable/rollback/compensate plans, receipt-frozen context resolution, and host-evidenced exposure sets | Exact plans whose approvals void on any content/destination/scope/base change, refuse pending, denied, expired, or wrong-base authority before any write, and — once authorized — apply each effect exactly once with crash-resume, a durable authorization consumption, and an append-only intervention history whose `validation` stays `untested`; a future episode resolves only active, authorized, scope-matching content into a content-addressed receipt, and one receipt yields one exposure set with exact intervention lineage |
 | Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
 
 Observe and Govern are implemented first. Activate is complete on the package
-side (decisions 0025 and 0026): records, authority port, destination
-registrations, the journaled idempotent publisher, and reversal plans. Context
-resolution and exposure lineage (#11) and Validate (#12) are tracked in the
-issue backlog. Activate and Validate are orthogonal capabilities, not implied
-by Observe and Govern, and authorized ≠ validated, permanently.
+side (decisions 0025, 0026, and 0027): records, authority port, destination
+registrations, the journaled idempotent publisher, reversal plans, context
+resolution, and exposure lineage. Validate (#12) is tracked in the issue
+backlog. Activate and Validate are orthogonal capabilities, not implied by
+Observe and Govern, and authorized ≠ validated, permanently.
 
 ## Package shape
 

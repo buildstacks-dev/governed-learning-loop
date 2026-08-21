@@ -17,6 +17,7 @@ import type {
   PublicationOutcome,
   PublicationReceipt,
   RegisteredSource,
+  ScopePolicy,
   VerifiedPrincipal,
 } from "../src/index.js";
 import {
@@ -238,6 +239,10 @@ export interface PublicationHarnessOptions {
   readonly omitDestinations?: boolean;
   /** Additional content policies a destination registration may name. */
   readonly extraContentPolicies?: readonly ContentPolicy[];
+  /** Replaces the exact scope policy (decision 0027 ancestor resolution tests). */
+  readonly scopePolicy?: ScopePolicy;
+  /** Additional registered sources beyond the manual evidence source. */
+  readonly extraSources?: readonly RegisteredSource<unknown>[];
 }
 
 export async function createPublicationHarness(options: PublicationHarnessOptions = {}): Promise<PublicationHarness> {
@@ -271,12 +276,12 @@ export async function createPublicationHarness(options: PublicationHarnessOption
     store,
     policy: conservativePolicy(),
     identity: identities,
-    scopePolicy: createExactScopePolicy(),
+    scopePolicy: options.scopePolicy ?? createExactScopePolicy(),
     contentPolicies: [
       createStructuredContentPolicy({ id: CONTENT_POLICY_ID }),
       ...(options.extraContentPolicies ?? []),
     ],
-    sources: [manual],
+    sources: [manual, ...(options.extraSources ?? [])],
     ...(options.omitDestinations === true ? {} : { destinations: registrations }),
     ...(authority === undefined ? {} : { authority: authority.port }),
     clock,

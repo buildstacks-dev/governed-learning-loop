@@ -219,6 +219,36 @@ between code and contract, open an issue — never silently drift either one.
   the inert `createInMemoryDestination` and
   `runPublicationDestinationConformance`; every destination adapter must
   pass it. The only shipped destination is the in-memory one.
+- **Context resolution is active-only, receipt-frozen, and budget-bounded;
+  exposure is host-evidenced.** Decision 0027 ships `resolveContext` and
+  `acknowledgeExposure`. Resolution reads only the decision-0026 scope
+  membership index and intervention fold for the exact scope and the
+  ancestors the scope policy permits (revalidated, isolation-preserving,
+  exact scope first, then policy precedence, then journal birth); it serves
+  a `publish` intervention at a `context` destination only while it is
+  published, authorized, and active, so a candidate, plan, pending
+  authorization, proposal-class publication, non-context destination, and
+  every failed, disabled, or rolled-back intervention structurally never
+  resolves (kernel invariant 1). A superseded candidate whose intervention
+  is still active beside its active successor refuses visibly
+  (`resolution.intervention_stale`), as does a destination whose
+  registration digest or effect class drifted from the plan
+  (`resolution.destination_drift`); registry, policy, and scope-policy drift
+  are bound into the receipt, not refused. The budget is a precedence-ordered
+  prefix over canonical-JSON character cost with every omission listed. The
+  receipt (`resolution-<receiptDigest>`) is content-addressed over everything
+  but its timestamp, create-only, and idempotent; the query persists only as
+  a digest; each entry serves the exact candidate `intervention.content` the
+  plan bound with intervention, candidate, plan, destination, matched-scope,
+  and transition-head lineage. One receipt yields one exposure set
+  (`exposure-<receiptDigest>`) with exactly one entry per applied receipt
+  entry; a retry is idempotent, a different second acknowledgement is
+  refused, evidence must be durable `observed`/`verified` observations of
+  the resolved episode, and an experiment arm is refused until #12. The set
+  is appended to a private per-episode index before it is created, orphan
+  index entries never count, and `EpisodeView.episode.exposureIds` folds
+  acknowledged sets without rewriting the ingested record. Nothing here
+  validates, improves, or claims utility for an intervention.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports

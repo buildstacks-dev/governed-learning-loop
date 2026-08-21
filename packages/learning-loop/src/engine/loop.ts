@@ -6,10 +6,10 @@
 // deliberate narrowing of the contract's full LearningLoopConfig/LearningLoop:
 // decision 0025 adds destinations, the authority port, and preparePublication;
 // decision 0026 completes publish as the journaled idempotent publisher and
-// adds getIntervention; the resolution, outcome, and experiment members
-// (outcomeSources, replayExecutors, resolveContext, acknowledgeExposure,
-// declareExperiment, runExperiment, recordOutcomes) do not exist yet — a
-// smaller surface now, additive later.
+// adds getIntervention; decision 0027 adds resolveContext and
+// acknowledgeExposure; the outcome and experiment members (outcomeSources,
+// replayExecutors, declareExperiment, runExperiment, recordOutcomes) do not
+// exist yet — a smaller surface now, additive later.
 import { randomUUID } from "node:crypto";
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import { invalid, parseNonEmptyText } from "../parse/toolkit.js";
@@ -41,6 +41,10 @@ import { bindDestinationRegistration } from "./destination-registration.js";
 import type { InterventionRecord } from "../records/intervention.js";
 import type { PreparePublicationInput, PreparedPublication, PublicationOutcome, PublishInput } from "./publication.js";
 import { runGetIntervention, runPreparePublication, runPublish } from "./publication.js";
+import type { ExposureSetRecord } from "../records/exposure.js";
+import type { ResolvedContext } from "../records/resolution.js";
+import type { ExposureInput, ResolveContextInput } from "./context-resolution.js";
+import { runAcknowledgeExposure, runResolveContext } from "./context-resolution.js";
 import type { LearningPolicy } from "./policy.js";
 import { bindLearningPolicy } from "./policy.js";
 import type { CandidateInput, ProposeOutcome } from "./propose.js";
@@ -134,6 +138,8 @@ export interface LearningLoop {
   preparePublication(input: PreparePublicationInput): Promise<PreparedPublication>;
   publish(input: PublishInput): Promise<PublicationOutcome>;
   getIntervention(input: { readonly interventionId: string }): Promise<InterventionRecord | undefined>;
+  resolveContext(input: ResolveContextInput): Promise<ResolvedContext>;
+  acknowledgeExposure(input: ExposureInput): Promise<ExposureSetRecord>;
   report(input: LearningReportQuery): Promise<LearningReport>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
   runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
@@ -473,6 +479,8 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     preparePublication: (input) => runPreparePublication(context, input),
     publish: (input) => runPublish(context, input),
     getIntervention: (input) => runGetIntervention(context, input),
+    resolveContext: (input) => runResolveContext(context, input),
+    acknowledgeExposure: (input) => runAcknowledgeExposure(context, input),
     report: (input) => runReport(context, input),
     runDetector: (input) => runDetector(context, input),
     runDetectorPack: (input) => runDetectorPack(context, input),

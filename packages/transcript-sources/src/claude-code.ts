@@ -6,17 +6,32 @@
 //
 // EXPERIMENTAL support status. Projections are minimized before emission:
 // message text, tool arguments/results, attachments, prompt echoes, and
-// titles never leave this module — see ../AGENTS.md.
+// titles never leave this module — see ../AGENTS.md. The adapter runs under
+// a content-addressed TranscriptPrivacyPolicy (decision 0024).
 import type { EvidenceSource } from "@cormidia/learning-loop";
+import type { TranscriptSourceOptions } from "./explicit-files-source.js";
 import { createExplicitFilesSource } from "./explicit-files-source.js";
 import type { TranscriptFilesInput } from "./input.js";
 import { booleanField, finiteNumberField, isRecord, recordField, stringField } from "./narrow.js";
 import type { SessionDraft } from "./project.js";
-import { addBandFailure, addObservation, hasCorrectionSignal, truncateType, validTimestamp } from "./project.js";
+import {
+  addBandFailure,
+  addDuplicateRecord,
+  addObservation,
+  hasCorrectionSignal,
+  structuralToolNameToken,
+  structuralTypeToken,
+  validTimestamp,
+} from "./project.js";
 import type { FileRef, ParsedLine } from "./session-file.js";
 
-/** Accepted version band: Claude Code 2.x JSONL session logs (observed structure). */
-export const CLAUDE_CODE_ADAPTER_VERSION = "0.2.0-experimental+claude-code-jsonl-2.x";
+/**
+ * Accepted version band: Claude Code 2.x JSONL session logs (observed
+ * structure). 0.3.0 adds policy-bound reads, structural token shapes for
+ * provider identifiers, and duplicate-record collapsing; 0.2.0 states remain
+ * read-only audit history and are not re-ingested in place.
+ */
+export const CLAUDE_CODE_ADAPTER_VERSION = "0.3.0-experimental+claude-code-jsonl-2.x";
 
 const PROVIDER = "claude-code";
 
@@ -24,30 +39,46 @@ const PROVIDER = "claude-code";
 // are content-bearing (attachments, prompt echoes, titles) or queue noise.
 const SILENT_TYPES = new Set(["attachment", "last-prompt", "ai-title", "queue-operation"]);
 
-export function createClaudeCodeTranscriptSource(): EvidenceSource<TranscriptFilesInput> {
-  return createExplicitFilesSource({
-    provider: PROVIDER,
-    sourceId: "claude-code-transcripts",
-    adapterVersion: CLAUDE_CODE_ADAPTER_VERSION,
-    firstLineBand: (record) => {
-      if (stringField(record, "type") === undefined) return 'record has no string "type" field';
-      if (recordField(record, "payload") !== undefined) {
-        return 'record carries a "payload" object, which the Claude Code JSONL band does not';
-      }
-      return undefined;
+export function createClaudeCodeTranscriptSource(
+  options: TranscriptSourceOptions = {},
+): EvidenceSource<TranscriptFilesInput> {
+  return createExplicitFilesSource(
+    {
+      provider: PROVIDER,
+      sourceId: "claude-code-transcripts",
+      adapterVersion: CLAUDE_CODE_ADAPTER_VERSION,
+      firstLineBand: (record) => {
+        if (stringField(record, "type") === undefined) return 'record has no string "type" field';
+        if (recordField(record, "payload") !== undefined) {
+          return 'record carries a "payload" object, which the Claude Code JSONL band does not';
+        }
+        return undefined;
+      },
+      mapRecords: mapClaudeRecords,
     },
-    mapRecords: mapClaudeRecords,
-  });
+    options,
+  );
 }
 
 function mapClaudeRecords(draft: SessionDraft, lines: readonly ParsedLine[], ref: FileRef): void {
   const toolNamesByUseId = new Map<string, string>();
+  // Claude Code records carry a native `uuid`; a repeated uuid inside one file
+  // is a duplicated segment (re-logged history), never a second occurrence.
+  const seenRecordIds = new Set<string>();
   for (const { lineNumber, record } of lines) {
     if (draft.firstRecordLine === undefined) draft.firstRecordLine = lineNumber;
     const type = stringField(record, "type");
     if (type === undefined) {
       addBandFailure(draft, ref, lineNumber, 'record has no string "type" field');
       continue;
+    }
+    const uuid = stringField(record, "uuid");
+    if (uuid !== undefined) {
+      if (seenRecordIds.has(uuid)) {
+        addDuplicateRecord(draft);
+        continue;
+      }
+      seenRecordIds.add(uuid);
     }
     const occurredAt = validTimestamp(record.timestamp);
     if (occurredAt !== undefined) draft.timestamps.push(occurredAt);
@@ -60,7 +91,7 @@ function mapClaudeRecords(draft: SessionDraft, lines: readonly ParsedLine[], ref
     } else if (type === "assistant") {
       mapAssistantRecord(draft, ref, lineNumber, occurredAt, record, toolNamesByUseId);
     } else if (!SILENT_TYPES.has(type)) {
-      addObservation(draft, lineNumber, "transcript.unknown", { nativeType: truncateType(type) }, occurredAt);
+      addObservation(draft, lineNumber, "transcript.unknown", { nativeType: structuralTypeToken(type) }, occurredAt);
     }
   }
 }
@@ -158,7 +189,7 @@ function mapAssistantRecord(
         hasToolBlocks = true;
         const id = stringField(block, "id");
         const name = stringField(block, "name");
-        if (id !== undefined && name !== undefined) toolNamesByUseId.set(id, name);
+        if (id !== undefined && name !== undefined) toolNamesByUseId.set(id, structuralToolNameToken(name));
       }
     }
   } else {

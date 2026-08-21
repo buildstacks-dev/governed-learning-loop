@@ -15,6 +15,18 @@ export interface SourceDescriptor {
   readonly adapterVersion: string;
   /** Optional self-restriction; it can lower host trust but can never raise it. */
   readonly maximumTrust?: TrustClass;
+  /**
+   * Optional content-addressed declaration of the source privacy policy the
+   * adapter runs under. The kernel binds it into the source registration
+   * revision and into every page and import receipt as lineage; it grants no
+   * trust and the kernel cannot verify that the adapter enforced it.
+   */
+  readonly privacyPolicy?: SourcePrivacyPolicyRef;
+}
+
+export interface SourcePrivacyPolicyRef {
+  readonly id: string;
+  readonly digest: string;
 }
 
 export interface ContentPolicy {

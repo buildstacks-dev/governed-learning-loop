@@ -31,10 +31,24 @@ export interface SessionDraft {
   readonly observations: ObservationDraft[];
   readonly diagnostics: Diagnostic[];
   bandFailureCount: number;
+  /** Native records collapsed as duplicated segments (policy `recurrence.duplicateSegments: collapse`). */
+  duplicateRecordCount: number;
 }
 
 export function newSessionDraft(provider: string): SessionDraft {
-  return { provider, timestamps: [], observations: [], diagnostics: [], bandFailureCount: 0 };
+  return {
+    provider,
+    timestamps: [],
+    observations: [],
+    diagnostics: [],
+    bandFailureCount: 0,
+    duplicateRecordCount: 0,
+  };
+}
+
+/** A native record whose identity was already projected from this file: it projects nothing again. */
+export function addDuplicateRecord(draft: SessionDraft): void {
+  draft.duplicateRecordCount += 1;
 }
 
 export function addObservation(
@@ -109,10 +123,58 @@ export function validTimestamp(value: unknown): string | undefined {
   return Number.isFinite(Date.parse(value)) ? value : undefined;
 }
 
-const MAX_NATIVE_TYPE_LENGTH = 64;
+// Provider-authored identifiers (native record types, tool names, version
+// strings) are the only strings an adapter copies out of a transcript. An
+// adversarial file can put anything there, so each is admitted only when it
+// has the STRUCTURAL SHAPE of its kind; anything else projects as the fixed
+// token "non_conforming". There is no truncation of arbitrary text anywhere:
+// a secret cannot straddle a cut because no cut exists.
+const MAX_TOKEN_LENGTH = 64;
+const MAX_TOKEN_RUN_LENGTH = 24;
+const DIGIT_RUN = /\d{4,}/;
+const NATIVE_TYPE_PATTERN = /^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$/;
+const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
+const VERSION_CORE_PATTERN = /^\d{1,4}(?:\.\d{1,4}){0,3}/;
 
-export function truncateType(value: string): string {
-  return value.length > MAX_NATIVE_TYPE_LENGTH ? value.slice(0, MAX_NATIVE_TYPE_LENGTH) : value;
+export const NON_CONFORMING_TOKEN = "non_conforming";
+
+function longestRun(value: string): number {
+  let longest = 0;
+  for (const run of value.split(/[_.:/-]+/)) longest = Math.max(longest, run.length);
+  return longest;
+}
+
+/** Native record type names: lowercase snake/kebab tokens, e.g. `queue-operation`, `task_started`. */
+export function structuralTypeToken(value: string): string {
+  if (
+    value.length > MAX_TOKEN_LENGTH ||
+    !NATIVE_TYPE_PATTERN.test(value) ||
+    longestRun(value) > MAX_TOKEN_RUN_LENGTH ||
+    DIGIT_RUN.test(value)
+  ) {
+    return NON_CONFORMING_TOKEN;
+  }
+  return value;
+}
+
+/** Tool names: identifier-shaped tokens such as `Bash`, `apply_patch`, `mcp__server__tool`. */
+export function structuralToolNameToken(value: string): string {
+  if (
+    value.length > MAX_TOKEN_LENGTH ||
+    !TOOL_NAME_PATTERN.test(value) ||
+    longestRun(value) > MAX_TOKEN_RUN_LENGTH ||
+    DIGIT_RUN.test(value)
+  ) {
+    return NON_CONFORMING_TOKEN;
+  }
+  return value;
+}
+
+/** Provider versions project only their numeric core (`2.1.900-beta.1` → `2.1.900`); anything else is non-conforming. */
+export function providerVersionBand(value: string | undefined): string {
+  if (value === undefined) return "unknown";
+  const core = VERSION_CORE_PATTERN.exec(value);
+  return core === null ? NON_CONFORMING_TOKEN : core[0];
 }
 
 export function assemblePage(input: {
@@ -137,6 +199,20 @@ export function assemblePage(input: {
         `${draft.bandFailureCount} record(s) failed the accepted shape band`,
         undefined,
         { bandFailureCount: draft.bandFailureCount },
+      ),
+    );
+  }
+  if (draft.duplicateRecordCount > 0) {
+    // Not incompleteness: the segments were present and collapsed. Visible so
+    // a claim over this page can state that duplicates were folded.
+    diagnostics.push(
+      fileDiagnostic(
+        "source.duplicate_segment",
+        "info",
+        ref,
+        `${draft.duplicateRecordCount} duplicated native record(s) collapsed; duplicates never become independent recurrence`,
+        undefined,
+        { duplicateRecordCount: draft.duplicateRecordCount },
       ),
     );
   }
@@ -207,7 +283,7 @@ export function assemblePage(input: {
   const metaData: JsonValue = {
     provider: draft.provider,
     adapterVersion: input.adapterVersion,
-    providerVersionBand: draft.providerVersion ?? "unknown",
+    providerVersionBand: providerVersionBand(draft.providerVersion),
     cwdLocator,
     ...(branchLocator === undefined ? {} : { branchLocator }),
   };

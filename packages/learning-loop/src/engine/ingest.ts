@@ -710,6 +710,9 @@ export async function runIngest(
     ]);
   }
 
+  // The adapter's content-addressed privacy-policy declaration (snapshotted at
+  // registration) is lineage bound into every receipt of this import.
+  const privacyPolicy = adapter.descriptor.privacyPolicy;
   const attemptId = context.ids.next("ingest-attempt");
   const tally: IngestTally = {
     diagnostics: [],
@@ -971,6 +974,7 @@ export async function runIngest(
       },
       diagnostics: pageTally.diagnostics,
       healthFindingIds,
+      ...(privacyPolicy !== undefined ? { privacyPolicy } : {}),
     });
     await persistSourcePageReceipt(context, pageReceipt);
     for (const pending of validatedOutcomes) {
@@ -1028,6 +1032,7 @@ export async function runIngest(
     sourceRevisions,
     completeness: foldCompleteness(tally.pageCompleteness, "unknown"),
     healthFindingIds: tally.healthFindingIds,
+    ...(privacyPolicy !== undefined ? { privacyPolicy } : {}),
   });
   await persistImportReceipt(context, importReceipt);
   return {

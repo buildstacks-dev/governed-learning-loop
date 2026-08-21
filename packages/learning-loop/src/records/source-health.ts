@@ -13,7 +13,7 @@ import {
   readFields,
 } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
-import type { Completeness } from "./provenance.js";
+import type { Completeness, SourcePrivacyPolicyRef } from "./provenance.js";
 import { COMPLETENESS_VALUES } from "./provenance.js";
 
 const UNAVAILABLE_PAGE_STATUSES = ["missing", "unreadable", "unsupported", "corrupt"] as const;
@@ -146,6 +146,8 @@ export interface SourcePageReceipt {
   };
   readonly diagnosticCounts: readonly SourceDiagnosticCount[];
   readonly healthFindingIds: readonly string[];
+  /** The adapter-declared, content-addressed privacy policy that governed this page, when declared. */
+  readonly privacyPolicy?: SourcePrivacyPolicyRef;
   readonly receiptDigest: string;
 }
 
@@ -159,6 +161,8 @@ export interface ImportReceipt {
   readonly sourceRevisions: readonly string[];
   readonly completeness: Completeness;
   readonly healthFindingIds: readonly string[];
+  /** The adapter-declared, content-addressed privacy policy that governed this import, when declared. */
+  readonly privacyPolicy?: SourcePrivacyPolicyRef;
   readonly receiptDigest: string;
 }
 
@@ -175,6 +179,20 @@ export interface EvidenceHealthFinding {
   readonly affectedRecords: number;
   readonly findingDigest: string;
 }
+
+// Historical receipts carry no privacy-policy declaration; their digest bytes
+// are preserved by including the member only when it is present.
+function privacyPolicyContent(policy: SourcePrivacyPolicyRef): { readonly id: string; readonly digest: string } {
+  return { id: policy.id, digest: policy.digest };
+}
+
+const parsePrivacyPolicyRefAt: Parse<SourcePrivacyPolicyRef> = (input, path) => {
+  const fields = readFields(input, path);
+  return {
+    id: fields.req("id", parseReference),
+    digest: fields.req("digest", parseDigestAt),
+  };
+};
 
 export function sourcePageReceiptDigest(
   input: Omit<SourcePageReceipt, "schemaVersion" | "id" | "receiptDigest">,
@@ -194,6 +212,7 @@ export function sourcePageReceiptDigest(
       projectionCounts: input.projectionCounts,
       diagnosticCounts: input.diagnosticCounts,
       healthFindingIds: input.healthFindingIds,
+      ...(input.privacyPolicy !== undefined ? { privacyPolicy: privacyPolicyContent(input.privacyPolicy) } : {}),
     }),
   );
 }
@@ -208,6 +227,7 @@ export function importReceiptDigest(input: Omit<ImportReceipt, "schemaVersion" |
       sourceRevisions: input.sourceRevisions,
       completeness: input.completeness,
       healthFindingIds: input.healthFindingIds,
+      ...(input.privacyPolicy !== undefined ? { privacyPolicy: privacyPolicyContent(input.privacyPolicy) } : {}),
     }),
   );
 }
@@ -277,6 +297,7 @@ const parseProjectionCountsAt: Parse<SourcePageReceipt["projectionCounts"]> = (i
 
 export function parseSourcePageReceipt(input: unknown): SourcePageReceipt {
   const fields = readFields(input, []);
+  const pagePrivacyPolicy = fields.opt("privacyPolicy", parsePrivacyPolicyRefAt);
   const receipt: SourcePageReceipt = {
     schemaVersion: fields.schemaVersion1(),
     id: fields.req("id", parseDurableId),
@@ -293,6 +314,7 @@ export function parseSourcePageReceipt(input: unknown): SourcePageReceipt {
     projectionCounts: fields.req("projectionCounts", parseProjectionCountsAt),
     diagnosticCounts: fields.req("diagnosticCounts", parseArrayOf(parseDiagnosticCountAt)),
     healthFindingIds: fields.req("healthFindingIds", parseArrayOf(parseDurableId)),
+    ...(pagePrivacyPolicy !== undefined ? { privacyPolicy: pagePrivacyPolicy } : {}),
     receiptDigest: fields.req("receiptDigest", parseDigestAt),
   };
   const totalProjections =
@@ -360,6 +382,7 @@ export function parseSourcePageReceipt(input: unknown): SourcePageReceipt {
 
 export function parseImportReceipt(input: unknown): ImportReceipt {
   const fields = readFields(input, []);
+  const importPrivacyPolicy = fields.opt("privacyPolicy", parsePrivacyPolicyRefAt);
   const receipt: ImportReceipt = {
     schemaVersion: fields.schemaVersion1(),
     id: fields.req("id", parseDurableId),
@@ -370,6 +393,7 @@ export function parseImportReceipt(input: unknown): ImportReceipt {
     sourceRevisions: fields.req("sourceRevisions", parseArrayOf(parseDurableId)),
     completeness: fields.req("completeness", parseOneOf(COMPLETENESS_VALUES)),
     healthFindingIds: fields.req("healthFindingIds", parseArrayOf(parseDurableId)),
+    ...(importPrivacyPolicy !== undefined ? { privacyPolicy: importPrivacyPolicy } : {}),
     receiptDigest: fields.req("receiptDigest", parseDigestAt),
   };
   for (const [index, id] of receipt.pageReceiptIds.entries()) {

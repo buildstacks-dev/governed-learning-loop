@@ -1,5 +1,5 @@
 // Host destination registrations, parsed and snapshotted once at loop
-// construction (contract §Publication destination; decision 0024). The host
+// construction (contract §Publication destination; decision 0025). The host
 // owns effect class, risk floor, permitted target patterns, authorization
 // rule, and content policy; adapter code cannot change them later. The
 // registration digest contributes to the loop registry revision and to every

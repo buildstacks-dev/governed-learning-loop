@@ -1,4 +1,4 @@
-# 0024 — Activate records, loop-bound authority, and host destination registrations
+# 0025 — Activate records, loop-bound authority, and host destination registrations
 
 **Date:** 2026-08-21
 **Status:** ratified — issue #10 first half (records, authority, destinations);

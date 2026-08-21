@@ -294,7 +294,7 @@ export async function createSemanticEngineHarness(
     readonly detectorEpisodeClasses?: DetectorRegistration["episodeClasses"];
     readonly detectorScopeConstraint?: DetectorRegistration["scopeConstraint"];
     readonly workflowDefinitionDigest?: string;
-    /** Decision 0024: optional host destination registrations and authority port for Activate tests. */
+    /** Decision 0025: optional host destination registrations and authority port for Activate tests. */
     readonly destinations?: readonly DestinationRegistration[];
     readonly authority?: AuthorityPort;
   } = {},

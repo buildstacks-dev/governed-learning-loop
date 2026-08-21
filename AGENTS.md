@@ -176,7 +176,7 @@ between code and contract, open an issue — never silently drift either one.
   index or governance view, and grants no admission, publication, activation,
   validation, authority, utility, efficacy, or calibration claim. Reviewer
   calibration and every decisive or default-quality claim remain #26.
-- **Activate records are exact, inert, and refusal-first.** Decision 0024
+- **Activate records are exact, inert, and refusal-first.** Decision 0025
   ships the first half of #10: `PreparedEffect`, `PublicationLineage`,
   `PublicationPlan`, `AuthorizationBinding`, and `VerifiedAuthorization`
   records, `createAuthorityPort`, host `DestinationRegistration`,

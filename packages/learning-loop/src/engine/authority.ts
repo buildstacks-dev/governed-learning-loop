@@ -1,5 +1,5 @@
 // Kernel-owned AuthorityPort factory and exact runtime binding (decision
-// 0024), following the identity-port discipline of decision 0003. Stable
+// 0025), following the identity-port discipline of decision 0003. Stable
 // registration metadata contributes to deterministic loop identity; a fresh,
 // private token per factory call is the non-serializable minting capability.
 // The host authenticates approvers and maps its approvals; the kernel parses

@@ -2998,7 +2998,7 @@ export declare function authorizationBindingDigest(binding: AuthorizationBinding
 
 The host supplies opaque authorization evidence to its authority adapter. The core receives only a verified, exact binding. If content, base, destination, risk-relevant metadata, or policy changes, the binding changes and the authorization is unusable.
 
-A plan binds the complete semantic closure (decision 0024). `lineage` carries
+A plan binds the complete semantic closure (decision 0025). `lineage` carries
 the candidate's exact scope digest, the loop scope-policy digest, the loop
 registry revision — which itself binds policy, identity, content policies,
 sources, the semantic registry, destinations, and authority — the exact host
@@ -3524,7 +3524,7 @@ export declare function createAuthorityPort(input: {
 
 The adapter authenticates principals and maps host approvals. The kernel checks binding equality, expiry, policy, consumption, lifecycle, and idempotency. Hosts with transactional approval consumption can expose reservation and commit hooks as an advanced interface; the first contract should not pretend to provide a distributed transaction across an arbitrary approval service and destination.
 
-The authority port follows the identity-port discipline (decision 0024,
+The authority port follows the identity-port discipline (decision 0025,
 mirroring decision 0003). The host passes its authentication and approval
 mapping to `createAuthorityPort`; `id` and `version` are non-empty,
 control-free, and at most 200 characters, and `configurationDigest` is a
@@ -3588,7 +3588,7 @@ export interface DestinationRegistration {
 The host, not adapter code, registers immutable effect class, risk floor, permitted targets, authority and content policy. The engine computes effective risk by monotonic maximum. `prepare` is side-effect-free. Adapters parse any external `unknown` internally and return standardized effects and receipts; their conformance suite verifies those claims. The core canonicalizes prepared effects and binds authorization before `applyEffect`. A receipt proves destination, target, payload digest, base and final version, effect ID and idempotency key.
 
 `LearningLoopConfig.destinations` is parsed and snapshotted once at
-construction (decision 0024). Each registration requires an adapter object
+construction (decision 0025). Each registration requires an adapter object
 with a bounded control-free `id` and `prepare`/`applyEffect` functions, a
 closed `effectClass`, a closed `riskFloor`, between one and 100 unique
 control-free `permittedTargetPatterns` of at most 200 characters, an
@@ -4217,7 +4217,7 @@ Time and IDs are injectable for deterministic tests. Canonical serialization and
 
 ## The façade
 
-The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, detector implementations and detector-orchestration policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, exact detector capability metadata/callbacks, and orchestration-policy content; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. A configured detector-orchestration policy contributes exact `{ policyDigest }`. Configured destinations contribute their sorted exact `{ id, registrationDigest }` list and a configured authority port contributes its exact `{ id, version, configurationDigest, registrationDigest }` metadata (decision 0024). Omitting any optional dimension preserves its prior registry bytes.
+The loop configuration is immutable. Sources, outcomes, destinations, identity, content policies, scope policy, the optional semantic registry, detector implementations and detector-orchestration policy, replay executors and decision rules are composed before `createLearningLoop`; the engine binds their registry digest into plans, resolutions and fingerprints. Construction parses and snapshots policy metadata/rules, content-policy metadata/behavior, source registration/adapter behavior, scope-policy metadata/behavior, semantic records, exact detector capability metadata/callbacks, and orchestration-policy content; later mutation of caller-owned configuration objects cannot change runtime decisions under the same registry revision. The identity contribution contains exactly its public `{ id, version, configurationDigest, registrationDigest }` metadata, while exact-instance identity and detector runtime tokens remain private and process-local. A configuration change creates a new registry revision. `createLearningLoop` rejects structurally similar identity or detector capability objects not created by their kernel factories. If `semanticRegistry` is present, only its exact `registryDigest` contributes after full parsing and source/scope reconciliation. Detector implementation presence contributes its sorted exact capability registration. A configured detector-orchestration policy contributes exact `{ policyDigest }`. Configured destinations contribute their sorted exact `{ id, registrationDigest }` list and a configured authority port contributes its exact `{ id, version, configurationDigest, registrationDigest }` metadata (decision 0025). Omitting any optional dimension preserves its prior registry bytes.
 
 ```ts
 export interface LearningPolicy {
@@ -4654,7 +4654,7 @@ export interface LearningLoop {
 }
 ```
 
-Decision 0024 implements `preparePublication` and the refusal half of
+Decision 0025 implements `preparePublication` and the refusal half of
 `publish`; the journaled publisher is the open second half of issue #10.
 `preparePublication` accepts only `action: "publish"` until then, resolves the
 registered destination, loads the candidate (refusing schema-version-1
@@ -5573,7 +5573,7 @@ definition/schema properties and all bundle methods are members of those two
 symbols, not separate exports. The all-entrypoint snapshot is therefore 158;
 the root snapshot is unchanged. Decision 0023 extends the same two symbols
 with advisory-review methods and statics and keeps the snapshot at 158.
-Decision 0024 adds nineteen root names for the Activate records, the authority
+Decision 0025 adds nineteen root names for the Activate records, the authority
 port factory, the destination port and registration types, and the
 preparation/publication outcome types; the all-entrypoint snapshot is 177.
 

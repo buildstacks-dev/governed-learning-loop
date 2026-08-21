@@ -1,6 +1,6 @@
 // Verified authorization handles and the authority port (contract §Authority).
 // VerifiedAuthorization is a branded, non-serializable capability only a
-// kernel-created AuthorityPort can mint (decision 0024); the brand symbols
+// kernel-created AuthorityPort can mint (decision 0025); the brand symbols
 // live in ./brands.js and are never exported. Its durable projections are
 // the PrincipalRef, attestation digest, binding digest, and timestamps.
 import type { Diagnostic } from "../diagnostics.js";

@@ -1,4 +1,4 @@
-// Decision 0024 semantic closure: a derivation-backed Candidate's plan binds
+// Decision 0025 semantic closure: a derivation-backed Candidate's plan binds
 // the exact derivation with its detector, lens, and pack references, so an
 // approval cannot survive a change anywhere in that lineage.
 import { describe, expect, it } from "vitest";

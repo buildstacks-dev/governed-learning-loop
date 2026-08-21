@@ -4,7 +4,7 @@
 // construction and digested into a registry revision that is bound into every
 // ingest receipt and publication plan. This config and façade are a
 // deliberate narrowing of the contract's full LearningLoopConfig/LearningLoop:
-// decision 0024 adds destinations, the authority port, preparePublication, and
+// decision 0025 adds destinations, the authority port, preparePublication, and
 // the refusal half of publish; the journaled publisher, outcome, and
 // experiment members (outcomeSources, replayExecutors, resolveContext,
 // acknowledgeExposure, declareExperiment, runExperiment, recordOutcomes) do

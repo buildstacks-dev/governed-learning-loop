@@ -45,7 +45,7 @@ export { semanticRegistryDigest, parseSemanticRegistryConfig } from "./records/s
 export type { DetectorExecutionRecord, DetectorExecutionStatus } from "./records/semantic.js";
 export { detectorExecutionKeyDigest, detectorExecutionDigest } from "./records/semantic.js";
 export { parseDetectorExecutionRecord } from "./records/semantic.js";
-// Activate records (decision 0024): exact, inert publication plans and bindings.
+// Activate records (decision 0025): exact, inert publication plans and bindings.
 export type { AfterEffectSemantics, EffectClass, PreparedEffect, PublicationLineage } from "./records/publication.js";
 export type { AuthorizationBinding, PublicationPlan, PublicationReceipt } from "./records/publication.js";
 export { parsePreparedEffect, parsePublicationPlan, publicationPlanDigest } from "./records/publication.js";

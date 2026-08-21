@@ -86,7 +86,7 @@ export interface EngineContext {
   readonly sourceSemanticProfilesBySourceId?: ReadonlyMap<string, SourceSemanticProfile>;
   readonly detectorImplementationsByRef?: ReadonlyMap<string, RegisteredDetectorImplementation>;
   readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
-  /** Loop-bound authority port (decision 0024); absent means publish cannot be authorized. */
+  /** Loop-bound authority port (decision 0025); absent means publish cannot be authorized. */
   readonly authority?: AuthorityPort;
   /** Host destination registrations snapshotted at construction; absent or empty means none. */
   readonly destinationsById?: ReadonlyMap<string, BoundDestination>;
@@ -117,7 +117,7 @@ export function recordDigest(value: JsonValue): string {
 /**
  * Effective risk: the monotonic maximum of the proposal and the host-registered
  * floor of the destination the candidate's intervention names (contract
- * §Candidate, decision 0024). An unregistered destination contributes no
+ * §Candidate, decision 0025). An unregistered destination contributes no
  * floor; neither a proposer nor an adapter can lower the result.
  */
 export function effectiveRisk(context: EngineContext, candidate: Candidate): RiskTier {

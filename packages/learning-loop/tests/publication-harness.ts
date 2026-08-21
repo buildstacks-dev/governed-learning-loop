@@ -1,5 +1,5 @@
 // Shared fixtures for the Activate records/authority/destination tests
-// (decision 0024). Not a test file. Builds a loop with one inert spy
+// (decision 0025). Not a test file. Builds a loop with one inert spy
 // destination and one scripted authority port on top of the engine harness
 // evidence, and exposes store snapshots so tests can prove "no write".
 import type {

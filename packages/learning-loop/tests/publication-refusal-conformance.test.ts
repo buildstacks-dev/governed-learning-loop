@@ -1,4 +1,4 @@
-// Refusal conformance (contract §Conformance suites; decision 0024): a
+// Refusal conformance (contract §Conformance suites; decision 0025): a
 // pending, denied, invalid, expired, or wrong-base authorization produces no
 // destination write — and in this slice, no store write at all. The
 // authorized branch stops at the activation-tier gate with the same

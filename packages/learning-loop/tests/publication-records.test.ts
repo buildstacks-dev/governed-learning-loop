@@ -1,4 +1,4 @@
-// Activate records (decision 0024): PreparedEffect, PublicationPlan,
+// Activate records (decision 0025): PreparedEffect, PublicationPlan,
 // AuthorizationBinding parsers and digests. Approvals bind exact content —
 // every bound field changes the plan digest, the binding digest, or both.
 import { describe, expect, it } from "vitest";

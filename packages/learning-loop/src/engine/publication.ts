@@ -1,6 +1,6 @@
 // learning.preparePublication and the refusal half of learning.publish
 // (contract §Publication plan and authorization binding, §Authority,
-// §Publication destination; decision 0024).
+// §Publication destination; decision 0025).
 //
 // Preparation is side-effect-free against the destination (`prepare` only)
 // and persists exactly one create-only, content-addressed plan record.
@@ -450,8 +450,8 @@ export async function runPublish(context: EngineContext, input: PublishInput): P
     diagnostic(
       "policy.blocked",
       context.policyRules.publication.blockedPendingActivationTier
-        ? "publication is blocked pending the activation tier: the journaled publisher is not part of this slice (decision 0024, issue #10)"
-        : "publication is unavailable: the journaled publisher is not part of this slice (decision 0024, issue #10)",
+        ? "publication is blocked pending the activation tier: the journaled publisher is not part of this slice (decision 0025, issue #10)"
+        : "publication is unavailable: the journaled publisher is not part of this slice (decision 0025, issue #10)",
     ),
   ]);
 }

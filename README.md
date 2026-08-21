@@ -25,7 +25,7 @@ here says a learned intervention has been shown to improve later agent work.
 | Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
 
 Observe and Govern are implemented first. Activate's records, authority port,
-and destination registrations are merged (decision 0024) while its journaled
+and destination registrations are merged (decision 0025) while its journaled
 publisher stays open; Validate is tracked in the issue backlog. Both are
 orthogonal capabilities, not implied by the first two.
 

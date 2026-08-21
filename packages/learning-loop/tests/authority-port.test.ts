@@ -1,4 +1,4 @@
-// createAuthorityPort (decision 0024): the identity-port discipline applied
+// createAuthorityPort (decision 0025): the identity-port discipline applied
 // to host approvals. The kernel parses the host result from `unknown`,
 // requires the approved binding digest to equal the binding it asked about,
 // brands a frozen handle, and accepts handles only from the exact port

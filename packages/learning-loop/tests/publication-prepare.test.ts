@@ -1,4 +1,4 @@
-// learning.preparePublication (decision 0024): exact, content-addressed,
+// learning.preparePublication (decision 0025): exact, content-addressed,
 // idempotent plans; side-effect-free against the destination; every refusal
 // leaves the store and the destination untouched.
 import { describe, expect, it } from "vitest";

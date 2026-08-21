@@ -1,4 +1,4 @@
-// Destination registrations (decision 0024): host-owned effect class, risk
+// Destination registrations (decision 0025): host-owned effect class, risk
 // floor, permitted targets, authorization rule, and content policy are parsed
 // and snapshotted at construction, digested into the loop registry, and the
 // floor raises effective risk by monotonic maximum.

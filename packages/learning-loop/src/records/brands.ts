@@ -19,3 +19,8 @@ export const registeredDetectorImplementationBrand: unique symbol = Symbol(
 //   identity, live authority comes from private per-port WeakMap bindings.
 export const authorityPortBrand: unique symbol = Symbol("cormidia.learning-loop/authority-port");
 export const verifiedAuthorizationBrand: unique symbol = Symbol("cormidia.learning-loop/verified-authorization");
+
+// - replayExecutorBrand: phantom marker attached only by the kernel
+//   defineReplayExecutor factory (decision 0028); the exact-instance
+//   registration lives in a private WeakMap, never in this copyable symbol.
+export const replayExecutorBrand: unique symbol = Symbol("cormidia.learning-loop/replay-executor");

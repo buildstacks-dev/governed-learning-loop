@@ -7,9 +7,9 @@
 // decision 0025 adds destinations, the authority port, and preparePublication;
 // decision 0026 completes publish as the journaled idempotent publisher and
 // adds getIntervention; decision 0027 adds resolveContext and
-// acknowledgeExposure; the outcome and experiment members (outcomeSources,
-// replayExecutors, declareExperiment, runExperiment, recordOutcomes) do not
-// exist yet — a smaller surface now, additive later.
+// acknowledgeExposure; decision 0028 adds replayExecutors, declareExperiment,
+// and runExperiment; the outcome-source members (outcomeSources,
+// recordOutcomes) do not exist yet — a smaller surface now, additive later.
 import { randomUUID } from "node:crypto";
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import { invalid, parseNonEmptyText } from "../parse/toolkit.js";
@@ -45,6 +45,11 @@ import type { ExposureSetRecord } from "../records/exposure.js";
 import type { ResolvedContext } from "../records/resolution.js";
 import type { ExposureInput, ResolveContextInput } from "./context-resolution.js";
 import { runAcknowledgeExposure, runResolveContext } from "./context-resolution.js";
+import type { EvaluationResult, ExperimentDefinition } from "../records/experiment.js";
+import type { ReplayExecutor } from "../records/replay.js";
+import type { DeclareExperimentInput, RunExperimentInput } from "./experiment.js";
+import { runDeclareExperiment, runRunExperiment } from "./experiment.js";
+import { replayExecutorRegistryProjection } from "./replay-executor.js";
 import type { LearningPolicy } from "./policy.js";
 import { bindLearningPolicy } from "./policy.js";
 import type { CandidateInput, ProposeOutcome } from "./propose.js";
@@ -108,6 +113,8 @@ export interface LearningLoopConfig {
   readonly destinations?: readonly DestinationRegistration[];
   /** Loop-bound authority port (contract §Authority); omitted means publish cannot be authorized. */
   readonly authority?: AuthorityPort;
+  /** Kernel-minted replay executors (contract §Replay and outcomes); omitted means no experiment can run. */
+  readonly replayExecutors?: readonly ReplayExecutor[];
   /** Stable host/store scope for resumable query cursors; omitted means process-local cursors. */
   readonly queryCursorScope?: string;
   readonly clock?: Clock;
@@ -140,6 +147,8 @@ export interface LearningLoop {
   getIntervention(input: { readonly interventionId: string }): Promise<InterventionRecord | undefined>;
   resolveContext(input: ResolveContextInput): Promise<ResolvedContext>;
   acknowledgeExposure(input: ExposureInput): Promise<ExposureSetRecord>;
+  declareExperiment(input: DeclareExperimentInput): Promise<ExperimentDefinition>;
+  runExperiment(input: RunExperimentInput): Promise<EvaluationResult>;
   report(input: LearningReportQuery): Promise<LearningReport>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
   runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
@@ -294,6 +303,28 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     }
   }
   const authority = configuredAuthority === undefined ? undefined : authorityRegistryProjection(configuredAuthority);
+  const configuredReplayExecutors = config.replayExecutors;
+  const replayExecutorsByDigest = new Map<string, ReplayExecutor>();
+  const replayExecutorProjection: { readonly id: string; readonly registrationDigest: string }[] = [];
+  if (configuredReplayExecutors !== undefined) {
+    if (!Array.isArray(configuredReplayExecutors)) {
+      throw invalid("config.invalid", "replayExecutors must be an array of kernel-minted executors", [
+        "replayExecutors",
+      ]);
+    }
+    for (const [index, executor] of configuredReplayExecutors.entries()) {
+      const registration = replayExecutorRegistryProjection(executor, ["replayExecutors", index]);
+      if (
+        replayExecutorsByDigest.has(registration.registrationDigest) ||
+        replayExecutorProjection.some((entry) => entry.id === registration.id)
+      ) {
+        throw invalid("config.invalid", `duplicate replay executor "${registration.id}"`, ["replayExecutors", index]);
+      }
+      replayExecutorsByDigest.set(registration.registrationDigest, executor);
+      replayExecutorProjection.push({ id: registration.id, registrationDigest: registration.registrationDigest });
+    }
+    replayExecutorProjection.sort((left, right) => (left.id < right.id ? -1 : 1));
+  }
 
   const boundPolicy = bindLearningPolicy(config.policy);
   const policy = boundPolicy.policy;
@@ -435,6 +466,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
             .sort((left, right) => (left.id < right.id ? -1 : 1)),
         }),
     ...(authority === undefined ? {} : { authority }),
+    ...(configuredReplayExecutors === undefined ? {} : { replayExecutors: replayExecutorProjection }),
   });
 
   const context: EngineContext = {
@@ -454,6 +486,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     ...(detectorOrchestrationPolicy === undefined ? {} : { detectorOrchestrationPolicy }),
     ...(configuredAuthority === undefined ? {} : { authority: configuredAuthority }),
     destinationsById,
+    ...(configuredReplayExecutors === undefined ? {} : { replayExecutorsByDigest }),
     registryRevision,
     queryCursorScopeDigest,
     clock: config.clock ?? systemClock,
@@ -481,6 +514,8 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     getIntervention: (input) => runGetIntervention(context, input),
     resolveContext: (input) => runResolveContext(context, input),
     acknowledgeExposure: (input) => runAcknowledgeExposure(context, input),
+    declareExperiment: (input) => runDeclareExperiment(context, input),
+    runExperiment: (input) => runRunExperiment(context, input),
     report: (input) => runReport(context, input),
     runDetector: (input) => runDetector(context, input),
     runDetectorPack: (input) => runDetectorPack(context, input),

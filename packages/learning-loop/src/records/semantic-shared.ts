@@ -69,7 +69,7 @@ export type LensConstraint =
 
 export type JsonObject = { readonly [key: string]: JsonValue };
 
-function parseBoundedText(maximumLength: number, label: string): Parse<string> {
+export function parseBoundedText(maximumLength: number, label: string): Parse<string> {
   return (input, path) => {
     const value = parseNonEmptyText(input, path);
     if (value.length > maximumLength) {

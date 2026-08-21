@@ -249,6 +249,39 @@ between code and contract, open an issue — never silently drift either one.
   index entries never count, and `EpisodeView.episode.exposureIds` folds
   acknowledged sets without rewriting the ingested record. Nothing here
   validates, improves, or claims utility for an intervention.
+- **Validate is declared-before-results, attested, and never neutral.**
+  Decision 0028 ships `ExperimentDefinition`, `EvaluationResult`,
+  `SystemFingerprint`, the `ReplayExecutor` port (`defineReplayExecutor`,
+  identity-port discipline, bound into the registry revision), and
+  `declareExperiment`/`runExperiment`. A definition freezes the exact
+  durable eligible episode set (its digest is recomputed), distinct control
+  and treatment fingerprints, comparable metrics, fitting guardrails, and
+  the three content-bound reference rules from `referenceExperimentRules()`
+  (`paired-mean-difference`, `missing-is-invalid`,
+  `complete-design-or-ceiling`) — any other rule digest is refused because
+  the kernel applies only rules it knows. The subject is a journaled
+  `publish` intervention in any state. A run walks episode → repetition →
+  control-then-treatment, journals each attempt `dispatched` with a
+  kernel-minted nonce before invoking the executor and terminal afterwards,
+  never re-executes a dispatched slot (`outcome_unknown` on resume or
+  concurrency), and verifies that the attestation echoes every request
+  digest, arm, repetition, nonce, and the executor's exact registration
+  (and, under a cost ceiling, a cost within the dispatched budget — missing
+  is never zero spend). Any slot that is not `valid` makes the verdict
+  `invalid` (kernel invariant 5); a cost-ceiling stop is `inconclusive`;
+  any guardrail regression is `regressed`; otherwise the
+  paired-mean-difference rule — one pure function with a `1e-9` boundary
+  tolerance that the parser re-applies — decides over per-episode
+  aggregates of nested repetitions. One experiment yields one
+  content-addressed evaluation, indexed on its intervention and bound
+  through the new `validate` edge by the latest evaluation only (the table
+  is pinned at 647 edges; a cited evaluation must say the verdict the edge
+  lands on); hosts serialize runners per experiment;
+  `GovernanceView.validation` and `report` do not yet fold it. Exposure arms
+  bind declared experiments. `/testing` ships `createInMemoryReplayExecutor`
+  and `runReplayExecutorConformance`; every executor must pass it. Nothing
+  here publishes, activates, or grants authority — authorized ≠ validated,
+  permanently.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports
@@ -409,8 +442,8 @@ These are protocol rules, not configuration:
 
 Minimum for any change: `pnpm test && pnpm typecheck` (and `pnpm check` before
 a PR). Conformance suites are part of the API: invariants ship as executable
-tests, and every adapter (store, source, destination) must pass its conformance
-runner. Golden vectors pin canonical bytes and digests across runtimes.
+tests, and every adapter (store, source, destination, replay executor) must
+pass its conformance runner. Golden vectors pin canonical bytes and digests across runtimes.
 
 ## Maintenance
 

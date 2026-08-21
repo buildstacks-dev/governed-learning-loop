@@ -61,6 +61,8 @@ import {
 } from "../records/semantic-shared.js";
 import type { EngineContext } from "./context.js";
 import { createOnly, loadStoredRecord, parseWriteResult, recordDigest, recordKey } from "./context.js";
+import type { ExperimentVerdict } from "../records/experiment.js";
+import { EXPERIMENT_VERDICTS } from "../records/experiment.js";
 
 const INTERVENTION_ID_PREFIX = "intervention-";
 const AUTHORIZATION_ID_PREFIX = "authorization-";
@@ -75,6 +77,8 @@ const MAX_TRANSITIONS_PER_INTERVENTION = 1_000;
 const MAX_SCOPE_MEMBERSHIPS = 10_000;
 const SCOPE_INDEX_PAGE = 100;
 const MAX_EFFECT_INDEX = 1_000;
+const EVALUATION_INDEX_KIND = "intervention-evaluation";
+const MAX_EVALUATIONS_PER_INTERVENTION = 1_000;
 
 export function interventionIdFor(planDigest: string): string {
   return `${INTERVENTION_ID_PREFIX}${planDigest}`;
@@ -837,6 +841,154 @@ export async function appendInterventionTransition(
 }
 
 // ---------------------------------------------------------------------------
+// Intervention evaluation index (decision 0028)
+
+export interface InterventionEvaluationEntry {
+  readonly evaluationId: string;
+  readonly experimentId: string;
+  readonly interventionId: string;
+}
+
+const parseEvaluationEntryAt: Parse<InterventionEvaluationEntry> = (input, path) => {
+  const fields = readFields(input, path);
+  return {
+    evaluationId: fields.req("evaluationId", parseDurableId),
+    experimentId: fields.req("experimentId", parseId),
+    interventionId: fields.req("interventionId", parseDurableId),
+  };
+};
+
+interface EvaluationIndex {
+  readonly entries: readonly InterventionEvaluationEntry[];
+  readonly revision: string;
+}
+
+async function loadEvaluationIndex(
+  context: EngineContext,
+  interventionId: string,
+): Promise<EvaluationIndex | undefined> {
+  const stored = await loadStoredRecord(context, EVALUATION_INDEX_KIND, interventionId);
+  if (stored === undefined) return undefined;
+  const raw = parseBoundedArray(
+    parseStreamEntryAt,
+    MAX_EVALUATIONS_PER_INTERVENTION,
+    "intervention evaluation entries",
+  )(stored.value, ["store", EVALUATION_INDEX_KIND]);
+  const entries = raw.map((entry, index) => {
+    const value = parseEvaluationEntryAt(entry.value, ["store", EVALUATION_INDEX_KIND, index]);
+    if (
+      entry.id !== value.evaluationId ||
+      entry.digest !== recordDigest(toJsonValue(value)) ||
+      value.interventionId !== interventionId
+    ) {
+      throw corrupt(`intervention evaluation index entry ${index} does not bind its evaluation`);
+    }
+    return value;
+  });
+  return { entries, revision: stored.revision };
+}
+
+/**
+ * Reload-first append of an evaluation's index entry BEFORE the evaluation
+ * record is created, so a crash leaves at most an orphan entry that readers
+ * ignore. A present entry is "another attempt got here first".
+ */
+export async function ensureInterventionEvaluationIndexed(
+  context: EngineContext,
+  entry: InterventionEvaluationEntry,
+): Promise<void> {
+  for (let attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt += 1) {
+    const index = await loadEvaluationIndex(context, entry.interventionId);
+    const present = index?.entries.find((candidate) => candidate.evaluationId === entry.evaluationId);
+    if (present !== undefined) {
+      if (present.experimentId !== entry.experimentId) {
+        throw corrupt(`intervention evaluation index binds "${entry.evaluationId}" to another experiment`);
+      }
+      return;
+    }
+    if (index !== undefined && index.entries.length >= MAX_EVALUATIONS_PER_INTERVENTION) {
+      throw new LearningLoopError("experiment.limit_exceeded", [
+        {
+          code: "experiment.limit_exceeded",
+          severity: "error",
+          message: `intervention "${entry.interventionId}" already holds ${MAX_EVALUATIONS_PER_INTERVENTION} evaluations`,
+        },
+      ]);
+    }
+    const value = toJsonValue(entry);
+    const raw: unknown = await context.store.append(
+      recordKey(EVALUATION_INDEX_KIND, entry.interventionId),
+      index?.revision,
+      [{ id: entry.evaluationId, digest: recordDigest(value), value }],
+      `intervention-evaluation/${entry.interventionId}/${entry.evaluationId}`,
+    );
+    const result = parseWriteResult(raw);
+    if (result.status === "conflict") continue;
+    return;
+  }
+  throw new LearningLoopError("store.conflict", [
+    {
+      code: "store.conflict",
+      severity: "error",
+      message: `intervention "${entry.interventionId}" evaluation index changed ${MAX_APPEND_ATTEMPTS} times while appending`,
+    },
+  ]);
+}
+
+export interface BoundEvaluation {
+  readonly id: string;
+  readonly experimentId: string;
+  readonly verdict: ExperimentVerdict;
+}
+
+/**
+ * Evaluations bound to one intervention, in index order, each verified to
+ * exist and to name this intervention and its index entry's experiment. The
+ * stored bytes are digest-checked by the store layer; only the identity and
+ * verdict fields are read here, so the fold stays cheap on the resolution
+ * and publication paths. An orphan index entry whose evaluation does not
+ * exist is a crash remnant and does not count; a malformed or mismatched
+ * evaluation is store corruption.
+ */
+export async function loadInterventionEvaluations(
+  context: EngineContext,
+  interventionId: string,
+): Promise<readonly BoundEvaluation[]> {
+  const index = await loadEvaluationIndex(context, interventionId);
+  if (index === undefined) return [];
+  const stored = await Promise.all(
+    index.entries.map((entry) => loadStoredRecord(context, "experiment-evaluation", entry.evaluationId)),
+  );
+  const evaluations: BoundEvaluation[] = [];
+  for (const [position, entry] of index.entries.entries()) {
+    const record = stored[position];
+    if (record === undefined) continue;
+    let bound: BoundEvaluation;
+    try {
+      const fields = readFields(record.value, ["store", "experiment-evaluation"]);
+      bound = {
+        id: fields.req("id", parseDurableId),
+        experimentId: fields.req("experimentId", parseId),
+        verdict: fields.req("verdict", parseOneOf(EXPERIMENT_VERDICTS)),
+      };
+      if (fields.req("interventionId", parseDurableId) !== interventionId) {
+        throw corrupt(`evaluation "${entry.evaluationId}" does not name intervention "${interventionId}"`);
+      }
+    } catch (error) {
+      if (error instanceof LearningLoopError) {
+        throw corrupt(`evaluation "${entry.evaluationId}" is malformed`, error.diagnostics);
+      }
+      throw error;
+    }
+    if (bound.id !== entry.evaluationId || bound.experimentId !== entry.experimentId) {
+      throw corrupt(`evaluation "${entry.evaluationId}" does not match its intervention index entry`);
+    }
+    evaluations.push(bound);
+  }
+  return evaluations;
+}
+
+// ---------------------------------------------------------------------------
 // Fold
 
 export interface InterventionFold {
@@ -847,17 +999,38 @@ export interface InterventionFold {
   readonly record: InterventionRecord | undefined;
 }
 
-function foldRecord(header: InterventionHeader, transitions: readonly InterventionTransition[]): InterventionRecord {
+function foldRecord(
+  header: InterventionHeader,
+  transitions: readonly InterventionTransition[],
+  evaluations: readonly BoundEvaluation[],
+): InterventionRecord {
   const last = transitions[transitions.length - 1];
   if (last === undefined) throw corrupt("cannot fold an intervention without transitions");
-  const receiptIds: string[] = [];
-  const authorizationIds: string[] = [];
+  const receiptIds = new Set<string>();
+  const authorizationIds = new Set<string>();
+  const verdictByEvaluation = new Map(evaluations.map((evaluation) => [evaluation.id, evaluation.verdict]));
   for (const transition of transitions) {
     const kind = interventionTransitionKind(transition.from, transition.to);
     if (kind === "authorize") {
-      for (const id of transition.evidenceIds) if (!authorizationIds.includes(id)) authorizationIds.push(id);
+      for (const id of transition.evidenceIds) authorizationIds.add(id);
     } else if (kind === "publish" || kind === "fail") {
-      for (const id of transition.evidenceIds) if (!receiptIds.includes(id)) receiptIds.push(id);
+      for (const id of transition.evidenceIds) receiptIds.add(id);
+    } else if (kind === "validate") {
+      // A validate edge cites the evaluation that moved the state; the
+      // evaluation index is the complete list (same-verdict evaluations append
+      // no edge), so every cited evaluation must be indexed, durable, and say
+      // exactly the verdict the edge lands on — an id never freezes a verdict.
+      for (const id of transition.evidenceIds) {
+        const verdict = verdictByEvaluation.get(id);
+        if (verdict === undefined) {
+          throw corrupt(`intervention "${header.id}" validate transition cites an evaluation that is not bound`);
+        }
+        if (verdict !== transition.to.validation) {
+          throw corrupt(
+            `intervention "${header.id}" validate transition lands on "${transition.to.validation}" but its evaluation says "${verdict}"`,
+          );
+        }
+      }
     }
   }
   return parseInterventionRecord({
@@ -867,9 +1040,9 @@ function foldRecord(header: InterventionHeader, transitions: readonly Interventi
     planId: header.planId,
     ...(header.parentInterventionId === null ? {} : { parentInterventionId: header.parentInterventionId }),
     state: last.to,
-    publicationReceiptIds: receiptIds,
-    authorizationIds,
-    evaluationIds: [],
+    publicationReceiptIds: [...receiptIds],
+    authorizationIds: [...authorizationIds],
+    evaluationIds: evaluations.map((evaluation) => evaluation.id),
     latestTransitionId: last.id,
   });
 }
@@ -882,11 +1055,12 @@ export async function loadInterventionFold(
   if (header === undefined) return undefined;
   const stream = await loadTransitionStream(context, interventionId);
   const transitions = stream?.transitions ?? [];
+  const evaluations = transitions.length === 0 ? [] : await loadInterventionEvaluations(context, interventionId);
   return {
     header,
     transitions,
     state: currentStateOf(stream),
-    record: transitions.length === 0 ? undefined : foldRecord(header, transitions),
+    record: transitions.length === 0 ? undefined : foldRecord(header, transitions, evaluations),
   };
 }
 

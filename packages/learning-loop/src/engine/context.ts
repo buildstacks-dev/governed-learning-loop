@@ -25,6 +25,7 @@ import type { SourceSemanticProfile } from "../records/source-semantic-profile.j
 import type { LearningPolicy, PolicyRules } from "./policy.js";
 import type { RegisteredDetectorImplementation } from "./detector-implementation.js";
 import type { BoundDestination } from "./destination-registration.js";
+import type { ReplayExecutor } from "../records/replay.js";
 
 /** Every engine-owned record lives in this namespace. */
 export const RECORD_NAMESPACE = "learning";
@@ -76,7 +77,11 @@ export type RecordKind =
   | "intervention-transition"
   | "context-resolution"
   | "exposure-set"
-  | "episode-exposure";
+  | "episode-exposure"
+  | "experiment-definition"
+  | "experiment-attempt"
+  | "experiment-evaluation"
+  | "intervention-evaluation";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -97,6 +102,8 @@ export interface EngineContext {
   readonly authority?: AuthorityPort;
   /** Host destination registrations snapshotted at construction; absent or empty means none. */
   readonly destinationsById?: ReadonlyMap<string, BoundDestination>;
+  /** Kernel-minted replay executors by registration digest (decision 0028); absent means no experiment can run. */
+  readonly replayExecutorsByDigest?: ReadonlyMap<string, ReplayExecutor>;
   readonly registryRevision: string;
   readonly queryCursorScopeDigest: string;
   readonly clock: Clock;
@@ -220,6 +227,9 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
   if (kind === "episode-exposure" && Array.isArray(value) && value.length > 1_000) {
     throw invalid("store.corrupt", "episode exposure index exceeds its ceiling", ["value"]);
   }
+  if (kind === "intervention-evaluation" && Array.isArray(value) && value.length > 1_000) {
+    throw invalid("store.corrupt", "intervention evaluation index exceeds its ceiling", ["value"]);
+  }
   if (kind === "detector-recurrence-group") {
     if (!Array.isArray(value)) {
       throw invalid("store.corrupt", "detector recurrence group must be a stream-entry array", ["value"]);
@@ -245,7 +255,8 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
     kind === "candidate-recurrence-admission" ||
     kind === "detector-recurrence-group" ||
     kind === "intervention-transition" ||
-    kind === "episode-exposure"
+    kind === "episode-exposure" ||
+    kind === "intervention-evaluation"
   ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
     return sha256HexOfCanonicalJson(entryIds);

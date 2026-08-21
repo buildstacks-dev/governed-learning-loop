@@ -7,8 +7,9 @@
 // the exact content digest the receipt froze. The set carries the host's
 // assignment and fingerprint identifiers and the durable, host-observed
 // evidence ids that prove the application; a free caller assertion is not
-// efficacy evidence. The optional experiment arm is parsed as a record shape
-// for the Validate tier; the Activate tier mints none.
+// efficacy evidence. The optional experiment arm binds a declared
+// ExperimentDefinition (decision 0028): a treatment exposure applies the
+// experiment's intervention and a control exposure does not.
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import { invalid, parseOneOf, readFields } from "../parse/toolkit.js";
@@ -64,7 +65,7 @@ const parseExposureEntryAt: Parse<ExposureEntry> = (input, path) => {
   };
 };
 
-const parseExperimentAt: Parse<NonNullable<ExposureSetRecord["experiment"]>> = (input, path) => {
+export const parseExposureExperimentAt: Parse<NonNullable<ExposureSetRecord["experiment"]>> = (input, path) => {
   const fields = readFields(input, path);
   return {
     experimentId: fields.req("experimentId", parseDurableId),
@@ -140,7 +141,7 @@ export function parseExposureSetRecord(input: unknown): ExposureSetRecord {
     throw invalid("schema.invalid", "an exposure set requires host-observed evidence", ["evidenceIds"]);
   }
   assertUniqueIds(evidenceIds, "exposure evidence ids", ["evidenceIds"]);
-  const experiment = fields.opt("experiment", parseExperimentAt);
+  const experiment = fields.opt("experiment", parseExposureExperimentAt);
   const content: ExposureContent = {
     episodeId: fields.req("episodeId", parseDurableId),
     resolutionReceiptId,

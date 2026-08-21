@@ -17,6 +17,7 @@ import type {
   PublicationOutcome,
   PublicationReceipt,
   RegisteredSource,
+  ReplayExecutor,
   ScopePolicy,
   VerifiedPrincipal,
 } from "../src/index.js";
@@ -243,6 +244,8 @@ export interface PublicationHarnessOptions {
   readonly scopePolicy?: ScopePolicy;
   /** Additional registered sources beyond the manual evidence source. */
   readonly extraSources?: readonly RegisteredSource<unknown>[];
+  /** Kernel-minted replay executors (decision 0028 experiment tests). */
+  readonly replayExecutors?: readonly ReplayExecutor[];
 }
 
 export async function createPublicationHarness(options: PublicationHarnessOptions = {}): Promise<PublicationHarness> {
@@ -284,6 +287,7 @@ export async function createPublicationHarness(options: PublicationHarnessOption
     sources: [manual, ...(options.extraSources ?? [])],
     ...(options.omitDestinations === true ? {} : { destinations: registrations }),
     ...(authority === undefined ? {} : { authority: authority.port }),
+    ...(options.replayExecutors === undefined ? {} : { replayExecutors: options.replayExecutors }),
     clock,
     ids: createSequentialIds("t"),
   });
@@ -325,7 +329,7 @@ export async function createPublicationHarness(options: PublicationHarnessOption
 export { CONTENT_POLICY_ID, SCOPE, candidateInput, reviewerFor };
 
 export interface StoreFault {
-  readonly operation: "create" | "append";
+  readonly operation: "create" | "append" | "compareAndSet";
   /** Record kind of the write to fault (`key.kind`), in any namespace. */
   readonly kind: string;
   /** 1-based occurrence of that write after arming; default the first. */
@@ -366,7 +370,7 @@ export function faultStore(
       create: (key, value, digest, operationId) =>
         guard("create", key.kind, () => base.create(key, value, digest, operationId)),
       compareAndSet: (key, expectedRevision, value, digest, operationId) =>
-        base.compareAndSet(key, expectedRevision, value, digest, operationId),
+        guard("compareAndSet", key.kind, () => base.compareAndSet(key, expectedRevision, value, digest, operationId)),
       append: (stream, expectedRevision, entries, operationId) =>
         guard("append", stream.kind, () => base.append(stream, expectedRevision, entries, operationId)),
       tombstone: (input) => base.tombstone(input),

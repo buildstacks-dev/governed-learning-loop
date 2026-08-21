@@ -19,3 +19,9 @@ export type { InMemoryDestination, InMemoryDestinationOptions } from "./in-memor
 export { createInMemoryDestination } from "./in-memory-destination.js";
 export type { PublicationDestinationFactory } from "./destination-conformance.js";
 export { runPublicationDestinationConformance } from "./destination-conformance.js";
+// Validate (decision 0028): an inert in-memory replay executor and the
+// injected replay-executor conformance suite every executor must pass.
+export type { InMemoryReplayExecutor, InMemoryReplayExecutorOptions } from "./in-memory-replay-executor.js";
+export { createInMemoryReplayExecutor } from "./in-memory-replay-executor.js";
+export type { ReplayExecutorFactory } from "./replay-executor-conformance.js";
+export { runReplayExecutorConformance } from "./replay-executor-conformance.js";

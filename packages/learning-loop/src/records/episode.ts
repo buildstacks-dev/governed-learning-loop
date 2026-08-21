@@ -69,7 +69,7 @@ const parseMetricName: Parse<string> = (input, path) => {
   return value;
 };
 
-const parseMetricDefinitionAt: Parse<MetricDefinition> = (input, path) => {
+export const parseMetricDefinitionAt: Parse<MetricDefinition> = (input, path) => {
   const fields = readFields(input, path);
   const comparabilityPolicyDigest = fields.opt("comparabilityPolicyDigest", parseText);
   return {

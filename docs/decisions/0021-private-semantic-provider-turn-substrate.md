@@ -262,3 +262,18 @@ Decision 0022 completes the typed generation slice without weakening these
 
 All authority, Candidate/Review, effect, calibration, and validation exclusions
 in this decision remain in force.
+
+## #13c amendment — Decision 0023
+
+Decision 0023 activates the advisory-review lane this decision reserved:
+
+- Ruling 9's clause that dispatch "refuses advisory-review dispatch" is
+  replaced. `claimSemanticDispatch` now admits an advisory target under the
+  exact current loop/semantic registry and source policies; the async
+  candidate/derivation/admission subject facts are revalidated twice by the
+  factory-bound bundle before the pre-dispatch writes.
+- The advisory reservation target, receipt output kind, and lane/calibration
+  pairing defined here are now populated by real turns. Advisory finding
+  prose is tenant-key digested and never persisted, preserving ruling 4.
+- Everything else — staged receipt-last order, dispatch ambiguity permanence,
+  closed result/usage states, and every authority exclusion — is unchanged.

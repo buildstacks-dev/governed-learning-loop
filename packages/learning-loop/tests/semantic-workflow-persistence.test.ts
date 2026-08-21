@@ -958,17 +958,34 @@ describe("semantic workflow receipt-last persistence", () => {
     ).rejects.toMatchObject({ code: "schema.corrupt" });
   });
 
-  it("keeps advisory-review dispatch unavailable until the calibrated 13c integration exists", async () => {
+  it("claims advisory-review dispatch only under the exact current registry and source policies", async () => {
     const store = createInMemoryStore();
     const engine = context(store, "2026-08-20T00:00:20.000Z", "outbound", "advisory_review");
     const reserved = reservation("advisory_review", "outbound");
     await persistSemanticTurnReservation(engine, reserved);
     const authorized = authorization(reserved);
     await persistSemanticDisclosureAuthorization(engine, reserved, authorized);
+    const staleRegistry: EngineContext = { ...engine, registryRevision: digest("stale-advisory-loop-registry") };
     await expect(
-      claimSemanticDispatch(engine, { reservation: reserved, authorization: authorized }),
-    ).rejects.toMatchObject({ code: "semantic.workflow_lane_unavailable" });
+      claimSemanticDispatch(staleRegistry, { reservation: reserved, authorization: authorized }),
+    ).rejects.toMatchObject({ code: "semantic.workflow_historical" });
+    const staleSemantic: EngineContext = {
+      ...engine,
+      semanticRegistry: semanticFixture("local", definition("generation", "local")).registry,
+    };
+    await expect(
+      claimSemanticDispatch(staleSemantic, { reservation: reserved, authorization: authorized }),
+    ).rejects.toMatchObject({ code: "semantic.workflow_historical" });
+    const staleSourcePolicy: EngineContext = { ...engine, contentPoliciesById: new Map() };
+    await expect(
+      claimSemanticDispatch(staleSourcePolicy, { reservation: reserved, authorization: authorized }),
+    ).rejects.toMatchObject({ code: "semantic.workflow_historical" });
     expect(await recordsOf(store, "learning", GLOBAL_KINDS.dispatch)).toEqual([]);
+    const claim = await claimSemanticDispatch(engine, { reservation: reserved, authorization: authorized });
+    expect(claim.status).toBe("created");
+    const retry = await claimSemanticDispatch(engine, { reservation: reserved, authorization: authorized });
+    expect(retry.status).toBe("existing");
+    expect(retry.dispatch.dispatchDigest).toBe(claim.dispatch.dispatchDigest);
   });
 
   it("refuses every stale workflow-definition, privacy, source, and registry binding before dispatch", async () => {

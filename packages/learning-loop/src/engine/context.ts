@@ -63,7 +63,10 @@ export type RecordKind =
   | "semantic-workflow-result"
   | "semantic-workflow-execution-plan"
   | "semantic-workflow-completion"
-  | "semantic-workflow-execution";
+  | "semantic-workflow-execution"
+  | "semantic-workflow-advisory-plan"
+  | "semantic-workflow-advisory-completion"
+  | "semantic-workflow-advisory-assessment";
 
 export interface EngineContext {
   readonly store: LearningStore;

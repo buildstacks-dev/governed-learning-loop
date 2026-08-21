@@ -5,3 +5,4 @@ coverage/
 .DS_Store
 .demo-state/
 *.log
+.pnpm-store/

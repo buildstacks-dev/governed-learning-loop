@@ -65,9 +65,11 @@ const COMPLETION_INTENT_KIND: RecordKind = "semantic-workflow-completion";
 const WORKFLOW_EXECUTION_KIND: RecordKind = "semantic-workflow-execution";
 const parseUnknown = (input: unknown): unknown => input;
 
-function attemptNamespace(scopeDigest: string, definitionDigest: string): string {
+export function semanticWorkflowAttemptNamespace(scopeDigest: string, definitionDigest: string): string {
   return `learning-semantic-workflow-attempt-${scopeDigest}-definition-${definitionDigest}`;
 }
+
+const attemptNamespace = semanticWorkflowAttemptNamespace;
 
 function parseStoredAttempt(
   input: unknown,

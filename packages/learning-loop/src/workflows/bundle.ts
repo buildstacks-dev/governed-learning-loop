@@ -21,6 +21,11 @@ import {
 } from "../records/semantic-shared.js";
 import type { SemanticWorkflowBundle } from "./types.js";
 import {
+  ADVISORY_REVIEW_RESULT_SCHEMA,
+  ADVISORY_REVIEW_RESULT_SCHEMA_DIGEST,
+  ADVISORY_REVIEW_RESULT_SCHEMA_ID,
+  ADVISORY_REVIEW_RESULT_SCHEMA_VERSION,
+  defineAdvisoryReview,
   defineGeneration,
   GENERATION_RESULT_SCHEMA,
   GENERATION_RESULT_SCHEMA_DIGEST,
@@ -29,7 +34,14 @@ import {
 } from "./generation-schema.js";
 import { getTurn, queryTurns } from "./generation-query.js";
 import { authorizeGeneration, recoverGeneration, runGeneration } from "./generation-run.js";
-import type { CapabilityCallbacks, PreparedPlanBinding } from "./generation-internal.js";
+import {
+  authorizeAdvisoryReview,
+  prepareAdvisoryReview,
+  recoverAdvisoryReview,
+  revalidateAdvisoryPlan,
+  runAdvisoryReview,
+} from "./advisory-review-run.js";
+import type { AdvisoryCapabilityCallbacks, CapabilityCallbacks, PreparedPlanBinding } from "./generation-internal.js";
 import { bytesOf, preparedPlans } from "./generation-internal.js";
 import { parseSemanticWorkflowDefinition, SEMANTIC_WORKFLOW_MAX_DURATION_MS } from "./workflow-definition.js";
 import {
@@ -57,7 +69,8 @@ interface SemanticWorkflowBundleConfig {
   readonly schemaVersion: number;
   readonly loop: LearningLoop;
   readonly definition: unknown;
-  readonly producer: VerifiedPrincipal;
+  readonly producer?: VerifiedPrincipal;
+  readonly reviewer?: VerifiedPrincipal;
   readonly renderer: {
     readonly rendererDigest: string;
     readonly render: (input: { readonly window: DetectorWindow; readonly definitionDigest: string }) => unknown;
@@ -544,6 +557,10 @@ function requireFunction(value: unknown, path: readonly (string | number)[]): as
   if (typeof value !== "function") throw invalid("config.invalid", "workflow capability must be a function", path);
 }
 
+function laneUnavailable(): never {
+  throw invalid("semantic.workflow_lane_unavailable", "workflow method is unavailable for this bundle lane", []);
+}
+
 /** Creates one loop-bound, provider-neutral semantic generation capability. */
 function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBundle {
   const raw: unknown = input;
@@ -551,29 +568,49 @@ function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBund
   fields.schemaVersion1();
   const context = contextForLearningLoop(fields.req("loop", (value) => value));
   const definition = parseSemanticWorkflowDefinition(fields.req("definition", (value) => value));
-  if (definition.lane !== "generation" || definition.calibration !== null) {
-    throw invalid("config.invalid", "workflow bundle requires one uncalibrated generation definition", ["definition"]);
-  }
+  const generation = definition.lane === "generation";
   if (
-    definition.outputSchema.id !== GENERATION_RESULT_SCHEMA_ID ||
-    definition.outputSchema.version !== GENERATION_RESULT_SCHEMA_VERSION ||
-    definition.outputSchema.schemaDigest !== GENERATION_RESULT_SCHEMA_DIGEST
+    (generation && definition.calibration !== null) ||
+    (!generation &&
+      (definition.calibration === null ||
+        definition.calibration.status !== "unverified" ||
+        definition.calibration.calibrationId !== null ||
+        definition.calibration.calibrationDigest !== null))
   ) {
-    throw invalid("config.invalid", "workflow definition must bind the kernel generation-result schema", [
+    throw invalid("config.invalid", "workflow definition has an invalid lane calibration posture", ["definition"]);
+  }
+  const expectedSchema = generation
+    ? {
+        id: GENERATION_RESULT_SCHEMA_ID,
+        version: GENERATION_RESULT_SCHEMA_VERSION,
+        digest: GENERATION_RESULT_SCHEMA_DIGEST,
+      }
+    : {
+        id: ADVISORY_REVIEW_RESULT_SCHEMA_ID,
+        version: ADVISORY_REVIEW_RESULT_SCHEMA_VERSION,
+        digest: ADVISORY_REVIEW_RESULT_SCHEMA_DIGEST,
+      };
+  if (
+    definition.outputSchema.id !== expectedSchema.id ||
+    definition.outputSchema.version !== expectedSchema.version ||
+    definition.outputSchema.schemaDigest !== expectedSchema.digest
+  ) {
+    throw invalid("config.invalid", "workflow definition must bind its exact kernel result schema", [
       "definition",
       "outputSchema",
     ]);
   }
-  const producer = fields.req("producer", (value) => value);
-  assertVerifiedPrincipal(context.identity, producer, "producer");
+  const principalRole = generation ? "producer" : "reviewer";
+  const principalCapability = fields.req(principalRole, (value) => value);
+  assertVerifiedPrincipal(context.identity, principalCapability, principalRole);
   if (
-    producer.ref.id !== definition.principal.id ||
-    producer.ref.kind !== definition.principal.kind ||
-    producer.ref.independenceDomain !== definition.principal.independenceDomain ||
-    producer.attestationId !== definition.attestation.id ||
-    producer.attestationDigest !== definition.attestation.digest
+    principalCapability.ref.id !== definition.principal.id ||
+    principalCapability.ref.kind !== definition.principal.kind ||
+    principalCapability.ref.independenceDomain !== definition.principal.independenceDomain ||
+    principalCapability.attestationId !== definition.attestation.id ||
+    principalCapability.attestationDigest !== definition.attestation.digest
   ) {
-    throw invalid("config.invalid", "verified producer does not match the workflow definition", ["producer"]);
+    throw invalid("config.invalid", "verified principal does not match the workflow definition", [principalRole]);
   }
   const rendererFields = readFields(
     fields.req("renderer", (value) => value),
@@ -642,9 +679,7 @@ function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBund
     requireFunction(authorityCallback, ["disclosureAuthority", "authorize"]);
   }
 
-  const callbacks: CapabilityCallbacks = Object.freeze({
-    render: (value: Parameters<CapabilityCallbacks["render"]>[0]) => callSync(renderCallback, value),
-    minimize: (value: Parameters<CapabilityCallbacks["minimize"]>[0]) => callSync(minimizeCallback, value),
+  const sharedCallbacks = {
     digest: (value: Uint8Array) => callSync(digestCallback, value),
     estimateInputTokens: (value: Uint8Array) => callSync(estimateInputTokensCallback, value),
     invokeProvider: (value: Parameters<CapabilityCallbacks["invokeProvider"]>[0]) => callAsync(providerCallback, value),
@@ -654,24 +689,49 @@ function createBundle(input: SemanticWorkflowBundleConfig): SemanticWorkflowBund
           authorize: (value: Parameters<NonNullable<CapabilityCallbacks["authorize"]>>[0]) =>
             callAsync(authorityCallback, value),
         }),
+  };
+  const callbacks: CapabilityCallbacks = Object.freeze({
+    render: (value: Parameters<CapabilityCallbacks["render"]>[0]) => callSync(renderCallback, value),
+    minimize: (value: Parameters<CapabilityCallbacks["minimize"]>[0]) => callSync(minimizeCallback, value),
+    ...sharedCallbacks,
+  });
+  const advisoryCallbacks: AdvisoryCapabilityCallbacks = Object.freeze({
+    render: (value: Parameters<AdvisoryCapabilityCallbacks["render"]>[0]) => callSync(renderCallback, value),
+    minimize: (value: Parameters<AdvisoryCapabilityCallbacks["minimize"]>[0]) => callSync(minimizeCallback, value),
+    ...sharedCallbacks,
   });
   const token = Object.freeze({});
   const bundle: SemanticWorkflowBundle = {
     schemaVersion: 1,
     definitionDigest: definition.definitionDigest,
-    prepareGeneration: async (value) => await prepareGeneration(token, context, definition, callbacks, value),
-    authorizeGeneration: async (value) => await authorizeGeneration(token, value),
-    runGeneration: async (value) => await runGeneration(token, value, revalidatePreparedPlan),
-    recoverGeneration: async (value) => await recoverGeneration(context, definition, value),
-    getTurn: async (value) => await getTurn(context, definition.definitionDigest, value),
-    queryTurns: (value) => queryTurns(context, definition.definitionDigest, value),
+    prepareGeneration: async (value) =>
+      generation ? await prepareGeneration(token, context, definition, callbacks, value) : laneUnavailable(),
+    authorizeGeneration: async (value) => (generation ? await authorizeGeneration(token, value) : laneUnavailable()),
+    runGeneration: async (value) =>
+      generation ? await runGeneration(token, value, revalidatePreparedPlan) : laneUnavailable(),
+    recoverGeneration: async (value) =>
+      generation ? await recoverGeneration(context, definition, value) : laneUnavailable(),
+    prepareAdvisoryReview: async (value) =>
+      generation
+        ? laneUnavailable()
+        : await prepareAdvisoryReview(token, context, definition, advisoryCallbacks, value),
+    authorizeAdvisoryReview: async (value) =>
+      generation ? laneUnavailable() : await authorizeAdvisoryReview(token, value),
+    runAdvisoryReview: async (value) =>
+      generation ? laneUnavailable() : await runAdvisoryReview(token, value, revalidateAdvisoryPlan),
+    recoverAdvisoryReview: async (value) =>
+      generation ? laneUnavailable() : await recoverAdvisoryReview(context, definition, value),
+    getTurn: async (value) => await getTurn(context, definition, value),
+    queryTurns: (value) => queryTurns(context, definition, value),
   };
   return Object.freeze(bundle);
 }
 
 export const createSemanticWorkflowBundle = Object.freeze(
   Object.assign(createBundle, {
+    defineAdvisoryReview,
     defineGeneration,
+    advisoryReviewResultSchema: ADVISORY_REVIEW_RESULT_SCHEMA,
     generationResultSchema: GENERATION_RESULT_SCHEMA,
   }),
 );

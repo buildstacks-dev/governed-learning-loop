@@ -27,6 +27,7 @@ import { assertVerifiedPrincipal } from "./identity.js";
 import { ensureCandidateReviewMarker } from "./candidate-review-index.js";
 import type { CandidateView } from "./query.js";
 import { candidateGovernanceStateOf } from "./views.js";
+import { persistCandidateScopeMembership } from "./candidate-scope-index.js";
 import { resolveCandidateEvidence } from "./evidence-binding.js";
 import { candidateDerivationSupersessionDiagnostics, resolveDerivedCandidateInput } from "./derivation-binding.js";
 import type { CandidateContentLock } from "./candidate-content-lock.js";
@@ -637,6 +638,7 @@ async function createClaimedCandidate(
   await ensureCandidateReviewMarker(context, candidate);
   await persistCandidateRecurrenceClaim(context, recurrenceClaim);
   await assertCandidateContentLock(context, candidate, recurrenceClaim);
+  await persistCandidateScopeMembership(context, candidate);
   const status = await createOnly(context, "candidate", candidate.id, candidate, operationId);
   if (status === "conflict") {
     // The candidate id is already taken by DIFFERENT content: create-only

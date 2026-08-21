@@ -177,12 +177,15 @@ function assertCurrentDispatchBinding(context: EngineContext, reservation: Seman
     }
   }
   const target = reservation.target;
-  if (target.kind !== "generation") {
-    throw invalid(
-      "semantic.workflow_lane_unavailable",
-      "advisory review dispatch requires a later calibrated workflow integration",
-      [],
-    );
+  if (target.kind === "advisory_review") {
+    // #13c advisory dispatch. The synchronous claim-time facts are the exact
+    // current loop/semantic registry and source policies checked above; the
+    // async candidate/derivation/admission subject facts are revalidated by
+    // the bundle immediately before and after the pre-dispatch writes. The
+    // definition parser already pins lane "advisory_review" to the exact
+    // uncalibrated posture, and an advisory subject may legitimately bind an
+    // empty source-policy set when its content is not source-derived.
+    return;
   }
   if (reservation.sourcePolicies.length === 0) {
     throw invalid("semantic.workflow_disclosure_forbidden", "semantic generation has no exact source policy set", []);

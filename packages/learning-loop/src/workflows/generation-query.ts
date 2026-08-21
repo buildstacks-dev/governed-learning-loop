@@ -7,11 +7,18 @@ import type { DetectorWindow } from "../engine/detector-window.js";
 import { loadSemanticWorkflowChildViews } from "../engine/semantic-views.js";
 import { parseDigestAt, parseDurableId, scopeDigest } from "../records/semantic-shared.js";
 import type { SemanticWorkflowBundle } from "./types.js";
+import type { SemanticWorkflowDefinition } from "./workflow-definition.js";
 import {
   loadSemanticWorkflowExecutionBinding,
   loadSemanticGenerationTurnByScope,
   querySemanticGenerationTurnsByScope,
 } from "./semantic-generation-persistence.js";
+import {
+  loadSemanticAdvisoryAssessment,
+  loadSemanticAdvisoryTurnByScope,
+  querySemanticAdvisoryTurnsByScope,
+} from "./advisory-review-persistence.js";
+import { advisoryAssessmentView } from "./advisory-review-run.js";
 import type { SemanticTurnPersistenceGraph } from "./semantic-turn-persistence.js";
 import { readSemanticWorkflowFields as readFields } from "./workflow-structure.js";
 
@@ -138,7 +145,15 @@ async function publicTurnView(
       derivations: childViews.derivations,
     };
   } else {
-    throw invalid("store.corrupt", "generation bundle encountered an advisory-review turn", []);
+    const target = graph.reservation.target;
+    if (target.kind !== "advisory_review") {
+      throw invalid("store.corrupt", "advisory turn output has a foreign target", []);
+    }
+    const assessment = await loadSemanticAdvisoryAssessment(context, graph.turn.output.assessmentId);
+    if (assessment === undefined || assessment.assessmentDigest !== graph.turn.output.assessmentDigest) {
+      throw invalid("store.corrupt", "advisory turn assessment is unavailable", []);
+    }
+    output = { kind: "advisory_review", assessment: advisoryAssessmentView(assessment) };
   }
   return {
     schemaVersion: 1,
@@ -193,9 +208,10 @@ async function publicTurnView(
 
 export async function getTurn(
   context: EngineContext,
-  definitionDigest: string,
+  definition: SemanticWorkflowDefinition,
   input: unknown,
 ): ReturnType<SemanticWorkflowBundle["getTurn"]> {
+  const definitionDigest = definition.definitionDigest;
   const fields = readFields(input, ["getTurn"]);
   const turnId = fields.req("turnId", parseDurableId);
   const scope = Object.freeze(
@@ -203,7 +219,10 @@ export async function getTurn(
       .validate(fields.req("scope", (value) => value))
       .map((segment) => Object.freeze({ type: segment.type, id: segment.id })),
   );
-  const graph = await loadSemanticGenerationTurnByScope(context, turnId, scopeDigest(scope), definitionDigest);
+  const graph =
+    definition.lane === "generation"
+      ? await loadSemanticGenerationTurnByScope(context, turnId, scopeDigest(scope), definitionDigest)
+      : await loadSemanticAdvisoryTurnByScope(context, turnId, scopeDigest(scope), definitionDigest);
   return graph === undefined || graph.reservation.definition.definitionDigest !== definitionDigest
     ? undefined
     : await publicTurnView(context, graph, scope);
@@ -211,9 +230,10 @@ export async function getTurn(
 
 export function queryTurns(
   context: EngineContext,
-  definitionDigest: string,
+  definition: SemanticWorkflowDefinition,
   input: unknown,
 ): ReturnType<SemanticWorkflowBundle["queryTurns"]> {
+  const definitionDigest = definition.definitionDigest;
   const fields = readFields(input, ["queryTurns"]);
   const scope = Object.freeze(
     context.scopePolicy
@@ -236,9 +256,11 @@ export function queryTurns(
           queryCursorScopeDigest: context.queryCursorScopeDigest,
           registryRevision: context.registryRevision,
         });
+  const queryByScope =
+    definition.lane === "generation" ? querySemanticGenerationTurnsByScope : querySemanticAdvisoryTurnsByScope;
   return {
     async *[Symbol.asyncIterator]() {
-      for await (const page of querySemanticGenerationTurnsByScope(context, {
+      for await (const page of queryByScope(context, {
         scopeDigest: exactScopeDigest,
         definitionDigest,
         limit,

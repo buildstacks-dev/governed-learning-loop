@@ -144,7 +144,7 @@ Start with one package and subpath exports:
 ├── node          JSON Lines/filesystem store and journal adapters
 ├── testing       runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── reference-detectors  opt-in deterministic core/reference pack bundle
-└── workflows     provider-neutral semantic generation; advisory review remains #13c
+└── workflows     provider-neutral semantic generation and advisory Candidate review
 ```
 
 Recommended packaging properties:
@@ -2166,10 +2166,10 @@ implicitly solved.
 Decisions 0021/0022 likewise supply only L1 records/schema/goldens and L2
 deterministic crash, concurrency, provider-boundary, privacy and scope controls.
 They ship no L3 live-source/provider evidence, L4 semantic/model evaluation, L5
-operational/SLO evidence, or L6 longitudinal acceptance evidence. #13c owns
-advisory review plus its non-decisive evaluation scaffold. #26 owns detector/
-reviewer calibration, held-out Candidate utility and every default-quality or
-improvement claim.
+operational/SLO evidence, or L6 longitudinal acceptance evidence. Decision 0023
+ships advisory Candidate review under the same L1/L2-only posture. #26 owns
+detector/reviewer calibration, held-out Candidate utility and every
+default-quality or improvement claim.
 
 Private derivation/Candidate recurrence claims are implemented by decision
 0016, observational receipt assessment by decision 0017, and serialized
@@ -2180,8 +2180,8 @@ and scheduling/routing remain outside this receipt. Decision 0019 implements
 the opt-in core/reference contents; host packs remain host data. Decision 0021
 implements only the private, no-egress #13a turn substrate. Typed generation/
 provider handoff and process recovery are implemented by Decision 0022 for
-#13b; advisory review is #13c. Default-quality and Candidate-utility claims
-remain #26.
+#13b; advisory Candidate review by Decision 0023 for #13c. Default-quality and
+Candidate-utility claims remain #26.
 
 #### Private derivation and Candidate recurrence claims
 
@@ -3490,7 +3490,7 @@ provider-neutral seam: a future distiller consumes a kernel-materialized exact
 detector window and may produce an inert typed derivation, never a Candidate,
 verified proposer, review, or effect. The sketch remains directional host-port
 context and is superseded for generation by the #13b `/workflows` contract
-below. It is not the advisory-review API reserved for #13c.
+below and for advisory review by the #13c contract that follows it.
 
 ```ts
 export interface CandidateGenerator {
@@ -3703,6 +3703,69 @@ export interface SemanticWorkflowBundle {
     readonly derivations: readonly InsightDerivation[];
   }>;
 
+  prepareAdvisoryReview(input: {
+    readonly candidateId: string;
+    readonly scope: Scope;
+    readonly expiresAt: string;
+  }): Promise<
+    | {
+        readonly status: "prepared";
+        readonly plan: object;
+        readonly attemptId: string;
+        readonly preview: {
+          readonly mediaType: "application/json";
+          readonly encoding: "utf-8";
+          readonly bytes: Uint8Array;
+          readonly byteLength: number;
+          readonly estimatedInputTokens: number;
+          readonly minimizedBytesDigest: string;
+          readonly keyPolicyDigest: string;
+        };
+        readonly candidateDigest: string;
+        readonly snapshotDigest: string;
+      }
+    | {
+        readonly status: "incomplete";
+        readonly preview: null;
+        readonly diagnostics: readonly Diagnostic[];
+      }
+  >;
+
+  authorizeAdvisoryReview(input: { readonly plan: object; readonly evidence: unknown }): Promise<{
+    readonly authorization: object;
+    readonly authorizedAt: string;
+    readonly expiresAt: string;
+  }>;
+
+  runAdvisoryReview(input: { readonly plan: object; readonly authorization: object | null }): Promise<{
+    readonly status:
+      | "completed"
+      | "provider_refused"
+      | "provider_failed"
+      | "result_invalid"
+      | "result_limit"
+      | "outcome_unknown";
+    readonly persistence: "committed" | "existing" | "dispatch_only";
+    readonly callbackInvoked: boolean;
+    readonly turnId: string | null;
+    readonly assessment?: SemanticAdvisoryAssessmentView;
+  }>;
+
+  recoverAdvisoryReview(input: { readonly attemptId: string; readonly scope: Scope }): Promise<{
+    readonly status:
+      | "completed"
+      | "provider_refused"
+      | "provider_failed"
+      | "result_invalid"
+      | "result_limit"
+      | "outcome_unknown"
+      | "not_dispatched";
+    readonly persistence: "committed" | "existing" | "dispatch_only" | "not_dispatched";
+    readonly callbackInvoked: boolean; // always false for the shipped recovery path
+    readonly turnId: string | null;
+    readonly assessment?: SemanticAdvisoryAssessmentView;
+  }>;
+
   getTurn(input: {
     readonly turnId: string;
     readonly scope: Scope;
@@ -3722,18 +3785,26 @@ export interface SemanticWorkflowBundle {
 export declare const createSemanticWorkflowBundle: {
   (input: SemanticWorkflowBundleConfig): SemanticWorkflowBundle;
   readonly defineGeneration: (input: DefineGenerationInput) => SemanticWorkflowDefinition;
+  readonly defineAdvisoryReview: (input: DefineAdvisoryReviewInput) => SemanticWorkflowDefinition;
   readonly generationResultSchema: {
     readonly schemaVersion: 1;
     readonly id: "cormidia.semantic-generation-result";
     readonly version: "1.0.0";
     readonly schemaDigest: string;
   };
+  readonly advisoryReviewResultSchema: {
+    readonly schemaVersion: 1;
+    readonly id: "cormidia.semantic-advisory-review-result";
+    readonly version: "1.0.0";
+    readonly schemaDigest: string;
+  };
 };
 ```
 
-`SemanticWorkflowBundleConfig`, `DefineGenerationInput`, the definition and
-turn-view helper names above describe structural inferred types; they are not
-additional exports. A strict consumer calls the factory statics without naming
+`SemanticWorkflowBundleConfig`, `DefineGenerationInput`,
+`DefineAdvisoryReviewInput`, `SemanticAdvisoryAssessmentView`, and the
+definition and turn-view helper names above describe structural inferred
+types; they are not additional exports. A strict consumer calls the factory statics without naming
 those helper types. `defineGeneration` fixes lane `generation`, calibration
 null, maximum attempts one, tool mode `none`, the kernel result schema, and all
 definition digests. The caller supplies exact implementation, provider/model,
@@ -3844,6 +3915,90 @@ advisory review; #26 owns decisive calibrated review and held-out utility.
 #13b validation is L1 contract/schema/golden evidence plus L2 deterministic
 hermetic callback/store evidence only. L3 live provider, L4 semantic/model, L5
 operational/SLO and L6 longitudinal evidence are empty.
+
+#### Advisory semantic Candidate review (#13c)
+
+Decision 0023 extends the same two `/workflows` symbols with the advisory
+lane. `defineAdvisoryReview` fixes lane `advisory_review`, calibration exactly
+`{ status: "unverified", calibrationId: null, calibrationDigest: null }`,
+maximum attempts one, tool mode `none`, and the fixed
+`cormidia.semantic-advisory-review-result` schema. Bundle creation verifies a
+loop-verified **reviewer** principal against the definition; one bundle serves
+one lane, and cross-lane methods refuse with
+`semantic.workflow_lane_unavailable`. No detector, pack, or lens participates:
+the subject is one exact inert Candidate.
+
+Preparation is zero-write and zero-provider-call. The subject is located
+scope-first through the create-only candidate scope-membership index that
+`propose` and recurrence admission write immediately before the Candidate
+receipt: an unknown, wrong-scope, or digest-mismatched subject returns one
+indistinguishable `workflow.candidate_unavailable` incomplete result without
+probing the global candidate record, and historical Candidates without the
+locator are not advisory subjects and are never bulk-backfilled. Candidate v1,
+invalid derivation lineage, and invalid admission lineage refuse with closed
+diagnostics. Every consulted subject fact is create-only and precedes the
+Candidate receipt, so the loaded subject graph is immutable under the read.
+
+The reviewer must be independent before any write and again twice before
+dispatch: not the proposer, not sharing the proposer's independence domain
+when the effective risk policy demands domain separation, and — for a
+derivation-backed subject — not the derivation producer, not sharing the
+producer's independence domain, and not reusing the producer's implementation
+identity (`semantic.workflow_reviewer_not_independent`).
+
+The kernel owns the advisory envelope: definition identity, prompt binding,
+minimized host instructions, and the complete subject — exact candidate
+bytes, full derivation bytes or null, the closed admission projection
+(`not_subject` reason or the exact admission binding digests and basis), and
+the evidence-set digest over the candidate's sorted evidence-reference
+digests. Byte/token budgets, tenant-keyed digestion, and the single token
+estimate follow the generation lane. One advisory review key — candidate id,
+candidate digest, definition digest, scope digest — owns one exact prepared
+request through a create-only advisory plan lock and a
+scope-and-definition-private attempt index
+(`semantic-workflow-advisory-attempt-<reviewKey>`). Same bytes converge; a
+different render for an owned key conflicts before a second callback.
+
+Durable pre-call order is reservation, advisory plan lock, outbound
+authorization when required, attempt index, second subject/policy
+revalidation, then one create-only dispatch claim; only a new claim invokes
+the provider, at most once. Advisory source policies are the content policies
+of every source cited by the candidate's and derivation's evidence references
+(possibly empty for content that is not source-derived); outbound transport
+requires explicit-receipt policies throughout and the exact plan-bound
+disclosure authorization.
+
+Completed provider output must parse as the fixed advisory draft:
+`advisoryRecommendation` in `support | revise | oppose | escalate` and at most
+100 findings of `{ code, severity, statement }`; a `support` recommendation
+with a blocking finding is invalid. The kernel digests each statement with the
+registered tenant-keyed digester and durably retains only
+`statementKeyedDigest` plus the exact `statementByteLength`; provider prose
+never persists, and the durable normalized result is that digested
+projection. The completed run mints one content-addressed
+`advisory_uncalibrated` assessment binding the exact subject, the digested
+findings, subject-snapshot/evidence-set/admission-lineage digests, the
+derivation reference or null, and the definition's full reviewer attribution
+with calibration absent by construction. Persistence is completion-intent
+first after synchronous validation, then result binding, assessment, general
+scope turn index, and the scope-and-definition terminal receipt last.
+
+The assessment is a workflow-private audit fact. It is not a
+`CandidateReview`, never enters the candidate-review index or governance
+view, adds nothing to the DetectorExecution/InsightDerivation graph, and
+grants no proposal admission, publication, activation, validation, effect,
+authority, utility, efficacy, or calibration claim. `CandidateView`
+governance is unchanged by any assessment. `recoverAdvisoryReview` is
+attempt-index-first, invokes no host callback, forward-completes only durable
+intents or noncompleted results, and leaves dispatch-only ambiguity
+`outcome_unknown` with no automatic retry. Advisory `getTurn`/`queryTurns`
+read only the bundle's definition-local terminal namespace with the shared
+bound cursor and work ceilings; a generation bundle on the same loop and
+scope sees no advisory turn. Reviewer calibration and every decisive or
+default-quality claim remain #26.
+
+#13c validation matches the #13b posture: L1 contract/schema/digest/goldens
+plus L2 deterministic hermetic callback/store evidence only; L3–L6 are empty.
 
 ### Replay and outcomes
 
@@ -5116,7 +5271,8 @@ Decision 0022 adds the `/workflows` entrypoint with exactly
 `SemanticWorkflowBundle` and `createSemanticWorkflowBundle`. Typed static
 definition/schema properties and all bundle methods are members of those two
 symbols, not separate exports. The all-entrypoint snapshot is therefore 158;
-the root snapshot is unchanged.
+the root snapshot is unchanged. Decision 0023 extends the same two symbols
+with advisory-review methods and statics and keeps the snapshot at 158.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 
@@ -5174,9 +5330,12 @@ It must not compare Codex, Claude Code, and Cursor from ordinary self-selected d
 4. Are `T0`–`T3` public protocol tiers or only a conservative default policy? This proposal makes them public because destination authority must be portable.
 5. Is the low-level `LearningStore` contract sufficient for database and filesystem adapters without requiring distributed transactions?
 6. Which publication destinations, if any, ship in the first package? This proposal favors inert examples and a local versioned text-context destination only after its host-protection limitations are explicit.
-7. Which advisory-review methods, if any, join the shipped `/workflows` bundle
-   in #13c before decisive reviewer calibration exists? #13b generation is
-   already ratified; no review method is implied by it.
+7. ~~Which advisory-review methods, if any, join the shipped `/workflows`
+   bundle in #13c before decisive reviewer calibration exists?~~ Ratified by
+   Decision 0023: `prepareAdvisoryReview`, `authorizeAdvisoryReview`,
+   `runAdvisoryReview`, and `recoverAdvisoryReview`, with
+   `defineAdvisoryReview`/`advisoryReviewResultSchema` factory statics and no
+   new public symbol.
 8. Which exact fields enter candidate, plan, policy, and authorization digests?
 9. What historical Cormidia bytes and schemas must remain compatible?
 10. Which Node releases, module formats, and license serve the intended community?

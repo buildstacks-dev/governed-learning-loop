@@ -152,8 +152,29 @@ between code and contract, open an issue — never silently drift either one.
   evidence resolves at most 5,000 exact refs through its batch fold; Candidate
   proposal keeps its independent 1,000-ref cap. No workflow method creates a
   Candidate/Review, proposal admission, publication, activation, validation,
-  effect, authority, utility, efficacy, or calibration claim. #13c owns
-  advisory review; decisive calibrated review remains #26.
+  effect, authority, utility, efficacy, or calibration claim. Decisive
+  calibrated review remains #26.
+- **Advisory semantic review is subject-exact, digest-private, and
+  non-decisive.** Decision 0023 extends the one `/workflows` bundle with
+  prepare/authorize/run/recover advisory methods and four factory statics but
+  no new public symbol; one bundle serves one lane. The subject is located
+  scope-first through the create-only candidate scope-membership index —
+  unknown, wrong-scope, mismatched, or legacy-v1 subjects refuse with one
+  closed no-oracle diagnostic, and historical Candidates are never
+  bulk-backfilled into the index. The reviewer principal is loop-verified and
+  must be independent of the proposer (risk-gated domain separation) and of
+  any derivation producer's principal, domain, and implementation, checked
+  before writes and twice before dispatch. One advisory review key
+  (candidate/digest/definition/scope) owns one exact prepared request through
+  the advisory plan lock and scope-and-definition attempt index; recovery is
+  attempt-index-first and dispatch-only ambiguity stays `outcome_unknown`
+  with no automatic retry. A completed run mints one content-addressed
+  `advisory_uncalibrated` assessment whose finding statements persist only as
+  tenant-keyed digests with exact byte lengths — provider prose never enters
+  durable bytes — and which is not a CandidateReview, never enters the review
+  index or governance view, and grants no admission, publication, activation,
+  validation, authority, utility, efficacy, or calibration claim. Reviewer
+  calibration and every decisive or default-quality claim remain #26.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports

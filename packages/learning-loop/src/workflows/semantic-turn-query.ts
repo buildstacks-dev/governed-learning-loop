@@ -69,7 +69,12 @@ export async function* querySemanticTurnsByScope(
       const graph = await loadGraph(context, scopeIndex.turnId, input.scopeDigest);
       if (graph === undefined) throw invalid("store.corrupt", "listed semantic turn is not loadable", []);
       aggregateBytes += Buffer.byteLength(canonicalJsonText(toJsonValue(graph)), "utf8");
-      childReferences += graph.turn.output.kind === "generation" ? graph.turn.output.derivationRefs.length + 1 : 0;
+      childReferences +=
+        graph.turn.output.kind === "generation"
+          ? graph.turn.output.derivationRefs.length + 1
+          : graph.turn.output.kind === "advisory_review"
+            ? 1
+            : 0;
       if (aggregateBytes > maximumAggregateBytes || childReferences > maximumChildReferences) {
         throw invalid("query.incomplete", "semantic workflow query exceeds its aggregate work ceiling", []);
       }
@@ -201,7 +206,12 @@ export async function* querySemanticTurnsByDefinition(
         throw invalid("store.corrupt", "definition-local semantic turn is not loadable", []);
       }
       aggregateBytes += Buffer.byteLength(canonicalJsonText(toJsonValue(graph)), "utf8");
-      childReferences += graph.turn.output.kind === "generation" ? graph.turn.output.derivationRefs.length + 1 : 0;
+      childReferences +=
+        graph.turn.output.kind === "generation"
+          ? graph.turn.output.derivationRefs.length + 1
+          : graph.turn.output.kind === "advisory_review"
+            ? 1
+            : 0;
       if (aggregateBytes > 64 * 1_048_576 || childReferences > 5_000) {
         throw invalid("query.incomplete", "semantic workflow query exceeds its aggregate work ceiling", []);
       }

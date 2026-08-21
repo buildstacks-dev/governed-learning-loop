@@ -176,6 +176,33 @@ between code and contract, open an issue — never silently drift either one.
   index or governance view, and grants no admission, publication, activation,
   validation, authority, utility, efficacy, or calibration claim. Reviewer
   calibration and every decisive or default-quality claim remain #26.
+- **Activate records are exact, inert, and refusal-first.** Decision 0025
+  ships the first half of #10: `PreparedEffect`, `PublicationLineage`,
+  `PublicationPlan`, `AuthorizationBinding`, and `VerifiedAuthorization`
+  records, `createAuthorityPort`, host `DestinationRegistration`,
+  `preparePublication`, and the refusal half of `publish`. A plan is
+  content-addressed (`plan-<planDigest>`) over candidate, destination, action,
+  effect class, effective risk, every effect, policy, and a lineage closure
+  (scope, scope policy, registry revision, destination registration, and the
+  exact derivation/detector/lens/pack for derivation-backed candidates); the
+  binding is a pure projection carrying one `lineageClosureDigest`. Changing
+  content, destination, scope, base, risk, action, policy, or lineage voids
+  the binding (kernel invariant 4). v1 candidates never become plans. The
+  authority port follows the identity-port discipline: kernel-minted,
+  registry-digested, frozen branded handles bound to the exact configured
+  instance, host results parsed from `unknown`, and an approval of a different
+  binding returned as a closed `invalid` decision. Destination registrations
+  are host-owned, parsed and snapshotted at construction, digested into the
+  registry revision, and an `authority` destination must declare the `T3`
+  floor; effective risk is `max(proposed, floor)` at every policy decision.
+  `preparePublication` calls `prepare` exactly once, validates targets, bases,
+  after-effects, and content policy, and persists exactly one plan
+  idempotently; `publish` refuses binding drift, missing review, missing
+  authority, and pending/denied/invalid/expired/wrong-base authorizations
+  before any write, and in this slice stops every authorized plan at the
+  activation-tier gate. Nothing writes to a destination; the journaled
+  publisher, receipts, intervention state, crash-resume, and
+  disable/rollback/compensate plans remain open on #10.
 - **Pack orchestration is bounded and transient.** `runDetectorPack` derives
   exact selected detector/compatible-lens pairs for one caller-declared scope
   and episode population, orders them by protocol code-unit keys, and reports

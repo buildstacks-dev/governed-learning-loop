@@ -1,4 +1,6 @@
 import type {
+  AuthorityPort,
+  DestinationRegistration,
   DetectorExecutionRecord,
   DetectorPackManifest,
   DetectorRegistration,
@@ -7,8 +9,8 @@ import type {
   LearningLensRegistration,
   LearningLoop,
   LearningStore,
-  ObservationEvidenceRef,
   MeasurementEvidenceRefV2,
+  ObservationEvidenceRef,
   RegisteredSource,
   Scope,
   SemanticRegistryConfig,
@@ -292,6 +294,9 @@ export async function createSemanticEngineHarness(
     readonly detectorEpisodeClasses?: DetectorRegistration["episodeClasses"];
     readonly detectorScopeConstraint?: DetectorRegistration["scopeConstraint"];
     readonly workflowDefinitionDigest?: string;
+    /** Decision 0025: optional host destination registrations and authority port for Activate tests. */
+    readonly destinations?: readonly DestinationRegistration[];
+    readonly authority?: AuthorityPort;
   } = {},
 ): Promise<SemanticEngineHarness> {
   const scope = input.scope ?? SEMANTIC_SCOPE_A;
@@ -352,6 +357,8 @@ export async function createSemanticEngineHarness(
     contentPolicies: [contentPolicy],
     sources: [source],
     semanticRegistry: registry,
+    ...(input.destinations === undefined ? {} : { destinations: input.destinations }),
+    ...(input.authority === undefined ? {} : { authority: input.authority }),
     queryCursorScope: "semantic-engine-tests",
     clock,
     ids,

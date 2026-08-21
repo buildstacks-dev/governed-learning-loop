@@ -45,6 +45,13 @@ export { semanticRegistryDigest, parseSemanticRegistryConfig } from "./records/s
 export type { DetectorExecutionRecord, DetectorExecutionStatus } from "./records/semantic.js";
 export { detectorExecutionKeyDigest, detectorExecutionDigest } from "./records/semantic.js";
 export { parseDetectorExecutionRecord } from "./records/semantic.js";
+// Activate records (decision 0025): exact, inert publication plans and bindings.
+export type { AfterEffectSemantics, EffectClass, PreparedEffect, PublicationLineage } from "./records/publication.js";
+export type { AuthorizationBinding, PublicationPlan, PublicationReceipt } from "./records/publication.js";
+export { parsePreparedEffect, parsePublicationPlan, publicationPlanDigest } from "./records/publication.js";
+export { authorizationBindingDigest, parseAuthorizationBinding } from "./records/publication.js";
+export type { AuthorityPort, VerifiedAuthorization } from "./records/authorization.js";
+export { createAuthorityPort } from "./engine/authority.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";
@@ -54,6 +61,7 @@ export type { ProjectedMeasurement, ProjectedObservation, RegisteredSource } fro
 // the adapter with it so the engine can stream pages during ingest.
 export { defineSourceRegistration } from "./engine/source-registration.js";
 export type { Clock, IdGenerator } from "./ports/clock.js";
+export type { DestinationRegistration, PublicationDestination } from "./ports/destination.js";
 
 export type { LearningPolicy } from "./engine/policy.js";
 export { conservativePolicy } from "./engine/policy.js";
@@ -67,6 +75,7 @@ export type { SourcePageReceiptQuery } from "./engine/query.js";
 export type { DetectorExecutionQuery, DetectorExecutionView } from "./engine/semantic-query.js";
 export type { InsightDerivationQuery, InsightDerivationView } from "./engine/semantic-query.js";
 export type { CandidateReviewer, CandidateReviewInput } from "./engine/review.js";
+export type { PreparedPublication, PublicationOutcome } from "./engine/publication.js";
 export type { LearningReport, LearningReportQuery } from "./engine/report.js";
 export type { LearningLoop, LearningLoopConfig } from "./engine/loop.js";
 export { createLearningLoop } from "./engine/loop.js";

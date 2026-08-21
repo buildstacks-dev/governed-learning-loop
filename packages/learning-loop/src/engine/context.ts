@@ -10,7 +10,8 @@ import type { LearningStore, RecordKey, StoredRecord, WriteResult } from "../por
 import { invalid, parseArrayOf, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Parse } from "../parse/toolkit.js";
 import type { Candidate, RiskTier } from "../records/candidate.js";
-import { parseCandidate } from "../records/candidate.js";
+import { maxRiskTier, parseCandidate } from "../records/candidate.js";
+import type { AuthorityPort } from "../records/authorization.js";
 import type { DetectorPackManifest } from "../records/detector-pack.js";
 import { DETECTOR_RECURRENCE_GROUP_MEMBER_LIMIT } from "../records/detector-recurrence.js";
 import type { DetectorOrchestrationPolicy } from "../records/detector-orchestration-policy.js";
@@ -23,6 +24,7 @@ import type { SemanticRegistryConfig } from "../records/semantic-registry.js";
 import type { SourceSemanticProfile } from "../records/source-semantic-profile.js";
 import type { LearningPolicy, PolicyRules } from "./policy.js";
 import type { RegisteredDetectorImplementation } from "./detector-implementation.js";
+import type { BoundDestination } from "./destination-registration.js";
 
 /** Every engine-owned record lives in this namespace. */
 export const RECORD_NAMESPACE = "learning";
@@ -66,7 +68,8 @@ export type RecordKind =
   | "semantic-workflow-execution"
   | "semantic-workflow-advisory-plan"
   | "semantic-workflow-advisory-completion"
-  | "semantic-workflow-advisory-assessment";
+  | "semantic-workflow-advisory-assessment"
+  | "publication-plan";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -83,6 +86,10 @@ export interface EngineContext {
   readonly sourceSemanticProfilesBySourceId?: ReadonlyMap<string, SourceSemanticProfile>;
   readonly detectorImplementationsByRef?: ReadonlyMap<string, RegisteredDetectorImplementation>;
   readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
+  /** Loop-bound authority port (decision 0025); absent means publish cannot be authorized. */
+  readonly authority?: AuthorityPort;
+  /** Host destination registrations snapshotted at construction; absent or empty means none. */
+  readonly destinationsById?: ReadonlyMap<string, BoundDestination>;
   readonly registryRevision: string;
   readonly queryCursorScopeDigest: string;
   readonly clock: Clock;
@@ -108,12 +115,16 @@ export function recordDigest(value: JsonValue): string {
 }
 
 /**
- * M1 effective risk: the monotonic maximum of the proposal and host policy.
- * No destinations are registered in the Observe+Govern milestone, so no
- * destination floor participates yet; the proposal's tier stands.
+ * Effective risk: the monotonic maximum of the proposal and the host-registered
+ * floor of the destination the candidate's intervention names (contract
+ * §Candidate, decision 0025). An unregistered destination contributes no
+ * floor; neither a proposer nor an adapter can lower the result.
  */
-export function effectiveRisk(candidate: Candidate): RiskTier {
-  return candidate.proposedRisk;
+export function effectiveRisk(context: EngineContext, candidate: Candidate): RiskTier {
+  const destination = context.destinationsById?.get(candidate.intervention.destinationId);
+  return destination === undefined
+    ? candidate.proposedRisk
+    : maxRiskTier(candidate.proposedRisk, destination.riskFloor);
 }
 
 /** LearningLoopError → its diagnostics; anything else propagates unchanged. */

@@ -203,7 +203,7 @@ function assertReviewerIndependence(
   producerImplementation: { readonly id: string; readonly version: string } | undefined,
 ): void {
   const reviewer = definition.principal;
-  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  const riskRule = context.policyRules.risks[effectiveRisk(context, candidate)];
   if (
     reviewer.id === candidate.proposedBy.id ||
     (riskRule.independentDomain && reviewer.independenceDomain === candidate.proposedBy.independenceDomain) ||

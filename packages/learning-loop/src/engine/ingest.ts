@@ -101,13 +101,13 @@ function foldCompleteness(values: readonly Completeness[], empty: Completeness):
   return worst ?? empty;
 }
 
-interface ParsedContentPolicyResult {
+export interface ParsedContentPolicyResult {
   readonly accepted: JsonValue;
   readonly classification: string;
   readonly diagnostics: readonly Diagnostic[];
 }
 
-function parseContentPolicyResult(input: unknown): ParsedContentPolicyResult {
+export function parseContentPolicyResult(input: unknown): ParsedContentPolicyResult {
   const fields = readFields(input, ["contentPolicyResult"]);
   const classification = fields.req("classification", parseNonEmptyText);
   if (classification.length > 200) {

@@ -13,3 +13,9 @@ export const registeredSourceBrand: unique symbol = Symbol("cormidia.learning-lo
 export const registeredDetectorImplementationBrand: unique symbol = Symbol(
   "cormidia.learning-loop/registered-detector-implementation",
 );
+
+// - authorityPortBrand / verifiedAuthorizationBrand: phantom markers attached
+//   only by the kernel createAuthorityPort factory (decision 0025). As with
+//   identity, live authority comes from private per-port WeakMap bindings.
+export const authorityPortBrand: unique symbol = Symbol("cormidia.learning-loop/authority-port");
+export const verifiedAuthorizationBrand: unique symbol = Symbol("cormidia.learning-loop/verified-authorization");

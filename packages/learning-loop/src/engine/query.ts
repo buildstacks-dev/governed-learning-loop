@@ -1163,7 +1163,7 @@ export async function runGetCandidateView(
   const candidateId = fields.req("candidateId", parseNonEmptyText);
   const candidate = await loadCandidate(context, candidateId);
   if (candidate === undefined) return undefined;
-  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  const riskRule = context.policyRules.risks[effectiveRisk(context, candidate)];
   const state = await candidateGovernanceStateOf(context, candidate, riskRule.independentReview);
   return {
     candidate,

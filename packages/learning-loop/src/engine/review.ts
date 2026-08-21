@@ -172,7 +172,7 @@ function assertIndependentReviewer(
       "derivation producer implementation cannot decisively review its Candidate",
     );
   }
-  const riskRule = context.policyRules.risks[effectiveRisk(candidate)];
+  const riskRule = context.policyRules.risks[effectiveRisk(context, candidate)];
   if (riskRule.independentDomain && reviewerRef.independenceDomain === candidate.proposedBy.independenceDomain) {
     throw refusal("review.not_independent", "reviewer shares a prohibited generation independence domain");
   }

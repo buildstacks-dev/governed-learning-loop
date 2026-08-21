@@ -21,11 +21,13 @@ here says a learned intervention has been shown to improve later agent work.
 | --- | --- | --- |
 | Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account plus bounded typed episode and evidence views |
 | Govern | Receipt-bound candidates, independent review, policy, rejection | Proposed lessons with exact evidence/episode lineage that stay **inert** until independently reviewed |
-| Activate *(planned)* | Content-bound authorization, deterministic publication, rollback | Exact versions introduced under host authority, disable/rollback explicit |
+| Activate *(in progress)* | Content-bound plans and bindings, loop-bound authority, host destination registrations; journaled publication and rollback pending | Exact plans whose approvals void on any content/destination/scope/base change and that refuse pending, denied, expired, or wrong-base authority before any write — nothing activates yet |
 | Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
 
-Observe and Govern are implemented first; Activate and Validate are tracked in
-the issue backlog and are orthogonal capabilities, not implied by the first two.
+Observe and Govern are implemented first. Activate's records, authority port,
+and destination registrations are merged (decision 0025) while its journaled
+publisher stays open; Validate is tracked in the issue backlog. Both are
+orthogonal capabilities, not implied by the first two.
 
 ## Package shape
 

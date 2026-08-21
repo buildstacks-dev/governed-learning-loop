@@ -2,10 +2,11 @@
 // engine (contract §The façade). The configuration is immutable: sources,
 // content policies, scope policy, and learning policy are composed before
 // construction and digested into a registry revision that is bound into every
-// ingest receipt. This milestone's config and façade are a deliberate
-// narrowing of the contract's full LearningLoopConfig/LearningLoop: the
-// activation, outcome, and experiment members (destinations, outcomeSources,
-// replayExecutors, preparePublication, publish, resolveContext,
+// ingest receipt and publication plan. This config and façade are a
+// deliberate narrowing of the contract's full LearningLoopConfig/LearningLoop:
+// decision 0025 adds destinations, the authority port, preparePublication, and
+// the refusal half of publish; the journaled publisher, outcome, and
+// experiment members (outcomeSources, replayExecutors, resolveContext,
 // acknowledgeExposure, declareExperiment, runExperiment, recordOutcomes) do
 // not exist yet — a smaller surface now, additive later.
 import { randomUUID } from "node:crypto";
@@ -16,6 +17,8 @@ import type { RegisteredSource } from "../ports/evidence.js";
 import type { LearningStore } from "../ports/store.js";
 import type { ContentPolicy } from "../records/provenance.js";
 import type { IdentityPort } from "../records/principal.js";
+import type { AuthorityPort } from "../records/authorization.js";
+import type { DestinationRegistration } from "../ports/destination.js";
 import type { MeasurementRecord } from "../records/episode.js";
 import type { Observation } from "../records/observation.js";
 import type { CandidateReview } from "../records/review.js";
@@ -31,6 +34,11 @@ import type { EngineContext } from "./context.js";
 import type { IngestOptions, IngestReceipt } from "./ingest.js";
 import { runIngest } from "./ingest.js";
 import { identityRegistryProjection } from "./identity.js";
+import { authorityRegistryProjection } from "./authority.js";
+import type { BoundDestination } from "./destination-registration.js";
+import { bindDestinationRegistration } from "./destination-registration.js";
+import type { PreparePublicationInput, PreparedPublication, PublicationOutcome, PublishInput } from "./publication.js";
+import { runPreparePublication, runPublish } from "./publication.js";
 import type { LearningPolicy } from "./policy.js";
 import { bindLearningPolicy } from "./policy.js";
 import type { CandidateInput, ProposeOutcome } from "./propose.js";
@@ -90,6 +98,10 @@ export interface LearningLoopConfig {
   readonly semanticRegistry?: SemanticRegistryConfig;
   readonly detectorImplementations?: readonly RegisteredDetectorImplementation[];
   readonly detectorOrchestrationPolicy?: DetectorOrchestrationPolicy;
+  /** Host destination registrations (contract §Publication destination); omitted means none. */
+  readonly destinations?: readonly DestinationRegistration[];
+  /** Loop-bound authority port (contract §Authority); omitted means publish cannot be authorized. */
+  readonly authority?: AuthorityPort;
   /** Stable host/store scope for resumable query cursors; omitted means process-local cursors. */
   readonly queryCursorScope?: string;
   readonly clock?: Clock;
@@ -117,6 +129,8 @@ export interface LearningLoop {
   propose(input: CandidateInput): Promise<ProposeOutcome>;
   reviewCandidate(input: CandidateReviewInput): Promise<CandidateReview>;
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
+  preparePublication(input: PreparePublicationInput): Promise<PreparedPublication>;
+  publish(input: PublishInput): Promise<PublicationOutcome>;
   report(input: LearningReportQuery): Promise<LearningReport>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
   runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
@@ -211,6 +225,8 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
   const configuredSemanticRegistry = config.semanticRegistry;
   const configuredDetectorImplementations = config.detectorImplementations;
   const configuredDetectorOrchestrationPolicy = config.detectorOrchestrationPolicy;
+  const configuredDestinations = config.destinations;
+  const configuredAuthority = config.authority;
   const detectorOrchestrationPolicy =
     configuredDetectorOrchestrationPolicy === undefined
       ? undefined
@@ -247,6 +263,28 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     sourceIds.add(source.id);
     sources.add(source);
   }
+
+  const destinationsById = new Map<string, BoundDestination>();
+  if (configuredDestinations !== undefined) {
+    if (!Array.isArray(configuredDestinations)) {
+      throw invalid("config.invalid", "destinations must be an array of registrations", ["destinations"]);
+    }
+    for (const [index, registration] of configuredDestinations.entries()) {
+      const destination = bindDestinationRegistration(registration, ["destinations", index]);
+      if (destinationsById.has(destination.id)) {
+        throw invalid("config.invalid", `duplicate destination id "${destination.id}"`, ["destinations", index]);
+      }
+      if (!contentPoliciesById.has(destination.contentPolicyId)) {
+        throw invalid(
+          "config.invalid",
+          `destination "${destination.id}" names content policy "${destination.contentPolicyId}", which is not configured`,
+          ["destinations", index, "contentPolicyId"],
+        );
+      }
+      destinationsById.set(destination.id, destination);
+    }
+  }
+  const authority = configuredAuthority === undefined ? undefined : authorityRegistryProjection(configuredAuthority);
 
   const boundPolicy = bindLearningPolicy(config.policy);
   const policy = boundPolicy.policy;
@@ -380,6 +418,14 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     ...(detectorOrchestrationPolicy === undefined
       ? {}
       : { detectorOrchestrationPolicy: { policyDigest: detectorOrchestrationPolicy.policyDigest } }),
+    ...(configuredDestinations === undefined
+      ? {}
+      : {
+          destinations: [...destinationsById.values()]
+            .map((destination) => ({ id: destination.id, registrationDigest: destination.registrationDigest }))
+            .sort((left, right) => (left.id < right.id ? -1 : 1)),
+        }),
+    ...(authority === undefined ? {} : { authority }),
   });
 
   const context: EngineContext = {
@@ -397,6 +443,8 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     sourceSemanticProfilesBySourceId,
     detectorImplementationsByRef,
     ...(detectorOrchestrationPolicy === undefined ? {} : { detectorOrchestrationPolicy }),
+    ...(configuredAuthority === undefined ? {} : { authority: configuredAuthority }),
+    destinationsById,
     registryRevision,
     queryCursorScopeDigest,
     clock: config.clock ?? systemClock,
@@ -419,6 +467,8 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     propose: (input) => runPropose(context, input),
     reviewCandidate: (input) => runReviewCandidate(context, input),
     getCandidateView: (input) => runGetCandidateView(context, input),
+    preparePublication: (input) => runPreparePublication(context, input),
+    publish: (input) => runPublish(context, input),
     report: (input) => runReport(context, input),
     runDetector: (input) => runDetector(context, input),
     runDetectorPack: (input) => runDetectorPack(context, input),

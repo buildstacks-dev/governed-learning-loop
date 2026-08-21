@@ -1,14 +1,17 @@
 // Cheap probe: input validation plus a bounded read of each file's first
-// content line against the provider's shape band. No hashing, no full parse.
+// content line against the provider's shape band, under the same privacy
+// policy, confinement, and ceilings as a full read. No hashing, no full parse.
 import type { Diagnostic } from "@cormidia/learning-loop";
 import { parseTranscriptFilesInput } from "./input.js";
+import type { TranscriptPrivacyPolicy } from "./privacy-policy.js";
 import { fileDiagnostic, readFirstContentLine, refOf } from "./session-file.js";
 
 export async function probeExplicitFiles(
   input: unknown,
+  policy: TranscriptPrivacyPolicy,
   firstLineBand: (record: Record<string, unknown>) => string | undefined,
 ): Promise<{ readonly supported: boolean; readonly diagnostics: readonly Diagnostic[] }> {
-  const parsed = parseTranscriptFilesInput(input);
+  const parsed = parseTranscriptFilesInput(input, policy);
   if (parsed.paths.length === 0) {
     return {
       supported: true,
@@ -17,13 +20,14 @@ export async function probeExplicitFiles(
       ],
     };
   }
+  const context = { policy, roots: parsed.roots };
   const diagnostics: Diagnostic[] = [];
   let supported = true;
   for (let index = 0; index < parsed.paths.length; index += 1) {
     const path = parsed.paths[index];
     if (path === undefined) continue;
     const ref = refOf(index);
-    const first = await readFirstContentLine(path, ref);
+    const first = await readFirstContentLine(path, ref, context);
     if ("diagnostic" in first) {
       supported = false;
       diagnostics.push(first.diagnostic);

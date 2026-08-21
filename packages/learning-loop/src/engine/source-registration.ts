@@ -5,7 +5,7 @@
 // grant via the ports helper and retains the adapter in a module-private
 // WeakMap the engine reads. Nothing outside the engine can enumerate or
 // replace an adapter through this table.
-import { defineSourceRegistration as bindPortsRegistration } from "../ports/evidence.js";
+import { defineSourceRegistration as bindPortsRegistration, parseSourcePrivacyPolicyRef } from "../ports/evidence.js";
 import type { EvidenceSource, RegisteredSource } from "../ports/evidence.js";
 import type { TrustClass } from "../records/provenance.js";
 
@@ -14,9 +14,10 @@ const adapters = new WeakMap<RegisteredSource<unknown>, EvidenceSource<unknown>>
 /**
  * Binds an evidence-source adapter to its host-granted trust ceiling and
  * content policy (contract §Evidence source). The registry revision digests
- * the source id, adapter version, optional source trust maximum, host trust
- * ceiling, and content policy id; the returned capability preserves its input
- * type so one source's input cannot be fed to another registration.
+ * the source id, adapter version, optional source trust maximum, optional
+ * declared privacy policy, host trust ceiling, and content policy id; the
+ * returned capability preserves its input type so one source's input cannot
+ * be fed to another registration.
  */
 export function defineSourceRegistration<I>(input: {
   readonly source: EvidenceSource<I>;
@@ -26,10 +27,18 @@ export function defineSourceRegistration<I>(input: {
   const source = input.source;
   const configuredDescriptor = source.descriptor;
   const maximumTrust = configuredDescriptor.maximumTrust;
+  const configuredPrivacyPolicy = configuredDescriptor.privacyPolicy;
+  // Snapshot the declaration now: later mutation of the adapter's descriptor
+  // object must not change what the engine binds into receipts.
+  const privacyPolicy =
+    configuredPrivacyPolicy === undefined
+      ? undefined
+      : parseSourcePrivacyPolicyRef(configuredPrivacyPolicy, ["source", "descriptor", "privacyPolicy"]);
   const descriptor = Object.freeze({
     id: configuredDescriptor.id,
     adapterVersion: configuredDescriptor.adapterVersion,
     ...(maximumTrust !== undefined ? { maximumTrust } : {}),
+    ...(privacyPolicy !== undefined ? { privacyPolicy } : {}),
   });
   const probe = source.probe.bind(source);
   const read = source.read.bind(source);

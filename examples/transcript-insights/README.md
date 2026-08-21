@@ -24,8 +24,12 @@ consumer: everything goes through the public package surfaces
 - **Aggregate output.** Diagnostics are printed as counts by code, never as
   message bodies.
 - **Explicit inputs.** THIS demo (host code) discovers session files under
-  the `--root` you name and hands the adapters an explicit file list; the
-  adapters never crawl.
+  the `--root` you name and hands the adapters an explicit file list plus
+  that root; the adapters never crawl, confine every file to the root, and
+  refuse any symbolic link on the way.
+- **Policy-bound receipts.** Both adapters run under the shipped default
+  `TranscriptPrivacyPolicy`; its `{ id, digest }` is bound into every import
+  receipt, so the exact privacy posture that governed an import is auditable.
 
 ## Usage
 
@@ -93,16 +97,18 @@ writes only after the scan, when it proposes qualifying inert candidates.
   demo's own `demo` namespace holding per-day aggregate ingest summaries
   (counts and diagnostic codes only).
 
-### Adapter 0.2.0 state compatibility
+### Adapter state compatibility
 
-Adapter `0.2.0` replaces the `0.1.1` raw session identifiers, cwd basenames,
-branch names, and unkeyed source revisions with tenant-keyed identities. Those
-bytes intentionally cannot be reinterpreted in place: re-ingesting a `0.1.1`
-state with `0.2.0` can create parallel identities, mix incompatible history,
-or conflict where an old durable id is reused. Preserve the old directory for
-read-only audit use and choose a fresh state directory for `0.2.0` ingestion
-until an explicit versioned migration exists. Do not delete the old directory
-as an upgrade shortcut.
+Adapter `0.2.0` replaced the `0.1.1` raw session identifiers, cwd basenames,
+branch names, and unkeyed source revisions with tenant-keyed identities;
+`0.3.0` adds the bound privacy policy, structural token shapes for provider
+identifiers, and duplicate-segment collapsing, which changes some projections
+and every receipt. Those bytes intentionally cannot be reinterpreted in place:
+re-ingesting an older state with a newer adapter can create parallel
+identities, mix incompatible history, or conflict where an old durable id is
+reused. Preserve the old directory for read-only audit use and choose a fresh
+state directory for `0.3.0` ingestion until an explicit versioned migration
+exists. Do not delete the old directory as an upgrade shortcut.
 
 Reports and distillation stream typed, bounded observation and episode pages
 through the kernel façade. The app never knows the kernel's store namespace or

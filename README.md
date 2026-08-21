@@ -36,7 +36,7 @@ the issue backlog and are orthogonal capabilities, not implied by the first two.
 ├── /testing   runtime-safe stores, deterministic fixtures, injected conformance suites
 ├── /reference-detectors  opt-in host-bound deterministic pack bundle
 ├── /workflows  provider-neutral semantic generation capability and audit views
-└── adapters/  transcript source adapters (Claude Code, Codex) — explicit input only
+└── adapters/  transcript source adapters (Claude Code, Codex) — explicit input, policy-bound
 ```
 
 The kernel is headless and dependency-light: no model-provider SDKs, no agent
@@ -56,6 +56,19 @@ runLearningStoreConformance(makeStore, { describe, expect, it });
 The required second argument replaces the former one-argument call. It keeps
 the deterministic stores, clocks, ids, and builders usable outside a test
 worker without adding a test-framework runtime dependency.
+
+## Transcript privacy policy
+
+The reference transcript adapters run under a content-addressed
+`TranscriptPrivacyPolicy` (decision 0024). Its digest is declared through
+`SourceDescriptor.privacyPolicy` and bound into every page and import receipt,
+so the exact policy that governed an import is durable and audit-visible;
+changing policy content changes every receipt. Ceilings may only tighten the
+shipped maxima, every single-valued member is a closed literal that policy
+content cannot loosen, explicit paths are confined to caller-declared roots,
+and an executable negative-control catalog pins truncation straddling, prompt
+injection, decompression and nesting bombs, path traversal and symlink escape,
+duplicated segments, and leakage controls.
 
 ## Typed reads
 

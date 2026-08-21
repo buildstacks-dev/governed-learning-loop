@@ -3,7 +3,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { EvidencePage, EvidenceSource } from "@cormidia/learning-loop";
 import type { TranscriptFilesInput } from "../src/index.js";
 
@@ -71,8 +71,14 @@ export function expectedSessionLocator(
     .digest("hex");
 }
 
+/**
+ * The default policy requires root confinement, so the helper declares each
+ * file's own directory as a root (an empty path list confines to the temp
+ * dir). Tests that exercise confinement itself build their input by hand.
+ */
 export function inputOf(paths: readonly string[], locatorKey: string = TEST_LOCATOR_KEY): TranscriptFilesInput {
-  return { kind: "explicit_files", paths, locatorKey };
+  const roots = [...new Set(paths.map((path) => dirname(path)))];
+  return { kind: "explicit_files", paths, locatorKey, roots: roots.length === 0 ? [tmpdir()] : roots };
 }
 
 export async function allPages(

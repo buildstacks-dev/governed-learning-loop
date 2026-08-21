@@ -19,14 +19,19 @@ import {
 const SESSION_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const CWD = "/workspaces/sample-project";
 
+// Every real Claude Code record carries its own uuid; the adapter collapses a
+// repeated uuid as a duplicated segment, so fixtures mint distinct ones.
+let nextUuid = 0;
+
 function baseRecord(overrides: Record<string, unknown>): Record<string, unknown> {
+  nextUuid += 1;
   return {
     sessionId: SESSION_ID,
     cwd: CWD,
     gitBranch: "feature/sample",
     version: "2.1.900",
     isSidechain: false,
-    uuid: "u-1",
+    uuid: `u-${nextUuid}`,
     parentUuid: null,
     ...overrides,
   };

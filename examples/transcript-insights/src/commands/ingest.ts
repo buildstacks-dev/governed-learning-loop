@@ -24,6 +24,8 @@ export interface DayResult {
   readonly errorDiagnostics: number;
   /** Sorted [code, count] pairs — codes only, never message bodies. */
   readonly diagnosticCounts: readonly (readonly [string, number])[];
+  /** The content-addressed privacy policy the import receipt binds (absent when no files were read). */
+  readonly privacyPolicy?: { readonly id: string; readonly digest: string };
 }
 
 export interface DayProgress {
@@ -91,13 +93,17 @@ export async function ingestDay(
       });
     }, 5_000);
     heartbeat.unref();
+    // The adapter's privacy policy requires root confinement: every path must
+    // resolve inside the user-supplied --root with no symbolic link on the way.
     const receipt = await loop.learning
       .ingest(loop.sources[provider], {
         kind: "explicit_files",
         paths,
         locatorKey: loop.locatorKey,
+        roots: [root],
       })
       .finally(() => clearInterval(heartbeat));
+    const privacyPolicy = receipt.importReceipt.privacyPolicy;
     result = {
       provider,
       day,
@@ -108,6 +114,7 @@ export async function ingestDay(
       completeness: receipt.completeness,
       errorDiagnostics: receipt.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
       diagnosticCounts: diagnosticCountsByCode(receipt),
+      ...(privacyPolicy === undefined ? {} : { privacyPolicy }),
     };
   }
   const diagnosticCounts: { [code: string]: number } = {};
@@ -151,6 +158,9 @@ export async function runIngestCommand(
   out.write(`  episodes: ${result.newEpisodes} new`);
   out.write(`  already-known records (idempotent re-ingest): ${result.alreadyKnown}`);
   out.write(`  completeness: ${result.completeness}`);
+  if (result.privacyPolicy !== undefined) {
+    out.write(`  privacy policy: ${result.privacyPolicy.id} ${result.privacyPolicy.digest}`);
+  }
   if (result.diagnosticCounts.length === 0) {
     out.write("  diagnostics by code: (none)");
   } else {

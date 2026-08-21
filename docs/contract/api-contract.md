@@ -330,6 +330,7 @@ export interface SourceDescriptor {
   readonly id: string;
   readonly adapterVersion: string;
   readonly maximumTrust?: TrustClass;
+  readonly privacyPolicy?: { readonly id: string; readonly digest: string };
 }
 
 export interface ContentPolicy {
@@ -373,6 +374,17 @@ that maximum, and the field can never grant trust. Transcript sources declare
 a hard advisory maximum. A provider-native tool exit may support discovery,
 but only a separately authenticated human or deterministic verifier
 observation can raise the trust of a claim.
+
+`SourceDescriptor.privacyPolicy` is an optional, opaque, content-addressed
+declaration of the source privacy policy the adapter runs under: a bounded
+control-free `id` and the lowercase SHA-256 `digest` of the policy content.
+Registration parses it from the untrusted descriptor (any malformation is
+`config.invalid`), snapshots it so later descriptor mutation cannot rebind
+receipts, and folds it into the source registration revision. Ingest binds the
+exact declaration into every page and import receipt. The kernel never sees
+policy content and cannot verify enforcement; like `adapterVersion` the
+declaration is audit lineage, never trust, authority, or validation. Omitting
+it preserves the historical registration and receipt bytes.
 
 ### Observation
 
@@ -3190,6 +3202,7 @@ export interface SourcePageReceipt {
     readonly count: number;
   }[];
   readonly healthFindingIds: readonly string[];
+  readonly privacyPolicy?: { readonly id: string; readonly digest: string };
   readonly receiptDigest: string;
 }
 
@@ -3227,6 +3240,7 @@ export interface ImportReceipt {
   readonly sourceRevisions: readonly string[];
   readonly completeness: "complete" | "partial" | "unknown";
   readonly healthFindingIds: readonly string[];
+  readonly privacyPolicy?: { readonly id: string; readonly digest: string };
   readonly receiptDigest: string;
 }
 
@@ -3287,8 +3301,11 @@ finding ids are deterministic functions of `receiptDigest` and
 revision, adapter version, content-policy id and digest, loop registry
 revision, source/page references, state, ordered derivative
 `(kind, id, digest)` tuples, projection counts (including rejected and reused records),
-normalized diagnostic counts, and health-finding ids. `schemaVersion`, `id`,
-and `receiptDigest` are excluded. Counts are non-negative safe integers and
+normalized diagnostic counts, health-finding ids, and — when the adapter
+declared one — the exact `privacyPolicy` `{ id, digest }` reference.
+`schemaVersion`, `id`, and `receiptDigest` are excluded, and an undeclared
+`privacyPolicy` is omitted from the digest rather than serialized as null, so
+historical receipts keep their bytes. Counts are non-negative safe integers and
 must satisfy `derivatives.length + rejected + reused = total projections`,
 where an omitted historical `reused` is zero. Valid projections already
 committed by another exact page receipt increment `reused` and do not add an
@@ -3333,8 +3350,10 @@ An `ImportReceipt` is a durable, deterministic fold of committed page
 receipts. `receiptDigest` binds every field except `schemaVersion`, `id`, and
 `receiptDigest`; `pageReceiptIds` preserves source order, while
 `sourceRevisions` is the sorted unique set of available and observed exact
-revisions. The content-addressed page receipts transitively bind their adapter,
-content-policy, derivative, count, and diagnostic lineage. Re-ingesting
+revisions, and `privacyPolicy` repeats the adapter's declaration so the exact
+policy that governed an import is visible without loading its pages. The
+content-addressed page receipts transitively bind their adapter,
+content-policy, privacy-policy, derivative, count, and diagnostic lineage. Re-ingesting
 identical committed pages under the same source and loop registrations
 produces the same import id and bytes. Receipts and findings are
 evidence-health records, not behavioral detector results, candidates,
@@ -4719,8 +4738,10 @@ If any bound field changes between plan and publication, `publish` refuses. A re
 const ingestReceipt = await transcriptLearning.ingest(
   codexExplicitExportSource,
   {
-    kind: "explicit_file",
-    path: "/explicit/user-selected/export.jsonl",
+    kind: "explicit_files",
+    paths: ["/explicit/user-selected/root/export.jsonl"],
+    roots: ["/explicit/user-selected/root"],
+    locatorKey: tenantLocatorKey,
   },
   {
     episodeBoundaryPolicyDigest: "sha256:confirmed-boundaries-v1",
@@ -4732,12 +4753,13 @@ console.log({
   sourceRevisions: ingestReceipt.sourceRevisions,
   pageReceiptIds: ingestReceipt.pageReceiptIds,
   durableImportId: ingestReceipt.importReceipt.id,
+  governingPrivacyPolicy: ingestReceipt.importReceipt.privacyPolicy,
   completeness: ingestReceipt.completeness,
   diagnostics: ingestReceipt.diagnostics,
 });
 ```
 
-`transcriptLearning` is composed immutably with the typed `codexExplicitExportSource` capability. The adapter does not crawl for files, raw transcript bytes are not copied into the learning store by default, and all transcript-derived observations—including apparent tool records—are capped at advisory trust. A separate authenticated human or deterministic verifier source must create any higher-trust observation.
+`transcriptLearning` is composed immutably with the typed `codexExplicitExportSource` capability. The adapter does not crawl for files, every path must resolve inside a declared root with no symbolic link on the way, raw transcript bytes are not copied into the learning store by default, and all transcript-derived observations—including apparent tool records—are capped at advisory trust. The adapter runs under a content-addressed `TranscriptPrivacyPolicy` whose `{ id, digest }` the import receipt carries, so an auditor can name the exact policy that governed the import. A separate authenticated human or deterministic verifier source must create any higher-trust observation.
 
 ### Run a frozen paired experiment
 
@@ -4812,7 +4834,12 @@ Transcript ingestion is an adapter path, not the core evidence model. A provider
 
 ```ts
 export type TranscriptSourceInput =
-  | { readonly kind: "explicit_file"; readonly path: string }
+  | {
+      readonly kind: "explicit_files";
+      readonly paths: readonly string[];
+      readonly locatorKey: string;
+      readonly roots?: readonly string[];
+    }
   | { readonly kind: "caller_reader"; readonly readerId: string };
 
 export interface TranscriptRef {
@@ -4899,6 +4926,93 @@ export type UntrustedTranscriptItem =
 ```
 
 `UntrustedTranscriptItem` is a transient adapter-to-content-policy value, not a durable record. Provider-native values cross as `unknown`; the adapter validates shape, then the content policy redacts and minimizes before storage. Persisting message text is explicit opt-in; the default stores extracted/redacted features and a tenant-keyed private locator. Unknown records remain visible without copying their raw payload.
+
+### Executable transcript privacy policy
+
+Each reference adapter runs under one content-addressed
+`TranscriptPrivacyPolicy` (decision 0024) and declares its `{ id, digest }`
+through `SourceDescriptor.privacyPolicy`, so the kernel binds the exact policy
+into the source registration revision and into every page and import receipt.
+
+```ts
+export interface TranscriptPrivacyPolicy {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly version: string;
+  readonly input: {
+    readonly mechanism: "explicit_files";
+    readonly discovery: "forbidden";
+    readonly access: "read_only";
+    readonly symlinks: "refuse";
+    readonly rootConfinement: "required" | "optional";
+  };
+  readonly ceilings: {
+    readonly maximumFileBytes: number;
+    readonly maximumLineBytes: number;
+    readonly maximumRecordsPerFile: number;
+    readonly maximumNestingDepth: number;
+    readonly maximumProcessingMillisPerFile: number;
+  };
+  readonly decoding: { readonly compressedInput: "refuse" };
+  readonly persistence: {
+    readonly rawContent: "never";
+    readonly messageText: "structural_features_only";
+    readonly privateIdentities: "tenant_keyed";
+    readonly diagnostics: "static_codes_only";
+  };
+  readonly recurrence: { readonly duplicateSegments: "collapse" };
+  readonly outbound: { readonly modelCalls: "forbidden" };
+  readonly publication: { readonly derivedArtifacts: "private" };
+  readonly processingBasis: {
+    readonly classification: "sensitive_untrusted";
+    readonly basis: "explicit_user_selection";
+    readonly trustMaximum: "advisory";
+  };
+  readonly disposition: {
+    readonly onSourceDeletion: "tombstone_and_refuse" | "retain_under_basis" | "queue_human_disposition";
+    readonly onConsentRevocation: "tombstone_and_refuse" | "queue_human_disposition";
+  };
+  readonly policyDigest: string;
+}
+
+export declare function parseTranscriptPrivacyPolicy(input: unknown): TranscriptPrivacyPolicy;
+export declare function transcriptPrivacyPolicyDigest(
+  policy: Omit<TranscriptPrivacyPolicy, "schemaVersion" | "policyDigest">,
+): string;
+export declare function defaultTranscriptPrivacyPolicy(): TranscriptPrivacyPolicy;
+```
+
+`policyDigest` is the SHA-256 of the canonical JSON of every field except
+`schemaVersion` and itself. The record contains no path, key, tenant, or
+session value, so the plain digest is safe to persist. The parser accepts
+`unknown`, recomputes the digest, ignores unknown fields, and enforces every
+single-valued member as a closed literal: no policy content can enable
+discovery, symlink following, decompression, raw-content persistence, unkeyed
+identities, verbose diagnostics, outbound model calls, public derived
+artifacts, or a trust maximum above advisory. Ceilings are integers from 1
+through the shipped maxima and may only tighten. `disposition` is declared
+and digested but not yet enforced: the kernel has no deletion or revocation
+lineage API (issue #31).
+
+Adapters execute the policy: byte, line, record, nesting-depth, and
+processing-time ceilings fail closed (a first-line breach refuses the file as
+`corrupt` with its observed revision; a later breach skips the line or
+remainder and marks the page `partial`, always with a `source.limit_exceeded`
+diagnostic naming the ceiling kind); compressed or binary input is refused as
+`unsupported` before any decoding; every explicit path is normalized, must sit
+lexically inside a declared root, may have no symbolic link on any directory
+between the root and the file, must still resolve inside the resolved root,
+and is then `lstat`-checked and opened without following links; duplicate
+explicit paths and a missing `roots` under a `required` policy are typed
+`schema.invalid` input errors. Native record types, tool names, and provider
+versions are admitted by structural token shape or projected as
+`non_conforming`; arbitrary text is never truncated, so no secret can
+straddle a cut. Repeated native record identities inside one file collapse
+as duplicated segments, and a byte-identical copy under another path yields
+the same episode identity and no net-new derivative. Injection safety is
+structural: the adapter package composes no execution, network, authority,
+publication, environment, or logging capability, and an executable
+negative-control catalog pins every one of these properties.
 
 Adapter and provider versions are bound into import receipts. A host-declared
 append, rewrite, or deletion will create explicit immutable revision lineage,
@@ -4987,7 +5101,10 @@ export declare class LearningLoopError extends Error {
 Initial error families should cover:
 
 - `schema.unsupported_version`, `schema.invalid`, and `schema.corrupt`;
-- `source.unsupported_format` and `source.incomplete` for transient adapter diagnostics;
+- `source.unsupported_format`, `source.incomplete`, `source.input_refused`,
+  `source.limit_exceeded`, and the info-level `source.duplicate_segment` for
+  transient adapter diagnostics (durable receipts normalize codes outside the
+  closed safe set to `source.adapter_diagnostic`);
 - the closed durable evidence-health codes `source.missing`,
   `source.unreadable`, `source.unsupported`, `source.corrupt`,
   `source.partial`, `source.revision_changed`, `source.record_rejected`,

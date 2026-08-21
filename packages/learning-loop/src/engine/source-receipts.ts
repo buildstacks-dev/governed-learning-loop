@@ -2,7 +2,7 @@
 // privacy-minimized evidence-health findings. Adapter messages/details never
 // enter these durable records.
 import type { Diagnostic } from "../diagnostics.js";
-import type { Completeness } from "../records/provenance.js";
+import type { Completeness, SourcePrivacyPolicyRef } from "../records/provenance.js";
 import { invalid } from "../parse/toolkit.js";
 import type {
   EvidenceHealthFinding,
@@ -124,6 +124,7 @@ export function buildSourcePageReceipt(input: {
   readonly projectionCounts: SourcePageReceipt["projectionCounts"];
   readonly diagnostics: readonly Diagnostic[];
   readonly healthFindingIds: readonly string[];
+  readonly privacyPolicy?: SourcePrivacyPolicyRef;
 }): SourcePageReceipt {
   const bound = {
     sourceId: input.sourceId,
@@ -139,6 +140,7 @@ export function buildSourcePageReceipt(input: {
     projectionCounts: input.projectionCounts,
     diagnosticCounts: normalizedDiagnosticCounts(input.diagnostics),
     healthFindingIds: input.healthFindingIds,
+    ...(input.privacyPolicy !== undefined ? { privacyPolicy: input.privacyPolicy } : {}),
   };
   const receiptDigest = sourcePageReceiptDigest(bound);
   return parseSourcePageReceipt({
@@ -170,12 +172,23 @@ export function buildImportReceipt(input: {
   readonly sourceRevisions: readonly string[];
   readonly completeness: Completeness;
   readonly healthFindingIds: readonly string[];
+  readonly privacyPolicy?: SourcePrivacyPolicyRef;
 }): ImportReceipt {
-  const receiptDigest = importReceiptDigest(input);
+  const bound = {
+    sourceId: input.sourceId,
+    sourceRegistrationRevision: input.sourceRegistrationRevision,
+    loopRegistryRevision: input.loopRegistryRevision,
+    pageReceiptIds: input.pageReceiptIds,
+    sourceRevisions: input.sourceRevisions,
+    completeness: input.completeness,
+    healthFindingIds: input.healthFindingIds,
+    ...(input.privacyPolicy !== undefined ? { privacyPolicy: input.privacyPolicy } : {}),
+  };
+  const receiptDigest = importReceiptDigest(bound);
   return parseImportReceipt({
     schemaVersion: 1,
     id: `import-${receiptDigest}`,
-    ...input,
+    ...bound,
     receiptDigest,
   });
 }

@@ -10,15 +10,27 @@
 // response_item message records; the duplicate event_msg user_message /
 // agent_message events are deliberately silent to avoid double counting.
 import type { EvidenceSource } from "@cormidia/learning-loop";
+import type { TranscriptSourceOptions } from "./explicit-files-source.js";
 import { createExplicitFilesSource } from "./explicit-files-source.js";
 import type { TranscriptFilesInput } from "./input.js";
 import { arrayField, booleanField, finiteNumberField, isRecord, recordField, stringField } from "./narrow.js";
 import type { SessionDraft } from "./project.js";
-import { addBandFailure, addObservation, hasCorrectionSignal, truncateType, validTimestamp } from "./project.js";
+import {
+  addBandFailure,
+  addObservation,
+  hasCorrectionSignal,
+  structuralToolNameToken,
+  structuralTypeToken,
+  validTimestamp,
+} from "./project.js";
 import type { FileRef, ParsedLine } from "./session-file.js";
 
-/** Accepted version band: Codex CLI 0.x rollout JSONL (observed structure). */
-export const CODEX_ADAPTER_VERSION = "0.2.0-experimental+codex-rollout-0.x";
+/**
+ * Accepted version band: Codex CLI 0.x rollout JSONL (observed structure).
+ * 0.3.0 adds policy-bound reads and structural token shapes for provider
+ * identifiers; 0.2.0 states remain read-only audit history.
+ */
+export const CODEX_ADAPTER_VERSION = "0.3.0-experimental+codex-rollout-0.x";
 
 const PROVIDER = "codex";
 
@@ -44,18 +56,23 @@ const TASK_SIGNALS: ReadonlyMap<string, "started" | "complete" | "aborted" | "ro
   ["thread_rolled_back", "rolled_back"],
 ]);
 
-export function createCodexTranscriptSource(): EvidenceSource<TranscriptFilesInput> {
-  return createExplicitFilesSource({
-    provider: PROVIDER,
-    sourceId: "codex-transcripts",
-    adapterVersion: CODEX_ADAPTER_VERSION,
-    firstLineBand: (record) => {
-      if (stringField(record, "type") === undefined) return 'record has no string "type" field';
-      if (recordField(record, "payload") === undefined) return 'record has no "payload" object';
-      return undefined;
+export function createCodexTranscriptSource(
+  options: TranscriptSourceOptions = {},
+): EvidenceSource<TranscriptFilesInput> {
+  return createExplicitFilesSource(
+    {
+      provider: PROVIDER,
+      sourceId: "codex-transcripts",
+      adapterVersion: CODEX_ADAPTER_VERSION,
+      firstLineBand: (record) => {
+        if (stringField(record, "type") === undefined) return 'record has no string "type" field';
+        if (recordField(record, "payload") === undefined) return 'record has no "payload" object';
+        return undefined;
+      },
+      mapRecords: mapCodexRecords,
     },
-    mapRecords: mapCodexRecords,
-  });
+    options,
+  );
 }
 
 function mapCodexRecords(draft: SessionDraft, lines: readonly ParsedLine[], ref: FileRef): void {
@@ -108,7 +125,7 @@ function mapCodexRecords(draft: SessionDraft, lines: readonly ParsedLine[], ref:
         break;
       }
       default:
-        addObservation(draft, lineNumber, "transcript.unknown", { nativeType: truncateType(type) }, occurredAt);
+        addObservation(draft, lineNumber, "transcript.unknown", { nativeType: structuralTypeToken(type) }, occurredAt);
     }
   }
 }
@@ -161,7 +178,7 @@ function mapResponseItem(
     case "custom_tool_call": {
       const callId = stringField(payload, "call_id");
       const name = stringField(payload, "name");
-      if (callId !== undefined && name !== undefined) toolNamesByCallId.set(callId, name);
+      if (callId !== undefined && name !== undefined) toolNamesByCallId.set(callId, structuralToolNameToken(name));
       return;
     }
     case "function_call_output":
@@ -183,7 +200,7 @@ function mapResponseItem(
           draft,
           lineNumber,
           "transcript.unknown",
-          { nativeType: `response_item/${truncateType(payloadType)}` },
+          { nativeType: `response_item/${structuralTypeToken(payloadType)}` },
           occurredAt,
         );
       }
@@ -248,7 +265,7 @@ function mapEventMessage(
       draft,
       lineNumber,
       "transcript.unknown",
-      { nativeType: `event_msg/${truncateType(payloadType)}` },
+      { nativeType: `event_msg/${structuralTypeToken(payloadType)}` },
       occurredAt,
     );
   }

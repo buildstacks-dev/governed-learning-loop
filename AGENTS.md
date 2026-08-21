@@ -42,7 +42,8 @@ between code and contract, open an issue — never silently drift either one.
 - **Source health is durable and separate from learning.** Every source page
   declares an opaque, privacy-treated source/page identity and a closed
   availability state. Receipt-last persistence binds exact registration,
-  policy, revision, derivative, count, and normalized diagnostic lineage.
+  policy, revision, derivative, count, and normalized diagnostic lineage, plus
+  the adapter's optional content-addressed privacy-policy declaration.
   A private create-only page-owner claim prevents concurrent pages from both
   committing one derivative; reasserted records are counted as reused without
   creating a second commit receipt.
@@ -302,14 +303,34 @@ These are protocol rules, not configuration:
 
 ## Transcript adapter privacy rules
 
+- Every adapter runs under one content-addressed `TranscriptPrivacyPolicy`
+  (decision 0024) and declares its `{ id, digest }` through
+  `SourceDescriptor.privacyPolicy`; the kernel folds the declaration into the
+  source registration revision and writes it into every page and import
+  receipt. The policy carries no private values, its closed literals cannot be
+  loosened by content, its ceilings may only tighten the shipped maxima, and
+  the shipped default digest is a pinned golden vector. The kernel treats the
+  declaration as lineage, never trust.
 - Explicit inputs only (user-selected paths or caller-owned readers); an
-  adapter never crawls a home directory on its own initiative.
+  adapter never crawls a home directory on its own initiative. Paths are
+  normalized, confined to caller-declared `roots` (required by default), and
+  refused if any directory on the way or the file itself is a symbolic link.
 - Redaction precedes persistence: raw message text does not enter the durable
-  store by default — only minimized, structural features.
+  store by default — only minimized, structural features. Provider type, tool,
+  and version strings are admitted by structural token shape or projected as
+  `non_conforming`; arbitrary text is never truncated.
 - No outbound model calls by default; enabling them requires explicit opt-in
-  and an exact preview of outbound bytes.
-- Byte/record/nesting/time ceilings fail closed.
-- Logs and diagnostics never echo transcript content.
+  and an exact preview of outbound bytes through the separately authorized
+  `/workflows` path, never through adapter policy content.
+- Byte/line/record/nesting/time ceilings fail closed; compressed or binary
+  input is refused before decoding.
+- Duplicated segments (repeated paths, re-logged records, byte-identical
+  copies) never become independent recurrence.
+- Logs and diagnostics never echo transcript content; the adapter package
+  composes no execution, network, authority, publication, environment, or
+  logging capability, and the negative-control catalog under
+  `packages/transcript-sources/tests/negative-controls/` is the executable
+  statement of every rule above.
 
 ## Testing expectations
 

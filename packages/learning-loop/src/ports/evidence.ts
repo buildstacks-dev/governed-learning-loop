@@ -6,28 +6,60 @@ import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import type { Diagnostic } from "../diagnostics.js";
 import { invalid, parseNonEmptyText, parseOneOf } from "../parse/toolkit.js";
+import type { ParsePath } from "../parse/toolkit.js";
 import type { MetricDefinition, EpisodeOutcome } from "../records/episode.js";
-import type { SourceDescriptor, TrustClass, Completeness } from "../records/provenance.js";
+import type { SourceDescriptor, SourcePrivacyPolicyRef, TrustClass, Completeness } from "../records/provenance.js";
 import { TRUST_CLASSES } from "../records/provenance.js";
 import type { Scope } from "../records/scope.js";
 import type { SourcePageState } from "../records/source-health.js";
 import { registeredSourceBrand } from "../records/brands.js";
 
 const MAX_SOURCE_ID_LENGTH = 1_000;
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
-function parseSourceId(input: unknown): string {
-  const path = ["source", "descriptor", "id"] as const;
-  const value = parseNonEmptyText(input, path);
+function parseBoundedControlFreeText(input: unknown, path: ParsePath, label: string): string {
+  if (typeof input !== "string" || input.length === 0) {
+    throw invalid("config.invalid", `${label} must be a non-empty string`, path);
+  }
+  const value = input;
   if (value.length > MAX_SOURCE_ID_LENGTH) {
-    throw invalid("config.invalid", `source id exceeds ${MAX_SOURCE_ID_LENGTH} characters`, path);
+    throw invalid("config.invalid", `${label} exceeds ${MAX_SOURCE_ID_LENGTH} characters`, path);
   }
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
     if (code < 0x20 || code === 0x7f) {
-      throw invalid("config.invalid", "source id contains a control character", path);
+      throw invalid("config.invalid", `${label} contains a control character`, path);
     }
   }
   return value;
+}
+
+function parseSourceId(input: unknown): string {
+  return parseBoundedControlFreeText(input, ["source", "descriptor", "id"], "source id");
+}
+
+/**
+ * An adapter's privacy-policy declaration is an opaque content-addressed
+ * reference: a bounded control-free id plus a SHA-256 digest of the policy
+ * content. The kernel never sees the policy content itself.
+ */
+export function parseSourcePrivacyPolicyRef(input: unknown, path: ParsePath): SourcePrivacyPolicyRef {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw invalid("config.invalid", "privacy policy declaration must be an { id, digest } object", path);
+  }
+  const rawId: unknown = Reflect.get(input, "id");
+  const rawDigest: unknown = Reflect.get(input, "digest");
+  if (typeof rawId !== "string") {
+    throw invalid("config.invalid", "privacy policy declaration requires a string id", [...path, "id"]);
+  }
+  const id = parseBoundedControlFreeText(rawId, [...path, "id"], "privacy policy id");
+  if (typeof rawDigest !== "string" || !DIGEST_PATTERN.test(rawDigest)) {
+    throw invalid("config.invalid", "privacy policy digest must be a lowercase SHA-256 hex digest", [
+      ...path,
+      "digest",
+    ]);
+  }
+  return Object.freeze({ id, digest: rawDigest });
 }
 
 export interface ProjectedObservation {
@@ -111,9 +143,10 @@ function withSourceBrand(base: RegisteredSourceBase): RegisteredSourceBase {
 /**
  * Binds an evidence-source adapter to its host-granted trust ceiling and
  * content policy. `registryRevision` is the SHA-256 of the canonical JSON of
- * `{ sourceId, adapterVersion, trustCeiling, contentPolicyId, maximumTrust? }`,
- * so any change to the adapter version, source self-restriction, or host grant
- * is a new registry revision.
+ * `{ sourceId, adapterVersion, trustCeiling, contentPolicyId, maximumTrust?, privacyPolicy? }`,
+ * so any change to the adapter version, source self-restriction, declared
+ * privacy policy, or host grant is a new registry revision. Omitting the
+ * optional members preserves the historical registry bytes.
  */
 export function defineSourceRegistration<I>(input: {
   readonly source: EvidenceSource<I>;
@@ -142,12 +175,18 @@ export function defineSourceRegistration<I>(input: {
     ]);
   }
   const contentPolicyId = parseNonEmptyText(input.contentPolicyId, ["contentPolicyId"]);
+  const configuredPrivacyPolicy = descriptor.privacyPolicy;
+  const privacyPolicy =
+    configuredPrivacyPolicy === undefined
+      ? undefined
+      : parseSourcePrivacyPolicyRef(configuredPrivacyPolicy, ["source", "descriptor", "privacyPolicy"]);
   const registryRevision = sha256HexOfCanonicalJson({
     sourceId: id,
     adapterVersion,
     trustCeiling,
     contentPolicyId,
     ...(maximumTrust !== undefined ? { maximumTrust } : {}),
+    ...(privacyPolicy !== undefined ? { privacyPolicy: { id: privacyPolicy.id, digest: privacyPolicy.digest } } : {}),
   });
   return withSourceBrand(
     Object.freeze({

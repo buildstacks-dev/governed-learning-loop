@@ -271,7 +271,7 @@ describe("learning.acknowledgeExposure: refusals with zero writes", () => {
     expect(await harness.storeSnapshot()).toBe(before);
   });
 
-  it("an experiment arm before the Validate tier declares experiments", () =>
+  it("an experiment arm naming an experiment that was never declared on this loop", () =>
     refusing({ experiment: { experimentId: "exp-1", arm: "treatment" } }, "exposure.experiment_unavailable"));
 
   it("malformed input", async () => {

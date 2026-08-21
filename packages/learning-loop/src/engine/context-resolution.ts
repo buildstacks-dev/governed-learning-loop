@@ -28,7 +28,9 @@
 // acknowledgement of the same receipt with different content is refused.
 // The set is written after its per-episode index entry so a crash leaves at
 // most an orphan index entry that readers ignore; a retry forward-completes.
-// Experiment arms are refused until the Validate tier declares experiments.
+// An experiment arm must name a declared experiment (decision 0028) and agree
+// with the applied entries: treatment applies the experiment's intervention,
+// control does not.
 import { canonicalJsonText, sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
@@ -42,6 +44,7 @@ import {
   MAX_EXPOSURE_REFERENCES,
   exposureSetDigest,
   exposureSetIdFor,
+  parseExposureExperimentAt,
   parseExposureSetRecord,
   sameExposureContent,
 } from "../records/exposure.js";
@@ -70,6 +73,7 @@ import {
   recordDigest,
   recordKey,
 } from "./context.js";
+import { loadExperimentDefinition } from "./experiment.js";
 import { listInterventionScopeMemberships, loadFoldReceipts } from "./publication-journal.js";
 import type { BoundIntervention } from "./publication.js";
 import { loadBoundIntervention } from "./publication.js";
@@ -605,12 +609,7 @@ export async function runAcknowledgeExposure(context: EngineContext, input: Expo
     parseBoundedArray(parseDurableId, MAX_EXPOSURE_REFERENCES, "exposure evidence ids"),
   );
   assertUniqueIds(evidenceIds, "exposure evidence ids", [...path, "evidenceIds"]);
-  if (fields.opt("experiment", parseUnknown) !== undefined) {
-    throw refusal(
-      "exposure.experiment_unavailable",
-      "experiment arms are declared by the Validate tier; no ExperimentDefinition record exists on this loop, so an arm claim cannot be bound",
-    );
-  }
+  const experiment = fields.opt("experiment", parseExposureExperimentAt);
   if (evidenceIds.length === 0) {
     throw refusal(
       "exposure.evidence_required",
@@ -633,15 +632,38 @@ export async function runAcknowledgeExposure(context: EngineContext, input: Expo
     }
   }
   const applied = new Set(appliedEntryIds);
+  const appliedEntries = receipt.entries.filter((entry) => applied.has(entry.id));
+  if (experiment !== undefined) {
+    const definition = await loadExperimentDefinition(context, experiment.experimentId);
+    if (definition === undefined) {
+      throw refusal(
+        "exposure.experiment_unavailable",
+        `experiment "${experiment.experimentId}" is not declared on this loop; an arm claim binds only a declared ExperimentDefinition`,
+        { experimentId: experiment.experimentId },
+      );
+    }
+    const appliesSubject = appliedEntries.some((entry) => entry.interventionId === definition.interventionId);
+    if ((experiment.arm === "treatment") !== appliesSubject) {
+      throw refusal(
+        "exposure.experiment_arm_mismatch",
+        experiment.arm === "treatment"
+          ? `a treatment exposure of experiment "${definition.id}" must apply its intervention "${definition.interventionId}"`
+          : `a control exposure of experiment "${definition.id}" must not apply its intervention "${definition.interventionId}"`,
+        { experimentId: definition.id, arm: experiment.arm, interventionId: definition.interventionId },
+      );
+    }
+  }
   await assertHostObservedEvidence(context, receipt.episodeId, evidenceIds);
 
   const content = {
     episodeId: receipt.episodeId,
     resolutionReceiptId: receipt.id,
-    entries: receipt.entries
-      .filter((entry) => applied.has(entry.id))
-      .map((entry) => ({ interventionId: entry.interventionId, resolvedContentDigest: entry.contentDigest })),
+    entries: appliedEntries.map((entry) => ({
+      interventionId: entry.interventionId,
+      resolvedContentDigest: entry.contentDigest,
+    })),
     assignmentId,
+    ...(experiment !== undefined ? { experiment } : {}),
     fingerprintId,
     evidenceIds,
     exposedAt: context.clock.now(),

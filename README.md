@@ -22,14 +22,16 @@ here says a learned intervention has been shown to improve later agent work.
 | Observe | Episodes, observations, source receipts, outcomes | A durable, provenance-bearing account plus bounded typed episode and evidence views |
 | Govern | Receipt-bound candidates, independent review, policy, rejection | Proposed lessons with exact evidence/episode lineage that stay **inert** until independently reviewed |
 | Activate | Content-bound plans and bindings, loop-bound authority, host destination registrations, a journaled idempotent publisher, bound disable/rollback/compensate plans, receipt-frozen context resolution, and host-evidenced exposure sets | Exact plans whose approvals void on any content/destination/scope/base change, refuse pending, denied, expired, or wrong-base authority before any write, and — once authorized — apply each effect exactly once with crash-resume, a durable authorization consumption, and an append-only intervention history whose `validation` stays `untested`; a future episode resolves only active, authorized, scope-matching content into a content-addressed receipt, and one receipt yields one exposure set with exact intervention lineage |
-| Validate *(planned)* | Frozen experiments, paired replay, guardrails | Attributable evidence that a change helped — or an honest inconclusive verdict |
+| Validate | Frozen experiment definitions, a kernel-minted replay executor port with attestation verification, content-bound reference rules, and paired verdicts | An experiment declared before any result, every attempt journaled and retained, and an evaluation whose verdict is `improved`, `inconclusive`, `regressed`, or `invalid` — never neutral for a missing arm, metric, or grader, never improved past a guardrail regression — bound into the intervention's `validation` state |
 
 Observe and Govern are implemented first. Activate is complete on the package
 side (decisions 0025, 0026, and 0027): records, authority port, destination
 registrations, the journaled idempotent publisher, reversal plans, context
-resolution, and exposure lineage. Validate (#12) is tracked in the issue
-backlog. Activate and Validate are orthogonal capabilities, not implied by
-Observe and Govern, and authorized ≠ validated, permanently.
+resolution, and exposure lineage. Validate is complete on the package side
+(decision 0028): frozen experiment definitions, the replay executor port,
+attested attempts, and paired verdicts. Activate and Validate are orthogonal
+capabilities, not implied by Observe and Govern, and authorized ≠ validated,
+permanently: an evaluation changes only the `validation` dimension.
 
 ## Package shape
 

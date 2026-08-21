@@ -64,6 +64,17 @@ export { parseResolvedContext } from "./records/resolution.js";
 export type { ExposureEntry, ExposureSetRecord } from "./records/exposure.js";
 export { parseExposureSetRecord } from "./records/exposure.js";
 export type { ExposureInput, ResolveContextInput } from "./engine/context-resolution.js";
+// Validate records (decision 0028): frozen experiments declared before results,
+// attested replay through a kernel-minted executor port, and paired verdicts.
+export type { FingerprintComponent, SystemFingerprint } from "./records/fingerprint.js";
+export { parseSystemFingerprint, systemFingerprintDigest } from "./records/fingerprint.js";
+export type { ExperimentDefinition, ExperimentDefinitionInput, Money } from "./records/experiment.js";
+export type { EvaluationResult, ReferenceExperimentRules } from "./records/experiment.js";
+export { eligibilitySetDigest, experimentDefinitionDigest, parseExperimentDefinition } from "./records/experiment.js";
+export { parseEvaluationResult, referenceExperimentRules } from "./records/experiment.js";
+export type { ReplayAttemptRequest, ReplayAttemptResult, ReplayAttestation, ReplayExecutor } from "./records/replay.js";
+export { parseReplayAttemptResult } from "./records/replay.js";
+export { defineReplayExecutor } from "./engine/replay-executor.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";

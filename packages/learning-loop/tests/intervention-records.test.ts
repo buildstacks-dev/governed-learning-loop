@@ -112,7 +112,35 @@ describe("the legal-transition table", () => {
     );
   });
 
-  it("refuses publication from pending, revoked, or expired authority, re-enabling, regression, and validation edges", () => {
+  it("names the validate edge: validation alone moves, to a verdict, on a journaled intervention", () => {
+    for (const verdict of ["invalid", "inconclusive", "improved", "regressed"] as const) {
+      expect(interventionTransitionKind(PUBLISHED_ACTIVE, { ...PUBLISHED_ACTIVE, validation: verdict })).toBe(
+        "validate",
+      );
+      expect(interventionTransitionKind(AUTHORIZED, { ...AUTHORIZED, validation: verdict })).toBe("validate");
+      expect(interventionTransitionKind(DISABLED, { ...DISABLED, validation: verdict })).toBe("validate");
+      expect(interventionTransitionKind(ROLLED_BACK, { ...ROLLED_BACK, validation: verdict })).toBe("validate");
+      expect(interventionTransitionKind(FAILED, { ...FAILED, validation: verdict })).toBe("validate");
+      // A later evaluation may move an earlier verdict; it never returns to untested.
+      expect(
+        interventionTransitionKind(
+          { ...PUBLISHED_ACTIVE, validation: "improved" },
+          { ...PUBLISHED_ACTIVE, validation: verdict },
+        ),
+      ).toBe(verdict === "improved" ? undefined : "validate");
+      expect(
+        interventionTransitionKind({ ...PUBLISHED_ACTIVE, validation: verdict }, PUBLISHED_ACTIVE),
+      ).toBeUndefined();
+      // Never from a pending (unjournaled) intervention, never combined with another dimension.
+      expect(
+        interventionTransitionKind(INITIAL_INTERVENTION_STATE, { ...INITIAL_INTERVENTION_STATE, validation: verdict }),
+      ).toBeUndefined();
+      expect(interventionTransitionKind(AUTHORIZED, { ...PUBLISHED_ACTIVE, validation: verdict })).toBeUndefined();
+      expect(interventionTransitionKind(PUBLISHED_ACTIVE, { ...DISABLED, validation: verdict })).toBeUndefined();
+    }
+  });
+
+  it("refuses publication from pending, revoked, or expired authority, re-enabling, regression, and combined validation edges", () => {
     for (const [from, to] of [
       [INITIAL_INTERVENTION_STATE, { ...PUBLISHED_ACTIVE, authorization: "pending" as const }],
       [state({ authorization: "revoked" }), { ...PUBLISHED_ACTIVE, authorization: "revoked" as const }],
@@ -126,25 +154,39 @@ describe("the legal-transition table", () => {
       [PUBLISHED_ACTIVE, PUBLISHED_ACTIVE],
       [FAILED, FAILED],
       [ROLLED_BACK, DISABLED],
-      [PUBLISHED_ACTIVE, { ...PUBLISHED_ACTIVE, validation: "improved" as const }],
+      [{ ...PUBLISHED_ACTIVE, validation: "improved" as const }, PUBLISHED_ACTIVE],
       [AUTHORIZED, { ...PUBLISHED_ACTIVE, validation: "inconclusive" as const }],
+      [INITIAL_INTERVENTION_STATE, { ...INITIAL_INTERVENTION_STATE, validation: "invalid" as const }],
       [INITIAL_INTERVENTION_STATE, INITIAL_INTERVENTION_STATE],
     ] as const) {
       expect(interventionTransitionKind(from, to)).toBeUndefined();
     }
   });
 
-  it("over the full state product, every legal edge keeps validation, changes authority only pending→authorized, and lands on a valid state", () => {
+  it("over the full state product, only validate moves validation, only authorize changes authority, and every edge lands on a valid state", () => {
     const states = allStates();
     let legal = 0;
+    let validate = 0;
     for (const from of states) {
       for (const to of states) {
         const kind = interventionTransitionKind(from, to);
         if (kind === undefined) continue;
         legal += 1;
-        expect(from.validation).toBe(to.validation);
         expect(interventionStateInvalidReasons(to)).toEqual([]);
         expect(interventionStateInvalidReasons(from)).toEqual([]);
+        if (kind === "validate") {
+          validate += 1;
+          expect(from.validation).not.toBe(to.validation);
+          expect(to.validation).not.toBe("untested");
+          expect(from.authorization).not.toBe("pending");
+          expect([from.publication, from.authorization, from.activation]).toEqual([
+            to.publication,
+            to.authorization,
+            to.activation,
+          ]);
+          continue;
+        }
+        expect(from.validation).toBe(to.validation);
         if (kind === "authorize") {
           expect([from.authorization, to.authorization]).toEqual(["pending", "authorized"]);
         } else {
@@ -155,9 +197,13 @@ describe("the legal-transition table", () => {
         if (to.activation === "active") expect(to.publication).toBe("published");
       }
     }
-    // Pinned: 2 permitting authority modes × (publish 4 + fail 1 + disable 3 + rollback 5) × 5 validation
-    // values, plus 5 authorize edges. Changing the table must change this number deliberately.
-    expect(legal).toBe(135);
+    // Pinned (decision 0026): 2 permitting authority modes × (publish 4 + fail 1 + disable 3 + rollback 5)
+    // × 5 validation values, plus 5 authorize edges = 135 Activate edges. Decision 0028 adds the validate
+    // edge on every structurally valid, non-pending (publication, authorization, activation) triple — 32 of
+    // them — times the 16 ordered validation moves that land on a verdict (untested→4 verdicts, each
+    // verdict→3 others) = 512. Changing the table must change these numbers deliberately.
+    expect(validate).toBe(512);
+    expect(legal).toBe(647);
   });
 });
 

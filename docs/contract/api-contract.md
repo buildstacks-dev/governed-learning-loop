@@ -3150,8 +3150,17 @@ is `active` for `context`, `external`, and `authority` destinations and
 such — it is the deterministic fold of a private header and the
 intervention's append-only transition stream, where `authorizationIds` cite
 the durable authorization consumption and `publicationReceiptIds` cite the
-journaled receipts of the intervention's own plan; `evaluationIds` stay empty
-until the Validate tier. `learning.getIntervention` is the pure exact read.
+journaled receipts of the intervention's own plan, and `evaluationIds` folds
+the decision-0028 per-intervention evaluation index verified against each
+durable evaluation. `learning.getIntervention` is the pure exact read.
+
+Decision 0028 adds the only edge that moves `validation`: `validate`, from
+any value to a different evaluation verdict (never back to `untested`), with
+every other dimension unchanged, on an intervention whose authorization is
+no longer `pending`; its evidence is the bound evaluation. The table grows
+from 135 to 647 pinned edges. An evaluation that repeats the current verdict
+is indexed without a new transition, and a rerun of an earlier experiment
+never flips the state back.
 
 Decision 0027 ships the read side of Activate. `resolveContext` reads only
 the scope membership index and the folded intervention journal of the exact
@@ -3183,7 +3192,10 @@ or an empty application is a recorded exposure, a retry with the same
 content is idempotent, and a different second acknowledgement is
 `exposure.already_acknowledged`. Every evidence id must be a durable
 observation of the resolved episode carrying `observed` or `verified` trust;
-an experiment arm is refused until the Validate tier declares experiments.
+an experiment arm (decision 0028) must name an experiment declared on this
+loop (`exposure.experiment_unavailable`) and agree with the applied entries: a
+`treatment` exposure applies the experiment's intervention and a `control`
+exposure does not (`exposure.experiment_arm_mismatch`).
 The set is appended to a private per-episode index before it is created, so
 a crash leaves at most an orphan index entry that readers ignore, and
 `EpisodeView.episode.exposureIds` folds the acknowledged sets of an episode
@@ -3214,6 +3226,8 @@ export interface ExperimentDefinition {
   readonly interventionId: string;
   readonly eligibilityPolicyDigest: string;
   readonly eligibilitySetDigest: string;
+  /** Additive (decision 0028): the exact durable episode record ids the set digest binds. */
+  readonly eligibleEpisodeIds: readonly string[];
   readonly baselineSnapshotDigest: string;
   readonly controlFingerprintDigest: string;
   readonly treatmentFingerprintDigest: string;
@@ -3253,6 +3267,35 @@ export interface Money {
 An evaluation result records every attempted arm and classifies missing, drifted, contaminated, or guardrail-regressing evidence explicitly. The episode is the independent unit; repetitions are nested within it. The core does not invent a universal statistical threshold. Policy supplies content-bound decision rules and versioned evaluators.
 
 The host executor, not the kernel, enforces workspace isolation and side effects. The kernel verifies that a registered executor and its returned attestation match the predeclared digests. Identifiers alone are never enough to freeze an eligibility rule, grader, executor, fixture set, stopping rule or side-effect policy.
+
+Decision 0028 ships the tier. `eligibleEpisodeIds` are exact durable episode
+record ids with resolved identity; the kernel recomputes
+`eligibilitySetDigest` over them (`experiment-eligibility-set:v1`) and
+`pairCount` equals the set size. Control and treatment fingerprints must
+differ. `decisionRuleDigest`, `primaryMetric.missingnessRuleDigest`, and
+`stoppingRuleDigest` must name the content-bound reference rules that
+`referenceExperimentRules()` returns — `paired-mean-difference`,
+`missing-is-invalid`, and `complete-design-or-ceiling`, each a frozen rule
+document with its digest under `experiment-rule:v1` — because the kernel
+applies only rules it knows (`experiment.rule_unknown`); a host-registered
+evaluator port is future work. `perEpisodeAggregation` is one of
+`mean|median|sum-of-nested-repetitions-v1` (number metrics) or
+`all|any|majority-of-nested-repetitions-v1` (boolean metrics). Guardrails:
+`must_pass` and `must_not_regress` take a boolean metric and no threshold,
+`maximum` a number metric and a finite threshold, and a guardrail metric's
+own `aggregation` reduces its nested repetitions. Metrics are number- or
+boolean-valued with unique names; `minimumUsefulEffect` is positive; the
+design holds at most 1,000 episodes, 100 repetitions per pair, and 10,000
+slots. `replayExecutorDigest` must name a kernel-minted executor configured
+on the loop. `interventionId` must be a journaled `publish` intervention in
+any state. The definition digest (`experiment-definition:v1`) excludes only
+`schemaVersion`, `id`, `declaredAt`, and itself; declaration is create-only
+and idempotent for the same design, and a changed design under the same id
+is `experiment.already_declared`.
+
+`SystemFingerprint` ships with `systemFingerprintDigest` — components sorted
+by unique name under `system-fingerprint:v1`, so order does not matter — and
+`parseSystemFingerprint`.
 
 ## Ports
 
@@ -4263,13 +4306,33 @@ export interface ReplayExecutor {
   attempt(input: ReplayAttemptRequest): Promise<unknown>;
 }
 
+export declare function defineReplayExecutor(input: {
+  readonly id: string;
+  readonly version: string;
+  readonly configurationDigest: string;
+  readonly attempt: (input: ReplayAttemptRequest) => Promise<unknown>;
+}): ReplayExecutor;
+
 export interface ReplayAttemptRequest {
   readonly experimentId: string;
+  /** Additive (decision 0028): the frozen definition the attempt belongs to. */
+  readonly definitionDigest: string;
+  /** The exact durable episode record id. */
   readonly episodeId: string;
+  /** Additive (decision 0028): the resolved adapter identity of that episode. */
+  readonly episodeIdentity: {
+    readonly sourceId: string;
+    readonly sourceRecordId: string;
+    readonly episodeId: string;
+  };
   readonly arm: "control" | "treatment";
   readonly repetition: number;
   readonly fingerprintDigest: string;
   readonly fixtureDigest: string;
+  /** Additive (decision 0028). */
+  readonly baselineSnapshotDigest: string;
+  /** Additive (decision 0028). */
+  readonly graderDigest: string;
   readonly sideEffectCapability: {
     readonly policyDigest: string;
     readonly denyByDefault: true;
@@ -4280,6 +4343,39 @@ export interface ReplayAttemptRequest {
     readonly maximumDurationMs?: number;
   };
 }
+
+export interface ReplayAttestation {
+  readonly executor: { readonly id: string; readonly version: string; readonly registrationDigest: string };
+  readonly experimentId: string;
+  readonly definitionDigest: string;
+  readonly episodeId: string;
+  readonly arm: "control" | "treatment";
+  readonly repetition: number;
+  readonly fingerprintDigest: string;
+  readonly fixtureDigest: string;
+  readonly baselineSnapshotDigest: string;
+  readonly graderDigest: string;
+  readonly sideEffectPolicyDigest: string;
+  readonly attestationNonce: string;
+}
+
+export type ReplayAttemptResult =
+  | {
+      readonly status: "completed";
+      readonly attestation: ReplayAttestation;
+      readonly measurements: readonly { readonly metric: MetricDefinition; readonly value: number | string | boolean }[];
+      readonly cost?: Money;
+      readonly durationMs?: number;
+    }
+  | {
+      readonly status: "failed";
+      readonly attestation?: ReplayAttestation;
+      readonly diagnostics: readonly Diagnostic[];
+      readonly cost?: Money;
+      readonly durationMs?: number;
+    };
+
+export declare function parseReplayAttemptResult(input: unknown): ReplayAttemptResult;
 
 export interface OutcomeSource<I> {
   readonly descriptor: SourceDescriptor;
@@ -4307,6 +4403,22 @@ export declare function defineOutcomeSourceRegistration<I>(input: {
 ```
 
 The executor owns restoring the environment, enforcing the deny-by-default side-effect policy, hiding fixtures, and running the agent. It returns a parsed attempt plus an attestation to the declared policy. The core cannot sandbox arbitrary host code; it verifies registration and attestation digests, detects fingerprint drift, applies frozen decision rules, and retains every attempt.
+
+Decision 0028: `defineReplayExecutor` follows the identity/authority-port
+discipline — the metadata is parsed, the callback captured, the result frozen
+and branded, and `registrationDigest` is the digest of
+`{ id, version, configurationDigest }`; `createLearningLoop` refuses
+lookalikes and duplicates and binds the sorted exact
+`{ id, registrationDigest }` list into the registry revision. The kernel mints
+the `attestationNonce`, passes the remaining cost ceiling as
+`budget.maximumCost`, parses the executor's answer from `unknown`, and
+requires a completed attestation to echo every request digest, the arm, the
+repetition, the nonce, and the executor's exact registration; under a
+declared ceiling a completed attempt must also attest a cost in the
+ceiling's currency within the dispatched budget (missing is never zero
+spend); only the declared metrics' measurements are retained. `runReplayExecutorConformance`
+in `/testing` is the executable statement of these claims, and
+`createInMemoryReplayExecutor` is the inert reference.
 
 Outcome sources are registered with the same host-owned trust and content-policy mechanism as evidence sources. Their opaque results parse into `MeasurementRecord` values with episode identity, metric definition, provenance, completeness and evidence. An outcome source cannot self-assign trust, and the façade never returns unscoped bare measurements.
 
@@ -4583,9 +4695,54 @@ export interface EvaluationResult {
   readonly id: string;
   readonly experimentId: string;
   readonly definitionDigest: string;
+  /** Additive (decision 0028). */
+  readonly interventionId: string;
+  /** Additive (decision 0028). */
+  readonly registryRevision: string;
   readonly attemptIds: readonly string[];
+  /** Additive (decision 0028): one closed classification per declared slot, in run order. */
+  readonly classifications: readonly {
+    readonly episodeId: string;
+    readonly arm: "control" | "treatment";
+    readonly repetition: number;
+    readonly attemptId: string | null;
+    readonly status:
+      | "valid"
+      | "not_run"
+      | "outcome_unknown"
+      | "failed"
+      | "rejected"
+      | "fingerprint_drift"
+      | "contaminated"
+      | "attestation_mismatch"
+      | "metric_missing";
+  }[];
+  /** Additive (decision 0028): the reference-rule analysis; null unless every slot is valid. */
+  readonly analysis: {
+    readonly direction: "higher" | "lower";
+    readonly minimumUsefulEffect: number;
+    readonly pairs: readonly {
+      readonly episodeId: string;
+      readonly control: number;
+      readonly treatment: number;
+      readonly favorableDelta: number;
+    }[];
+    readonly meanFavorableDelta: number;
+    readonly favorablePairs: number;
+    readonly unfavorablePairs: number;
+    readonly guardrails: readonly {
+      readonly metric: string;
+      readonly rule: "must_not_regress" | "must_pass" | "maximum";
+      readonly status: "held" | "regressed";
+      readonly regressedEpisodeIds: readonly string[];
+    }[];
+  } | null;
   readonly verdict: "improved" | "inconclusive" | "regressed" | "invalid";
   readonly diagnostics: readonly Diagnostic[];
+  /** Additive (decision 0028). */
+  readonly evaluatedAt: string;
+  /** Additive (decision 0028). */
+  readonly evaluationDigest: string;
 }
 
 export interface QueryPage<T> {
@@ -5066,15 +5223,26 @@ console.log({
 ### Run a frozen paired experiment
 
 ```ts
+const rules = referenceExperimentRules();
+const executor = defineReplayExecutor({
+  id: "isolated-replay",
+  version: "2.0.0",
+  configurationDigest: sha256HexOfCanonicalJson(executorConfiguration),
+  attempt: (request) => replayWorkspace.run(request), // returns unknown; the kernel parses the attestation
+});
+// `executor` is composed into createLearningLoop({ ..., replayExecutors: [executor] }).
+
+const eligibleEpisodeIds = heldOutEpisodes.map((view) => view.episode.id); // durable episode record ids
 const experiment = await learning.declareExperiment({
   id: "exp-typecheck-preflight-v1",
   hypothesis: "The preflight reduces type-check failures at completion.",
   interventionId: intervention.id,
-  eligibilityPolicyDigest: "sha256:eligibility-policy",
-  eligibilitySetDigest: "sha256:heldout-groups",
-  baselineSnapshotDigest: "sha256:baseline-snapshots",
-  controlFingerprintDigest: "sha256:control-fingerprint",
-  treatmentFingerprintDigest: "sha256:treatment-fingerprint",
+  eligibilityPolicyDigest: sha256HexOfCanonicalJson(eligibilityPolicy),
+  eligibilitySetDigest: eligibilitySetDigest(eligibleEpisodeIds),
+  eligibleEpisodeIds,
+  baselineSnapshotDigest: sha256HexOfCanonicalJson(baselineSnapshots),
+  controlFingerprintDigest: systemFingerprintDigest(controlComponents),
+  treatmentFingerprintDigest: systemFingerprintDigest(treatmentComponents),
   primaryMetric: {
     definition: {
       name: "completion_typecheck_pass",
@@ -5085,7 +5253,7 @@ const experiment = await learning.declareExperiment({
     direction: "higher",
     minimumUsefulEffect: 0.15,
     perEpisodeAggregation: "majority-of-nested-repetitions-v1",
-    missingnessRuleDigest: "sha256:missing-pair-invalid",
+    missingnessRuleDigest: rules.missingnessRule.digest,
   },
   guardrails: [
     {
@@ -5095,7 +5263,7 @@ const experiment = await learning.declareExperiment({
         unit: "pass",
         aggregation: "all",
       },
-      rule: "must_pass",
+      rule: "must_not_regress",
     },
     {
       metric: {
@@ -5108,16 +5276,16 @@ const experiment = await learning.declareExperiment({
       threshold: 8,
     },
   ],
-  fixtureSetDigest: "sha256:hidden-fixtures-v3",
-  graderDigest: "sha256:deterministic-repo-gates-v3",
-  decisionRuleDigest: "sha256:paired-randomization-rule-v1",
-  pairCount: 10,
+  fixtureSetDigest: sha256HexOfCanonicalJson(hiddenFixtures),
+  graderDigest: sha256HexOfCanonicalJson(deterministicRepoGates),
+  decisionRuleDigest: rules.decisionRule.digest,
+  pairCount: eligibleEpisodeIds.length,
   repetitionsPerPair: 2,
   costCeiling: { amount: 160, currency: "USD" },
-  stoppingRuleDigest: "sha256:stop-rule-v1",
-  replayExecutorDigest: "sha256:isolated-executor-v2",
-  sideEffectPolicyDigest: "sha256:deny-by-default-effects-v2",
-  assignmentAndBlindingDigest: "sha256:counterbalanced-blinded-v1",
+  stoppingRuleDigest: rules.stoppingRule.digest,
+  replayExecutorDigest: executor.registrationDigest,
+  sideEffectPolicyDigest: sha256HexOfCanonicalJson(denyByDefaultEffects),
+  assignmentAndBlindingDigest: sha256HexOfCanonicalJson(counterbalancedBlinding),
 });
 
 const result = await learning.runExperiment({
@@ -5129,6 +5297,27 @@ console.log(result.verdict);
 ```
 
 The package records exactly why a verdict was reached. An invalid or missing arm cannot be represented as a neutral score.
+
+`declareExperiment` (decision 0028) parses the design from `unknown`,
+recomputes its digests, requires the reference rules, a configured
+kernel-minted executor, a journaled `publish` intervention, and durable
+eligible episodes, and persists one create-only definition. `runExperiment`
+walks the declared slots in order — episode, then repetition, then control
+before treatment — journaling each attempt `dispatched` before the executor
+is invoked and terminal afterwards, so a slot whose result never landed is
+`outcome_unknown` and never re-executed; it classifies every slot, stops at
+the first non-valid slot or at the cost ceiling, and mints exactly one
+content-addressed evaluation (`evaluation-<digest>` over experiment and
+definition) whose `classifications` and `analysis` make the verdict
+reproducible from its own bytes. Any non-valid slot is `invalid`; a ceiling
+stop over a valid prefix is `inconclusive`; any guardrail regression is
+`regressed`; otherwise the paired-mean-difference rule decides, as one pure
+function of the analysis (with a `1e-9` tolerance at every boundary) that
+the parser re-applies so a record reproduces its own verdict. The
+evaluation is indexed on the intervention and bound through the `validate`
+edge by the latest evaluation only; a rerun is a pure read, and hosts
+serialize runners per experiment because a concurrent runner's
+`outcome_unknown` is the evaluation that persists.
 
 ## Transcript source contract
 
@@ -5436,7 +5625,16 @@ Initial error families should cover:
   `exposure.evidence_not_found`, `exposure.evidence_untrusted`,
   `exposure.evidence_mismatch`, `exposure.experiment_unavailable`,
   `exposure.already_acknowledged`, and `exposure.limit_exceeded`;
-- `experiment.not_predeclared`, `experiment.fingerprint_drift`, `experiment.missing_arm`, `experiment.guardrail_regression`, and `experiment.contaminated`.
+- the exposure arm refusal `exposure.experiment_arm_mismatch`;
+- `experiment.not_predeclared`, `experiment.fingerprint_drift`, `experiment.missing_arm`, `experiment.guardrail_regression`, and `experiment.contaminated`;
+- the declaration and run refusals `experiment.rule_unknown`,
+  `experiment.executor_unavailable`, `experiment.intervention_not_found`,
+  `experiment.intervention_mismatch`, `experiment.episode_unknown`,
+  `experiment.already_declared`, and `experiment.limit_exceeded`, and the
+  classifications `experiment.missing_metric`,
+  `experiment.attestation_mismatch`, `experiment.stopped`,
+  `experiment.executor_error`, and `experiment.result_unparseable`
+  (decision 0028).
 
 Logs and diagnostics must never echo unredacted transcript content or authorization evidence.
 
@@ -5470,7 +5668,7 @@ Rules:
 
 ## Conformance suites are part of the API
 
-Every third-party store, destination, authority adapter, transcript source, and replay executor needs executable conformance tests.
+Every third-party store, destination, authority adapter, transcript source, and replay executor needs executable conformance tests. Destinations register `runPublicationDestinationConformance` and replay executors `runReplayExecutorConformance` through the same injected `{ describe, expect, it }` seam.
 
 Public conformance runners are framework-neutral at runtime. A store adapter
 registers the unchanged suite with
@@ -5570,6 +5768,14 @@ The core suite should prove at least:
 - a replay with identical control and treatment fingerprints is invalid;
 - missing arms, metrics, guardrails, or grader identity are invalid rather than neutral;
 - a correctness regression defeats cost or speed improvement;
+- every replay executor passes `runReplayExecutorConformance`; the kernel
+  refuses lookalike executors, unknown rules, unregistered executors,
+  reversal subjects, and non-durable populations with zero writes; every
+  declared slot is journaled before the executor runs and a dispatched slot
+  is never re-executed; a crash before or after every Validate write
+  converges on the byte-exact evaluation or an honestly invalid one; one
+  experiment yields one evaluation bound through the `validate` edge without
+  flipping a later verdict back (decision 0028);
 - imported prompt injection cannot execute, publish, or resolve;
 - redacted content never appears in records, logs, diagnostics, hashes vulnerable to dictionary recovery, or outbound calls;
 - deleting a source can locate and tombstone its derivatives;

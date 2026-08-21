@@ -6,10 +6,10 @@
 // records into the current InterventionRecord view — and the legal-transition
 // table below is part of the protocol. It forbids active-plus-unpublished,
 // any validation claim without a bound evaluation, and publication from any
-// authorization state other than authorized or not_required. No transition
-// in this slice changes validation, revokes, or expires: evaluation-bound
-// transitions belong to the Validate tier, and later revocation is an
-// explicit host policy and a preauthorized effect, never an implied edge.
+// authorization state other than authorized or not_required. Only the
+// `validate` edge (decision 0028) changes validation, and only to a verdict
+// bound to a durable evaluation; no edge revokes or expires — later revocation
+// is an explicit host policy and a preauthorized effect, never an implied edge.
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import type { JsonValue } from "../canonical/json.js";
 import type { Diagnostic } from "../diagnostics.js";
@@ -54,7 +54,7 @@ export interface InterventionTransition {
  * kernel-state effect is identical (activation becomes `disabled`); the
  * child plan's `action` records which one ran.
  */
-export type InterventionTransitionKind = "authorize" | "publish" | "fail" | "disable" | "rollback";
+export type InterventionTransitionKind = "authorize" | "publish" | "fail" | "disable" | "rollback" | "validate";
 
 const PUBLICATION_STATES = ["unpublished", "published", "failed", "rolled_back"] as const;
 const AUTHORIZATION_STATES = ["not_required", "pending", "authorized", "revoked", "expired"] as const;
@@ -112,9 +112,12 @@ function appliedPublication(publication: InterventionState["publication"]): bool
 
 /**
  * The legal-transition table. Returns the transition kind for a legal pair
- * and `undefined` for every other pair. Validation never changes here (no
- * evaluation record exists before the Validate tier), and no edge mints
- * `revoked` or `expired`.
+ * and `undefined` for every other pair. Publication, authorization, and
+ * activation move only through the Activate edges of decision 0026; the
+ * `validate` edge of decision 0028 moves only `validation`, from any value to
+ * a different evaluation verdict (never back to `untested`), on a journaled
+ * intervention (one whose authorization is no longer `pending`). No edge
+ * mints `revoked` or `expired`.
  */
 export function interventionTransitionKind(
   from: InterventionState,
@@ -123,7 +126,15 @@ export function interventionTransitionKind(
   if (interventionStateInvalidReasons(from).length > 0 || interventionStateInvalidReasons(to).length > 0) {
     return undefined;
   }
-  if (from.validation !== to.validation) return undefined;
+  if (from.validation !== to.validation) {
+    return to.validation !== "untested" &&
+      from.authorization !== "pending" &&
+      from.publication === to.publication &&
+      from.authorization === to.authorization &&
+      from.activation === to.activation
+      ? "validate"
+      : undefined;
+  }
   if (from.authorization === "pending") {
     return to.authorization === "authorized" &&
       from.publication === "unpublished" &&

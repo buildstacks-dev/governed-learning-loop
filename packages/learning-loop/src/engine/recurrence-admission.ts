@@ -3,12 +3,14 @@ import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
 import { LearningLoopError } from "../diagnostics.js";
 import type { Candidate, CandidateV2 } from "../records/candidate.js";
+import { candidateScopeDigest } from "../records/candidate.js";
 import type { DetectorPackRunGroupGovernance } from "../records/detector-pack-run-receipt.js";
 import { invalid } from "../parse/toolkit.js";
 import type { CandidateContentLock } from "./candidate-content-lock.js";
 import { candidateContentLockDigest, loadCandidateContentLock } from "./candidate-content-lock.js";
 import type { EngineContext } from "./context.js";
 import { createOnly, loadCandidate, loadStoredRecord, recordDigest } from "./context.js";
+import { loadCandidateScopeMembership, persistCandidateScopeMembership } from "./candidate-scope-index.js";
 import type { CurrentGroupCandidateClaim } from "./recurrence-claims.js";
 import {
   candidateRecurrenceGroupMemberCount,
@@ -595,11 +597,16 @@ async function completeAdmissionReservation(
   const exactBinding = buildCandidateAdmissionBinding(reservation);
   const terminalBefore = await loadCandidate(context, reservation.candidateId);
   if (terminalBefore !== undefined) {
+    const scopeMembership = await loadCandidateScopeMembership(context, {
+      scopeDigest: candidateScopeDigest(reservation.candidate.scope),
+      candidateId: reservation.candidateId,
+    });
     const storedBinding = await loadCandidateAdmissionBinding(context, reservation.candidateId);
     if (
       terminalBefore.schemaVersion !== 2 ||
       recordDigest(toJsonValue(terminalBefore)) !== recordDigest(toJsonValue(reservation.candidate)) ||
       storedBinding === undefined ||
+      scopeMembership?.candidateDigest !== reservation.candidateDigest ||
       recordDigest(toJsonValue(storedBinding)) !== recordDigest(toJsonValue(exactBinding))
     ) {
       throw invalid("store.corrupt", "terminal Candidate admission graph is mismatched", []);
@@ -630,6 +637,7 @@ async function completeAdmissionReservation(
   }
   await persistCandidateAdmissionBinding(context, exactBinding);
   await persistCandidateRecurrenceGroupMember(context, reservation.candidateClaim);
+  await persistCandidateScopeMembership(context, reservation.candidate);
   const status = await createOnly(
     context,
     "candidate",

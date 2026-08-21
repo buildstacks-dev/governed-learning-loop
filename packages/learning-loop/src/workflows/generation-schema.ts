@@ -44,6 +44,37 @@ export const GENERATION_RESULT_SCHEMA = Object.freeze({
   schemaDigest: GENERATION_RESULT_SCHEMA_DIGEST,
 });
 
+export const ADVISORY_REVIEW_RESULT_SCHEMA_ID = "cormidia.semantic-advisory-review-result";
+export const ADVISORY_REVIEW_RESULT_SCHEMA_VERSION = "1.0.0";
+export const ADVISORY_REVIEW_RESULT_SCHEMA_DIGEST = sha256HexOfCanonicalJson(
+  toJsonValue({
+    schemaVersion: SCHEMA_VERSION,
+    id: ADVISORY_REVIEW_RESULT_SCHEMA_ID,
+    version: ADVISORY_REVIEW_RESULT_SCHEMA_VERSION,
+    envelope: {
+      schemaVersion: SCHEMA_VERSION,
+      id: ADVISORY_REVIEW_RESULT_SCHEMA_ID,
+      version: ADVISORY_REVIEW_RESULT_SCHEMA_VERSION,
+      status: ["completed", "provider_refused", "provider_failed"],
+      providerReceipt: ["id", "digest"],
+      usage: "reported_or_null",
+      result: {
+        advisoryRecommendation: ["support", "revise", "oppose", "escalate"],
+        findings: ["code", "severity", "statement"],
+      },
+    },
+    tools: "none",
+    calibration: "unverified",
+  }),
+);
+
+export const ADVISORY_REVIEW_RESULT_SCHEMA = Object.freeze({
+  schemaVersion: SCHEMA_VERSION,
+  id: ADVISORY_REVIEW_RESULT_SCHEMA_ID,
+  version: ADVISORY_REVIEW_RESULT_SCHEMA_VERSION,
+  schemaDigest: ADVISORY_REVIEW_RESULT_SCHEMA_DIGEST,
+});
+
 export interface DefineGenerationInput {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -67,6 +98,8 @@ export interface DefineGenerationInput {
   readonly attestation: SemanticWorkflowDefinition["attestation"];
 }
 
+export type DefineAdvisoryReviewInput = DefineGenerationInput;
+
 function parseNonnegativeInteger(input: unknown, path: readonly (string | number)[]): number {
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input < 0) {
     throw invalid("schema.invalid", "value must be a nonnegative safe integer", path);
@@ -74,7 +107,18 @@ function parseNonnegativeInteger(input: unknown, path: readonly (string | number
   return input;
 }
 
-export function defineGeneration(input: DefineGenerationInput): SemanticWorkflowDefinition {
+function defineWorkflow(
+  input: DefineGenerationInput,
+  options: {
+    readonly lane: SemanticWorkflowDefinition["lane"];
+    readonly outputSchema: {
+      readonly id: string;
+      readonly version: string;
+      readonly schemaDigest: string;
+    };
+    readonly calibration: SemanticWorkflowDefinition["calibration"];
+  },
+): SemanticWorkflowDefinition {
   const fields = readFields(input, ["defineGeneration"]);
   fields.schemaVersion1();
   const implementationFields = readFields(
@@ -177,11 +221,10 @@ export function defineGeneration(input: DefineGenerationInput): SemanticWorkflow
     fields.req("attestation", (value) => value),
     ["attestation"],
   );
-  const lane: "generation" = "generation";
   const definitionBase = {
     id: fields.req("id", parseId),
     version: fields.req("version", parseSemVer),
-    lane,
+    lane: options.lane,
     transport,
     implementation: {
       id: implementationFields.req("id", parseId),
@@ -199,11 +242,7 @@ export function defineGeneration(input: DefineGenerationInput): SemanticWorkflow
       version: rendererFields.req("version", parseSemVer),
       rendererDigest: rendererFields.req("rendererDigest", parseDigestAt),
     },
-    outputSchema: {
-      id: GENERATION_RESULT_SCHEMA.id,
-      version: GENERATION_RESULT_SCHEMA.version,
-      schemaDigest: GENERATION_RESULT_SCHEMA.schemaDigest,
-    },
+    outputSchema: options.outputSchema,
     toolPolicy,
     budgetPolicy,
     disclosurePolicy,
@@ -212,11 +251,27 @@ export function defineGeneration(input: DefineGenerationInput): SemanticWorkflow
       id: attestationFields.req("id", parseId),
       digest: attestationFields.req("digest", parseDigestAt),
     },
-    calibration: null,
+    calibration: options.calibration,
   };
   return parseSemanticWorkflowDefinition({
     schemaVersion: 1,
     ...definitionBase,
     definitionDigest: semanticWorkflowDefinitionDigest(definitionBase),
+  });
+}
+
+export function defineGeneration(input: DefineGenerationInput): SemanticWorkflowDefinition {
+  return defineWorkflow(input, {
+    lane: "generation",
+    outputSchema: GENERATION_RESULT_SCHEMA,
+    calibration: null,
+  });
+}
+
+export function defineAdvisoryReview(input: DefineAdvisoryReviewInput): SemanticWorkflowDefinition {
+  return defineWorkflow(input, {
+    lane: "advisory_review",
+    outputSchema: ADVISORY_REVIEW_RESULT_SCHEMA,
+    calibration: { status: "unverified", calibrationId: null, calibrationDigest: null },
   });
 }

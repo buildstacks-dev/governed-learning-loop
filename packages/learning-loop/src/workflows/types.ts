@@ -3,6 +3,7 @@ import type { InsightDerivation } from "../records/insight-derivation.js";
 import type { Scope } from "../records/scope.js";
 import type { DetectorRunInput } from "../engine/detector-run.js";
 import type { DetectorExecutionView, InsightDerivationView } from "../engine/semantic-views.js";
+import type { PrincipalRef } from "../records/principal.js";
 import type { Diagnostic } from "../diagnostics.js";
 
 type SemanticWorkflowResultStatus =
@@ -86,6 +87,65 @@ interface SemanticWorkflowTurnView {
         readonly workflowExecutionDigest: string;
         readonly execution: DetectorExecutionView;
         readonly derivations: readonly InsightDerivationView[];
+      }
+    | {
+        readonly kind: "advisory_review";
+        readonly assessment: {
+          readonly id: string;
+          readonly assessmentDigest: string;
+          readonly qualification: "advisory_uncalibrated";
+          readonly candidateId: string;
+          readonly candidateDigest: string;
+          readonly advisoryRecommendation: "support" | "revise" | "oppose" | "escalate";
+          readonly findings: readonly {
+            readonly code: string;
+            readonly severity: "info" | "warning" | "blocking";
+            readonly statementKeyedDigest: string;
+            readonly statementByteLength: number;
+          }[];
+          readonly subjectSnapshotDigest: string;
+          readonly evidenceSetDigest: string;
+          readonly derivationRef: {
+            readonly id: string;
+            readonly derivationDigest: string;
+            readonly derivationViewDigest: string;
+          } | null;
+          readonly admission:
+            | {
+                readonly status: "not_subject";
+                readonly reason: "manual" | "recurrence_unbound" | "policy_unconfigured" | "historical_pre_admission";
+              }
+            | {
+                readonly status: "resolved" | "historical";
+                readonly bindingDigest: string;
+                readonly reservationKeyDigest: string;
+                readonly reservationDigest: string;
+                readonly snapshotDigest: string;
+                readonly policyDigest: string;
+                readonly basis:
+                  | "group_available"
+                  | "required_supersession"
+                  | "rejection_override"
+                  | "historical_supersession";
+              };
+          readonly admissionLineageDigest: string;
+          readonly reviewer: {
+            readonly principal: PrincipalRef;
+            readonly attestation: { readonly id: string; readonly digest: string };
+            readonly implementation: { readonly id: string; readonly version: string; readonly digest: string };
+            readonly modelFingerprintDigest: string;
+            readonly promptDigest: string;
+            readonly rendererDigest: string;
+            readonly outputSchemaDigest: string;
+            readonly toolPolicyDigest: string;
+            readonly budgetPolicyDigest: string;
+            readonly calibration: {
+              readonly status: "unverified";
+              readonly calibrationId: null;
+              readonly calibrationDigest: null;
+            };
+          };
+        };
       };
   readonly turnDigest: string;
 }
@@ -143,6 +203,50 @@ export interface SemanticWorkflowBundle {
     readonly turnId: string | null;
     readonly execution?: DetectorExecutionRecord;
     readonly derivations: readonly InsightDerivation[];
+  }>;
+  prepareAdvisoryReview(input: {
+    readonly candidateId: string;
+    readonly scope: Scope;
+    readonly expiresAt: string;
+  }): Promise<
+    | {
+        readonly status: "prepared";
+        readonly plan: object;
+        readonly attemptId: string;
+        readonly preview: SemanticWorkflowPreview;
+        readonly candidateDigest: string;
+        readonly snapshotDigest: string;
+      }
+    | {
+        readonly status: "incomplete";
+        readonly preview: null;
+        readonly diagnostics: readonly Diagnostic[];
+      }
+  >;
+  authorizeAdvisoryReview(input: { readonly plan: object; readonly evidence: unknown }): Promise<{
+    readonly authorization: object;
+    readonly authorizedAt: string;
+    readonly expiresAt: string;
+  }>;
+  runAdvisoryReview(input: { readonly plan: object; readonly authorization: object | null }): Promise<{
+    readonly status: SemanticWorkflowResultStatus;
+    readonly persistence: "committed" | "existing" | "dispatch_only";
+    readonly callbackInvoked: boolean;
+    readonly turnId: string | null;
+    readonly assessment?: Extract<
+      SemanticWorkflowTurnView["output"],
+      { readonly kind: "advisory_review" }
+    >["assessment"];
+  }>;
+  recoverAdvisoryReview(input: { readonly attemptId: string; readonly scope: Scope }): Promise<{
+    readonly status: SemanticWorkflowResultStatus | "not_dispatched";
+    readonly persistence: "committed" | "existing" | "dispatch_only" | "not_dispatched";
+    readonly callbackInvoked: boolean;
+    readonly turnId: string | null;
+    readonly assessment?: Extract<
+      SemanticWorkflowTurnView["output"],
+      { readonly kind: "advisory_review" }
+    >["assessment"];
   }>;
   getTurn(input: { readonly turnId: string; readonly scope: Scope }): Promise<SemanticWorkflowTurnView | undefined>;
   queryTurns(input: {

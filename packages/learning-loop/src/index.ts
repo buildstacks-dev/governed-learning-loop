@@ -50,8 +50,13 @@ export type { AfterEffectSemantics, EffectClass, PreparedEffect, PublicationLine
 export type { AuthorizationBinding, PublicationPlan, PublicationReceipt } from "./records/publication.js";
 export { parsePreparedEffect, parsePublicationPlan, publicationPlanDigest } from "./records/publication.js";
 export { authorizationBindingDigest, parseAuthorizationBinding } from "./records/publication.js";
+export { parsePublicationReceipt } from "./records/publication.js";
 export type { AuthorityPort, VerifiedAuthorization } from "./records/authorization.js";
 export { createAuthorityPort } from "./engine/authority.js";
+// Intervention state history (decision 0026): four independent dimensions,
+// append-only transitions, and the protocol's legal-transition table.
+export type { InterventionRecord, InterventionState, InterventionTransition } from "./records/intervention.js";
+export { parseInterventionRecord, parseInterventionTransition } from "./records/intervention.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";

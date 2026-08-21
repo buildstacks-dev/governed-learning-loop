@@ -215,10 +215,10 @@ describe("DetectorPackRunReceipt canonical record", () => {
     expect(receipt.population.populationDigest).toBe(
       "9e02cdb3c66805fa0561ba2f810debb0f0584a2f6bdb13bdef3af6fec758a030",
     );
-    expect(receipt.items[0]?.itemDigest).toBe("dc4576f53512ae86d9335f43c32f41e0163fd701290bef6e925b2f9ed7a80419");
+    expect(receipt.items[0]?.itemDigest).toBe("cff26c8f62af7555720521d544aa02e13899b9b13c51473eb7c88fade85a3570");
     expect(receipt.governanceSnapshotDigest).toBe("0e2adc01a9799b52210db99dada2786c53acc5062af8a2bb8fee3fc1ea45ece1");
-    expect(receipt.packRunKeyDigest).toBe("682ad70378bb2243e01b8d1dd8ba0e374c40735b7c023fa58ee07ff24c5f1975");
-    expect(receipt.receiptDigest).toBe("ccf202e7412e678b8694c18629e78b91d40d4702ae9277d20a3da3e26377c53f");
+    expect(receipt.packRunKeyDigest).toBe("5da68323accbda3b1fa5aa28918b1900a26913bbff623dbecb6f71b5dd24dff2");
+    expect(receipt.receiptDigest).toBe("625b03504c32147fc296d1c57668b18886c2cd9dcb8ced7db4ad59ee7580210f");
   });
 
   it("binds every top-level field family into key or full receipt identity", async () => {

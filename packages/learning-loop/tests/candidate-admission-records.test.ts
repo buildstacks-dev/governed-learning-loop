@@ -104,12 +104,12 @@ describe("Candidate admission canonical records", () => {
     expect(parseCandidateAdmissionReservation({ ...reservation, unknown: true })).toEqual(reservation);
     expect(parseCandidateAdmissionBinding({ ...binding, unknown: true })).toEqual(binding);
     expect(parseCandidateContentLock({ ...lock, unknown: true })).toEqual(lock);
-    expect(snapshot.snapshotDigest).toBe("d6ac7e68db1e59b2c2def1aef4d8d331b7b26cdf2b64b70d5d672eba9c08a8ab");
-    expect(reservation.reservationKeyDigest).toBe("60824a847b10db9bc0350dd4052a8825d8b75d7548de7eee5bad80e7cf26a957");
-    expect(reservation.reservationDigest).toBe("ceeecf77bfeadcd32ea38c0c7f44cb608eadc347605804bfad740c3cccac314a");
-    expect(binding.bindingDigest).toBe("83992c8bd17db58d473acbb1eddec8ffa74e0e9ff8fb807e842e4d6834967ec6");
+    expect(snapshot.snapshotDigest).toBe("db5c695a79e5ffe9f6a94e756202d0f8d0ba95d6084624ee1330f6343a176273");
+    expect(reservation.reservationKeyDigest).toBe("d33b92861cdab80d630d0aa1b9058a1b4639a4ee4c3e047211845ff9434a1931");
+    expect(reservation.reservationDigest).toBe("f8e4e4d9b1549fe0b97c00e029d7b39ef5234fa998135c3bfdba60d3862f3f64");
+    expect(binding.bindingDigest).toBe("a718e3cb1d14f9fef87d8740df8cecca5f53772a477af045802cd820e320c135");
     const stream = await loadCandidateAdmissionStream(fixture.context, fixture.groupKeyDigest);
-    expect(stream.snapshotDigest).toBe("930f8c9bb9b6efb44ffd6be738e8d9ecc84b84d2c106f6b4513fff60e79a172e");
+    expect(stream.snapshotDigest).toBe("2111ec6e2e170cffe522295ed2b3f307219e60568ce20d533f2d51f6a16cb071");
   });
 
   it("recomputes every digest and refuses self-consistent cross-record lineage tamper", async () => {

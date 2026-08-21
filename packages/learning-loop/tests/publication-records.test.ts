@@ -147,7 +147,9 @@ describe("PublicationPlan", () => {
       content({ candidateId: "cand-2" }),
       content({ candidateDigest: D("a") }),
       content({ destinationId: "other-destination" }),
-      content({ action: "disable" }),
+      content({ action: "disable", lineage: lineage({ parentInterventionId: `intervention-${D("9")}` }) }),
+      content({ action: "rollback", lineage: lineage({ parentInterventionId: `intervention-${D("9")}` }) }),
+      content({ action: "rollback", lineage: lineage({ parentInterventionId: `intervention-${D("8")}` }) }),
       content({ effectClass: "proposal" }),
       content({ effectiveRisk: "T2" }),
       content({ effects: [effect({ id: "effect-2" })] }),
@@ -216,6 +218,19 @@ describe("PublicationPlan", () => {
       () => parsePublicationPlan({ ...plan, lineage: { ...plan.lineage, derivation: undefined } }),
       "schema.invalid",
     );
+  });
+
+  it("binds a parent intervention exactly for reversal plans and keeps publish-plan digests byte-stable", () => {
+    const parent = `intervention-${D("9")}`;
+    expectError(() => planFrom(content({ lineage: lineage({ parentInterventionId: parent }) })), "schema.invalid");
+    expectError(() => planFrom(content({ action: "compensate" })), "schema.invalid");
+    const reversal = planFrom(content({ action: "compensate", lineage: lineage({ parentInterventionId: parent }) }));
+    expect(reversal.lineage.parentInterventionId).toBe(parent);
+    expect(authorizationBindingForPlan(reversal).lineageClosureDigest).not.toBe(
+      publicationLineageClosureDigest(reversal.candidateDigest, lineage()),
+    );
+    // A publish plan without the optional field digests exactly as before the field existed.
+    expect(planFrom(content()).planDigest).toBe("ef29b8ea4a4350f62444881dc356ffc4d08741f16039549658dad145df73b512");
   });
 
   it("accepts exactly 100 effects", () => {

@@ -1,45 +1,86 @@
-// learning.preparePublication and the refusal half of learning.publish
+// learning.preparePublication, learning.publish, and learning.getIntervention
 // (contract §Publication plan and authorization binding, §Authority,
-// §Publication destination; decision 0025).
+// §Publication destination, §Intervention; decisions 0025 and 0026).
 //
-// Preparation is side-effect-free against the destination (`prepare` only)
-// and persists exactly one create-only, content-addressed plan record.
-// Publish reloads the plan, revalidates every bound field against the current
-// loop, requires decisive governance, consults the loop's exact authority
-// port, and refuses pending, denied, invalid, expired, and binding-mismatched
-// (wrong-base) authorizations. No refusal path — and, in this slice, no
-// authorized path — performs a destination write or a store write. The
-// authorized branch ends at the activation-tier gate; the journaled publisher
-// (issue #10, second half) replaces that gate and keeps every check before it.
-import { canonicalJsonText } from "../canonical/canonical-json.js";
+// Preparation is side-effect-free against the destination (`prepare` only,
+// and only for publish plans) and persists exactly one create-only,
+// content-addressed plan record. A disable, rollback, or compensate plan is
+// prepared from the exact published parent intervention's journaled receipts
+// and declared after-effects — never from a second adapter call — and binds
+// that parent into its lineage closure. Publish keeps every refusal check of
+// decision 0025 verbatim, then continues into the journaled publisher: it
+// consumes the verified authorization into a durable record, journals the
+// intervention header, scope membership, and authorize edge, applies every
+// effect through `applyEffect` under a kernel idempotency key with the
+// receipt journaled before the next effect, appends the parent's reversal
+// edge for derived plans, and writes the publish edge last. A retry reloads
+// the journal and forward-completes the same plan or no-ops; it never
+// re-consults authority for a consumed plan and never re-applies an effect
+// whose receipt is durable. An adapter failure is journaled as `failed` and
+// the same plan remains resumable.
+import { canonicalJsonText, sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import { toJsonValue } from "../canonical/to-json-value.js";
 import type { Diagnostic } from "../diagnostics.js";
 import { LearningLoopError } from "../diagnostics.js";
-import { invalid, parseOneOf, readFields } from "../parse/toolkit.js";
+import { invalid, parseNonEmptyText, parseOneOf, readFields } from "../parse/toolkit.js";
 import type { Candidate, CandidateV2 } from "../records/candidate.js";
+import { candidateScopeDigest, parseCandidate } from "../records/candidate.js";
+import type { InterventionRecord, InterventionState } from "../records/intervention.js";
 import type {
   AuthorizationBinding,
   PreparedEffect,
   PublicationLineage,
   PublicationPlan,
+  PublicationReceipt,
 } from "../records/publication.js";
 import {
   authorizationBindingDigest,
   authorizationBindingForPlan,
   PUBLICATION_ACTIONS,
   parseEffectsAt,
+  parsePreparedEffect,
   parsePublicationPlan,
+  parsePublicationReceiptAt,
+  publicationEffectIdempotencyKey,
   publicationPlanDigest,
   publicationPlanIdFor,
+  publicationReceiptMismatchReasons,
 } from "../records/publication.js";
 import { parseDurableId, parseId, scopeDigest } from "../records/semantic-shared.js";
 import { assertVerifiedAuthorization } from "./authority.js";
 import type { EngineContext } from "./context.js";
-import { createOnly, effectiveRisk, errorDiagnostics, loadCandidate, loadStoredRecord } from "./context.js";
+import {
+  createOnly,
+  effectiveRisk,
+  errorDiagnostics,
+  iterateRecordPages,
+  loadCandidate,
+  loadStoredRecord,
+} from "./context.js";
 import type { BoundDestination } from "./destination-registration.js";
 import { targetPermitted } from "./destination-registration.js";
 import type { GovernanceView } from "./governance.js";
 import { parseContentPolicyResult } from "./ingest.js";
+import type { AuthorizationConsumption, InterventionFold, StoredPublicationReceipt } from "./publication-journal.js";
+import {
+  appendInterventionTransition,
+  buildAuthorizationConsumption,
+  buildInterventionHeader,
+  buildInterventionScopeMembership,
+  buildStoredPublicationReceipt,
+  ensureAuthorizationConsumption,
+  ensureInterventionHeader,
+  ensureInterventionScopeMembership,
+  ensureStoredPublicationReceipt,
+  assertStoredReceiptBinds,
+  interventionIdFor,
+  listInterventionScopeMemberships,
+  loadAuthorizationConsumption,
+  loadFoldReceipts,
+  loadInterventionFold,
+  loadStoredPublicationReceipt,
+  receiptIdFor,
+} from "./publication-journal.js";
 import type { CandidateGovernanceState } from "./views.js";
 import { candidateGovernanceStateOf } from "./views.js";
 
@@ -48,6 +89,8 @@ export interface PreparePublicationInput {
   readonly destinationId: string;
   readonly expectedBase?: string;
   readonly action?: PublicationPlan["action"];
+  /** Names the exact published intervention a disable/rollback/compensate plan reverses when more than one qualifies. */
+  readonly interventionId?: string;
 }
 
 export interface PreparedPublication {
@@ -62,17 +105,28 @@ export interface PublishInput {
 }
 
 /**
- * Publication outcome of this slice. Only refusals exist until the journaled
- * publisher lands: `pending`/`denied` report the authority decision,
- * `blocked` reports policy, governance, binding drift, or the activation-tier
- * gate, and `failed` is reserved for adapter failures in the publisher.
+ * `published`: this call created and completed the journal. `resumed`: a
+ * journal already existed and this call completed it. `no_op`: the journal
+ * was already complete and this call wrote nothing and called no adapter.
+ * `pending`/`denied` report the authority decision; `blocked` reports policy,
+ * governance, binding drift, parent state, or supersession; `failed` reports
+ * an adapter failure or receipt mismatch — the same plan remains resumable.
  */
-export type PublicationOutcome = {
-  readonly status: "pending" | "denied" | "blocked" | "failed";
-  readonly diagnostics: readonly Diagnostic[];
-};
+export type PublicationOutcome =
+  | {
+      readonly status: "published" | "resumed" | "no_op";
+      readonly intervention: InterventionRecord;
+      readonly receipts: readonly PublicationReceipt[];
+    }
+  | {
+      readonly status: "pending" | "denied" | "blocked" | "failed";
+      readonly diagnostics: readonly Diagnostic[];
+    };
 
 const PLAN_KIND = "publication-plan";
+const MAX_ADAPTER_ERROR_TEXT = 1_000;
+const REVERSAL_ACTIONS = ["disable", "rollback", "compensate"] as const;
+type ReversalAction = (typeof REVERSAL_ACTIONS)[number];
 
 function refusal(code: string, message: string, extra: readonly Diagnostic[] = []): LearningLoopError {
   return new LearningLoopError(code, [{ code, severity: "error", message }, ...extra]);
@@ -82,8 +136,27 @@ function diagnostic(code: string, message: string): Diagnostic {
   return { code, severity: "error", message };
 }
 
-function outcome(status: PublicationOutcome["status"], diagnostics: readonly Diagnostic[]): PublicationOutcome {
+function outcome(
+  status: "pending" | "denied" | "blocked" | "failed",
+  diagnostics: readonly Diagnostic[],
+): PublicationOutcome {
   return Object.freeze({ status, diagnostics: Object.freeze([...diagnostics]) });
+}
+
+function completion(
+  status: "published" | "resumed" | "no_op",
+  intervention: InterventionRecord,
+  receipts: readonly StoredPublicationReceipt[],
+): PublicationOutcome {
+  return Object.freeze({
+    status,
+    intervention: Object.freeze(intervention),
+    receipts: Object.freeze(receipts.map((stored) => Object.freeze({ ...stored.receipt }))),
+  });
+}
+
+function isReversalAction(action: PublicationPlan["action"]): action is ReversalAction {
+  return action !== "publish";
 }
 
 /** Evidence, derivation, and admission lineage must all be intact before a plan binds them. */
@@ -201,6 +274,17 @@ async function admitEffectContent(
   }
 }
 
+function assertTargetsPermitted(destination: BoundDestination, effects: readonly PreparedEffect[]): void {
+  for (const [index, effect] of effects.entries()) {
+    if (!targetPermitted(effect.target, destination.permittedTargetPatterns)) {
+      throw refusal(
+        "publication.target_not_permitted",
+        `destination "${destination.id}" registration does not permit the target of effect ${index} ("${effect.id}")`,
+      );
+    }
+  }
+}
+
 async function prepareEffects(
   context: EngineContext,
   destination: BoundDestination,
@@ -221,13 +305,8 @@ async function prepareEffects(
       errorDiagnostics(error),
     );
   }
+  assertTargetsPermitted(destination, effects);
   for (const [index, effect] of effects.entries()) {
-    if (!targetPermitted(effect.target, destination.permittedTargetPatterns)) {
-      throw refusal(
-        "publication.target_not_permitted",
-        `destination "${destination.id}" registration does not permit the target of effect ${index} ("${effect.id}")`,
-      );
-    }
     if (expectedBase !== undefined && effect.expectedBase !== undefined && effect.expectedBase !== expectedBase) {
       throw refusal(
         "publication.base_mismatch",
@@ -258,10 +337,173 @@ async function persistPlan(context: EngineContext, plan: PublicationPlan): Promi
   return existing;
 }
 
+async function loadPlan(context: EngineContext, planId: string): Promise<PublicationPlan | undefined> {
+  const stored = await loadStoredRecord(context, PLAN_KIND, planId);
+  if (stored === undefined) return undefined;
+  const plan = parsePublicationPlan(stored.value);
+  if (plan.id !== planId)
+    throw invalid("store.corrupt", "stored publication plan id does not match its record key", ["id"]);
+  return plan;
+}
+
 async function governanceStateOf(context: EngineContext, candidate: Candidate): Promise<CandidateGovernanceState> {
   const riskRule = context.policyRules.risks[effectiveRisk(context, candidate)];
   return candidateGovernanceStateOf(context, candidate, riskRule.independentReview);
 }
+
+// ---------------------------------------------------------------------------
+// Reversal plans: disable, rollback, compensate
+
+/**
+ * The parent state a completed reversal produces from `current`:
+ * `transition` with the target, `already` when the parent already reflects
+ * at least that much deactivation, or `illegal` when the action is not in
+ * the legal-transition table from `current`.
+ */
+export function reversalTarget(
+  action: ReversalAction,
+  current: InterventionState,
+): { readonly kind: "transition"; readonly to: InterventionState } | { readonly kind: "already" | "illegal" } {
+  const applied = current.publication === "published" || current.publication === "failed";
+  if (current.publication === "rolled_back") return { kind: "already" };
+  if (!applied) return { kind: "illegal" };
+  if (action === "rollback") {
+    return { kind: "transition", to: { ...current, publication: "rolled_back", activation: "disabled" } };
+  }
+  if (current.activation === "disabled") return { kind: "already" };
+  return { kind: "transition", to: { ...current, activation: "disabled" } };
+}
+
+interface ParentIntervention {
+  readonly fold: InterventionFold;
+  readonly record: InterventionRecord;
+  readonly plan: PublicationPlan;
+}
+
+async function loadParent(context: EngineContext, interventionId: string): Promise<ParentIntervention | undefined> {
+  const fold = await loadInterventionFold(context, interventionId);
+  if (fold === undefined || fold.record === undefined) return undefined;
+  const plan = await loadPlan(context, fold.header.planId);
+  if (plan === undefined || plan.planDigest !== fold.header.planDigest) {
+    throw invalid("store.corrupt", `intervention "${interventionId}" names a missing or mismatched plan`, ["planId"]);
+  }
+  return { fold, record: fold.record, plan };
+}
+
+function parentMismatch(parent: ParentIntervention, candidate: Candidate, destinationId: string): string | undefined {
+  if (parent.fold.header.action !== "publish") return "names an intervention that is itself a reversal";
+  if (parent.fold.header.candidateId !== candidate.id) return "belongs to another candidate";
+  if (parent.fold.header.candidateDigest !== candidate.contentDigest) return "binds another candidate digest";
+  if (parent.fold.header.destinationId !== destinationId) return "belongs to another destination";
+  return undefined;
+}
+
+async function resolveParentIntervention(
+  context: EngineContext,
+  candidate: Candidate,
+  destinationId: string,
+  action: ReversalAction,
+  interventionId: string | undefined,
+): Promise<ParentIntervention> {
+  if (interventionId !== undefined) {
+    const parent = await loadParent(context, interventionId);
+    if (parent === undefined) {
+      throw refusal("publication.intervention_not_found", `intervention "${interventionId}" does not exist`);
+    }
+    const mismatch = parentMismatch(parent, candidate, destinationId);
+    if (mismatch !== undefined) {
+      throw refusal("publication.intervention_mismatch", `intervention "${interventionId}" ${mismatch}`);
+    }
+    if (reversalTarget(action, parent.record.state).kind !== "transition") {
+      throw refusal(
+        "publication.parent_state_invalid",
+        `intervention "${interventionId}" state does not permit ${action}: publication "${parent.record.state.publication}", activation "${parent.record.state.activation}"`,
+      );
+    }
+    return parent;
+  }
+  const memberships = await listInterventionScopeMemberships(context, candidateScopeDigest(candidate.scope));
+  const qualifying: ParentIntervention[] = [];
+  for (const membership of memberships) {
+    if (
+      membership.action !== "publish" ||
+      membership.candidateId !== candidate.id ||
+      membership.destinationId !== destinationId
+    ) {
+      continue;
+    }
+    const parent = await loadParent(context, membership.interventionId);
+    if (parent === undefined) continue; // unborn header: an orphan remnant, not an intervention
+    if (parentMismatch(parent, candidate, destinationId) !== undefined) continue;
+    if (reversalTarget(action, parent.record.state).kind === "transition") qualifying.push(parent);
+  }
+  const [first, second] = qualifying;
+  if (first === undefined) {
+    throw refusal(
+      "publication.intervention_not_found",
+      `candidate "${candidate.id}" has no published intervention at destination "${destinationId}" that permits ${action}`,
+    );
+  }
+  if (second !== undefined) {
+    throw refusal(
+      "publication.intervention_ambiguous",
+      `candidate "${candidate.id}" has ${qualifying.length} interventions at destination "${destinationId}" that permit ${action}; name one with interventionId`,
+    );
+  }
+  return first;
+}
+
+/**
+ * Reversal effects come from the parent plan's declared after-effects, one
+ * per journaled receipt whose after-effect kind equals the action. Each keeps
+ * the parent effect id and target, carries the adapter's declared payload,
+ * and binds the receipt's final version as its base; its own after-effect is
+ * irreversible because the kernel's only reversal of a reversal is a new
+ * publish plan.
+ */
+async function deriveReversalEffects(
+  context: EngineContext,
+  destination: BoundDestination,
+  parent: ParentIntervention,
+  action: ReversalAction,
+): Promise<readonly PreparedEffect[]> {
+  const receipts = await loadFoldReceipts(context, parent.record, parent.plan);
+  const receiptsByEffect = new Map(receipts.map((stored) => [stored.effectId, stored.receipt]));
+  const effects: PreparedEffect[] = [];
+  for (const effect of parent.plan.effects) {
+    const receipt = receiptsByEffect.get(effect.id);
+    if (receipt === undefined || effect.afterEffect.kind !== action) continue;
+    const payload = effect.afterEffect.payload;
+    effects.push(
+      parsePreparedEffect(
+        toJsonValue({
+          id: effect.id,
+          kind: action,
+          target: effect.target,
+          ...(receipt.finalVersion !== undefined ? { expectedBase: receipt.finalVersion } : {}),
+          payload,
+          payloadDigest: sha256HexOfCanonicalJson(payload),
+          afterEffect: {
+            kind: "irreversible",
+            rationale: `${action} of effect "${effect.id}" of plan "${parent.plan.id}"; reversing it requires a new publish plan`,
+          },
+        }),
+      ),
+    );
+  }
+  if (effects.length === 0) {
+    throw refusal(
+      "publication.after_effect_unavailable",
+      `intervention "${parent.record.id}" has no applied effect that declares a ${action} after-effect`,
+    );
+  }
+  assertTargetsPermitted(destination, effects);
+  await admitEffectContent(context, destination, effects);
+  return effects;
+}
+
+// ---------------------------------------------------------------------------
+// preparePublication
 
 export async function runPreparePublication(
   context: EngineContext,
@@ -272,10 +514,18 @@ export async function runPreparePublication(
   const destinationId = fields.req("destinationId", parseId);
   const expectedBase = fields.opt("expectedBase", parseId);
   const action = fields.opt("action", parseOneOf(PUBLICATION_ACTIONS)) ?? "publish";
-  if (action !== "publish") {
-    throw refusal(
-      "publication.action_unavailable",
-      `action "${action}" requires a published intervention; the journaled publisher (issue #10, second half) is not part of this slice`,
+  const interventionId = fields.opt("interventionId", parseDurableId);
+  if (action === "publish" && interventionId !== undefined) {
+    throw invalid("schema.invalid", "interventionId applies only to disable, rollback, and compensate plans", [
+      "preparePublication",
+      "interventionId",
+    ]);
+  }
+  if (action !== "publish" && expectedBase !== undefined) {
+    throw invalid(
+      "schema.invalid",
+      `a ${action} plan binds the published final version; a caller base is not accepted`,
+      ["preparePublication", "expectedBase"],
     );
   }
   const destination = context.destinationsById?.get(destinationId);
@@ -298,13 +548,31 @@ export async function runPreparePublication(
       `candidate "${candidateId}" proposes destination "${candidate.intervention.destinationId}", not "${destinationId}"`,
     );
   }
-  const state = await governanceStateOf(context, candidate);
-  const invalidReasons = candidateInvalidDiagnostics(state);
-  if (invalidReasons.length > 0) {
-    throw new LearningLoopError("publication.candidate_invalid", invalidReasons);
+
+  let lineage: PublicationLineage;
+  let effects: readonly PreparedEffect[];
+  let state: CandidateGovernanceState;
+  if (isReversalAction(action)) {
+    const parent = await resolveParentIntervention(context, candidate, destinationId, action, interventionId);
+    effects = await deriveReversalEffects(context, destination, parent, action);
+    lineage = {
+      scopeDigest: scopeDigest(candidate.scope),
+      scopePolicyDigest: context.scopePolicy.digest,
+      registryRevision: context.registryRevision,
+      destinationRegistrationDigest: destination.registrationDigest,
+      derivation: parent.plan.lineage.derivation,
+      parentInterventionId: parent.record.id,
+    };
+    state = await governanceStateOf(context, candidate);
+  } else {
+    state = await governanceStateOf(context, candidate);
+    const invalidReasons = candidateInvalidDiagnostics(state);
+    if (invalidReasons.length > 0) {
+      throw new LearningLoopError("publication.candidate_invalid", invalidReasons);
+    }
+    lineage = lineageFor(context, candidate, destination, state);
+    effects = await prepareEffects(context, destination, candidate, expectedBase);
   }
-  const lineage = lineageFor(context, candidate, destination, state);
-  const effects = await prepareEffects(context, destination, candidate, expectedBase);
   const content = {
     candidateId: candidate.id,
     candidateDigest: candidate.contentDigest,
@@ -334,6 +602,9 @@ export async function runPreparePublication(
   });
 }
 
+// ---------------------------------------------------------------------------
+// publish: refusal checks (decision 0025, kept verbatim)
+
 function bindingDrift(
   context: EngineContext,
   plan: PublicationPlan,
@@ -352,18 +623,7 @@ function bindingDrift(
   if (plan.lineage.scopePolicyDigest !== context.scopePolicy.digest) {
     reasons.push(diagnostic("publication.binding_mismatch", "the scope policy changed since the plan was prepared"));
   }
-  if (destination === undefined) {
-    reasons.push(
-      diagnostic("publication.binding_mismatch", `destination "${plan.destinationId}" is not registered on this loop`),
-    );
-  } else if (destination.registrationDigest !== plan.lineage.destinationRegistrationDigest) {
-    reasons.push(
-      diagnostic(
-        "publication.binding_mismatch",
-        `destination "${plan.destinationId}" registration changed since the plan`,
-      ),
-    );
-  }
+  reasons.push(...destinationDrift(plan, destination));
   if (candidate === undefined) {
     reasons.push(diagnostic("publication.binding_mismatch", `candidate "${plan.candidateId}" no longer exists`));
   } else if (candidate.contentDigest !== plan.candidateDigest) {
@@ -377,34 +637,330 @@ function bindingDrift(
   return reasons;
 }
 
+function destinationDrift(plan: PublicationPlan, destination: BoundDestination | undefined): readonly Diagnostic[] {
+  if (destination === undefined) {
+    return [
+      diagnostic("publication.binding_mismatch", `destination "${plan.destinationId}" is not registered on this loop`),
+    ];
+  }
+  if (destination.registrationDigest !== plan.lineage.destinationRegistrationDigest) {
+    return [
+      diagnostic(
+        "publication.binding_mismatch",
+        `destination "${plan.destinationId}" registration changed since the plan`,
+      ),
+    ];
+  }
+  return [];
+}
+
+/**
+ * A candidate is superseded once an exact v2 successor names it through
+ * `supersedes` with its exact content digest in the same scope. The scan
+ * reads only the `supersedes` field of other candidates before parsing a
+ * match; it inherits the global candidate-kind scan debt noted elsewhere.
+ */
+async function candidateSupersededBy(context: EngineContext, candidate: CandidateV2): Promise<string | undefined> {
+  for await (const page of iterateRecordPages(context.store, "candidate", { limit: 100 })) {
+    for (const record of page.records) {
+      const supersedes = readFields(record.value, ["store", "candidate"]).opt("supersedes", parseNonEmptyText);
+      if (supersedes !== candidate.id) continue;
+      const successor = parseCandidate(record.value);
+      if (successor.id !== record.key.id) {
+        throw invalid("store.corrupt", "stored candidate id does not match its record key", ["id"]);
+      }
+      if (
+        successor.schemaVersion === 2 &&
+        successor.originalDigest === candidate.contentDigest &&
+        candidateScopeDigest(successor.scope) === candidateScopeDigest(candidate.scope)
+      ) {
+        return successor.id;
+      }
+    }
+  }
+  return undefined;
+}
+
+async function parentReadiness(
+  context: EngineContext,
+  plan: PublicationPlan,
+  candidate: Candidate,
+): Promise<readonly Diagnostic[]> {
+  const parentId = plan.lineage.parentInterventionId;
+  if (parentId === undefined || !isReversalAction(plan.action)) {
+    throw invalid("store.corrupt", "a reversal plan must bind its parent intervention", ["lineage"]);
+  }
+  const parent = await loadParent(context, parentId);
+  if (parent === undefined) {
+    return [diagnostic("publication.intervention_not_found", `parent intervention "${parentId}" does not exist`)];
+  }
+  const mismatch = parentMismatch(parent, candidate, plan.destinationId);
+  if (mismatch !== undefined) {
+    return [diagnostic("publication.intervention_mismatch", `parent intervention "${parentId}" ${mismatch}`)];
+  }
+  const target = reversalTarget(plan.action, parent.record.state);
+  if (target.kind !== "transition") {
+    return [
+      diagnostic(
+        "publication.parent_state_invalid",
+        `parent intervention "${parentId}" state does not permit ${plan.action}: publication "${parent.record.state.publication}", activation "${parent.record.state.activation}"`,
+      ),
+    ];
+  }
+  const receipts = await loadFoldReceipts(context, parent.record, parent.plan);
+  const applied = new Set(receipts.map((stored) => stored.effectId));
+  for (const effect of plan.effects) {
+    if (!applied.has(effect.id)) {
+      return [
+        diagnostic(
+          "publication.intervention_mismatch",
+          `parent intervention "${parentId}" holds no receipt for effect "${effect.id}"`,
+        ),
+      ];
+    }
+  }
+  return [];
+}
+
+// ---------------------------------------------------------------------------
+// publish: the journal
+
+function adapterFailureDiagnostics(code: string, message: string, error: unknown): readonly Diagnostic[] {
+  if (error instanceof LearningLoopError) return [diagnostic(code, message), ...error.diagnostics];
+  const text =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "non-error value thrown by adapter";
+  return [
+    diagnostic(code, message),
+    {
+      code: "publication.destination_failed",
+      severity: "error",
+      message: text.length > MAX_ADAPTER_ERROR_TEXT ? `${text.slice(0, MAX_ADAPTER_ERROR_TEXT)}…` : text,
+    },
+  ];
+}
+
+async function recordFailure(
+  context: EngineContext,
+  interventionId: string,
+  receipts: readonly StoredPublicationReceipt[],
+  diagnostics: readonly Diagnostic[],
+): Promise<PublicationOutcome> {
+  await appendInterventionTransition(
+    context,
+    interventionId,
+    (current) => (current.publication === "unpublished" ? { ...current, publication: "failed" } : undefined),
+    receipts.map((stored) => stored.id),
+  );
+  return outcome("failed", diagnostics);
+}
+
+async function applyOneEffect(
+  context: EngineContext,
+  plan: PublicationPlan,
+  destination: BoundDestination,
+  effect: PreparedEffect,
+  effectIndex: number,
+): Promise<
+  | { readonly status: "applied" | "existing"; readonly stored: StoredPublicationReceipt }
+  | { readonly status: "failed"; readonly diagnostics: readonly Diagnostic[] }
+> {
+  const idempotencyKey = publicationEffectIdempotencyKey(plan.planDigest, effect.id);
+  const existing = await loadStoredPublicationReceipt(context, receiptIdFor(idempotencyKey));
+  if (existing !== undefined) {
+    assertStoredReceiptBinds(existing, { plan, effect, effectIndex, idempotencyKey });
+    return { status: "existing", stored: existing };
+  }
+  // The adapter receives a detached, frozen copy; it cannot mutate the plan.
+  const detached = Object.freeze(parsePreparedEffect(toJsonValue(effect)));
+  let raw: unknown;
+  try {
+    raw = await destination.applyEffect({ effect: detached, idempotencyKey });
+  } catch (error) {
+    return {
+      status: "failed",
+      diagnostics: adapterFailureDiagnostics(
+        "publication.destination_failed",
+        `destination "${destination.id}" failed to apply effect ${effectIndex} ("${effect.id}"); the same plan may be retried`,
+        error,
+      ),
+    };
+  }
+  let receipt: PublicationReceipt;
+  try {
+    receipt = parsePublicationReceiptAt(raw, ["destination", "applyEffect"]);
+  } catch (error) {
+    return {
+      status: "failed",
+      diagnostics: adapterFailureDiagnostics(
+        "publication.receipt_invalid",
+        `destination "${destination.id}" returned a receipt that does not parse for effect ${effectIndex} ("${effect.id}")`,
+        error,
+      ),
+    };
+  }
+  const mismatches = publicationReceiptMismatchReasons(receipt, {
+    destinationId: plan.destinationId,
+    effect,
+    idempotencyKey,
+  });
+  if (mismatches.length > 0) {
+    return {
+      status: "failed",
+      diagnostics: [
+        diagnostic(
+          "publication.receipt_mismatch",
+          `destination "${destination.id}" receipt does not prove effect ${effectIndex} ("${effect.id}")`,
+        ),
+        ...mismatches.map(
+          (reason): Diagnostic => ({
+            code: "publication.receipt_mismatch",
+            severity: "error",
+            message: reason.message,
+            path: ["destination", "applyEffect", reason.field],
+          }),
+        ),
+      ],
+    };
+  }
+  const stored = await ensureStoredPublicationReceipt(
+    context,
+    buildStoredPublicationReceipt({ plan, effect, effectIndex, idempotencyKey, receipt }),
+    plan,
+    effect,
+  );
+  return { status: "applied", stored };
+}
+
+function publishedStateFor(plan: PublicationPlan): (current: InterventionState) => InterventionState | undefined {
+  const activation = plan.action === "publish" && plan.effectClass !== "proposal" ? "active" : "inactive";
+  return (current) =>
+    current.publication === "published" ? undefined : { ...current, publication: "published", activation };
+}
+
+async function completeJournal(
+  context: EngineContext,
+  plan: PublicationPlan,
+  destination: BoundDestination,
+  consumption: AuthorizationConsumption,
+  entryStatus: "published" | "resumed",
+): Promise<PublicationOutcome> {
+  const interventionId = interventionIdFor(plan.planDigest);
+  let activity = entryStatus === "published" ? 1 : 0;
+  const header = await ensureInterventionHeader(context, buildInterventionHeader(context, plan));
+  await ensureInterventionScopeMembership(context, buildInterventionScopeMembership(header));
+  await appendInterventionTransition(
+    context,
+    interventionId,
+    (current) => (current.authorization === "pending" ? { ...current, authorization: "authorized" } : undefined),
+    [consumption.id],
+  );
+  const receipts: StoredPublicationReceipt[] = [];
+  for (const [effectIndex, effect] of plan.effects.entries()) {
+    const applied = await applyOneEffect(context, plan, destination, effect, effectIndex);
+    if (applied.status === "failed") return recordFailure(context, interventionId, receipts, applied.diagnostics);
+    if (applied.status === "applied") activity += 1;
+    receipts.push(applied.stored);
+  }
+  if (isReversalAction(plan.action)) {
+    const parentId = plan.lineage.parentInterventionId;
+    if (parentId === undefined) throw invalid("store.corrupt", "a reversal plan must bind its parent", ["lineage"]);
+    const action = plan.action;
+    await appendInterventionTransition(
+      context,
+      parentId,
+      (current) => {
+        const target = reversalTarget(action, current);
+        if (target.kind === "illegal") {
+          throw invalid("store.corrupt", `parent intervention "${parentId}" regressed below its reversal`, ["parent"]);
+        }
+        return target.kind === "transition" ? target.to : undefined;
+      },
+      [interventionId],
+    );
+  }
+  const before = await loadInterventionFold(context, interventionId);
+  await appendInterventionTransition(
+    context,
+    interventionId,
+    publishedStateFor(plan),
+    receipts.map((stored) => stored.id),
+  );
+  if (before?.state.publication !== "published") activity += 1;
+  const fold = await loadInterventionFold(context, interventionId);
+  if (fold?.record === undefined || fold.record.state.publication !== "published") {
+    throw invalid("store.corrupt", "publication journal did not converge on a published intervention", [
+      "intervention",
+    ]);
+  }
+  const finalReceipts = await loadFoldReceipts(context, fold.record, plan);
+  return completion(activity === 0 ? "no_op" : entryStatus, fold.record, finalReceipts);
+}
+
 export async function runPublish(context: EngineContext, input: PublishInput): Promise<PublicationOutcome> {
   // Capture caller-owned evidence exactly once; it is opaque to the kernel.
   const authorizationEvidence: unknown = input.authorizationEvidence;
   const fields = readFields(input, ["publish"]);
   const planId = fields.req("planId", parseDurableId);
-  const stored = await loadStoredRecord(context, PLAN_KIND, planId);
-  if (stored === undefined) throw refusal("publication.plan_not_found", `publication plan "${planId}" does not exist`);
-  const plan = parsePublicationPlan(stored.value);
-  if (plan.id !== planId)
-    throw invalid("store.corrupt", "stored publication plan id does not match its record key", ["id"]);
-
+  const plan = await loadPlan(context, planId);
+  if (plan === undefined) throw refusal("publication.plan_not_found", `publication plan "${planId}" does not exist`);
   const destination = context.destinationsById?.get(plan.destinationId);
+  const binding = authorizationBindingForPlan(plan);
+  const bindingDigest = authorizationBindingDigest(binding);
+
+  // Resume: a consumed plan never re-consults authority. It forward-completes
+  // on the exact registered destination or waits, blocked, until the host
+  // restores that registration.
+  const consumed = await loadAuthorizationConsumption(context, plan.planDigest);
+  if (consumed !== undefined) {
+    if (consumed.bindingDigest !== bindingDigest) {
+      throw invalid("store.corrupt", "authorization consumption binds another plan binding", ["consumption"]);
+    }
+    const drift = destinationDrift(plan, destination);
+    if (drift.length > 0 || destination === undefined) return outcome("blocked", drift);
+    const fold = await loadInterventionFold(context, interventionIdFor(plan.planDigest));
+    if (fold?.record !== undefined && fold.record.state.publication === "published") {
+      return completion("no_op", fold.record, await loadFoldReceipts(context, fold.record, plan));
+    }
+    return completeJournal(context, plan, destination, consumed, "resumed");
+  }
+
   const candidate = await loadCandidate(context, plan.candidateId);
   const drift = bindingDrift(context, plan, destination, candidate);
-  if (drift.length > 0 || candidate === undefined) {
+  if (drift.length > 0 || candidate === undefined || destination === undefined) {
     return outcome("blocked", drift);
   }
-  const state = await governanceStateOf(context, candidate);
-  const invalidReasons = candidateInvalidDiagnostics(state);
-  if (invalidReasons.length > 0) return outcome("blocked", invalidReasons);
-  if (state.governance.review !== "accepted" && state.governance.review !== "not_required") {
+  if (candidate.schemaVersion !== 2) {
     return outcome("blocked", [
-      diagnostic(
-        "policy.blocked",
-        `publication requires decisive review; governance review state is "${state.governance.review}"`,
-      ),
-      ...state.governance.reasons.filter((reason) => reason.code !== "policy.blocked"),
+      diagnostic("publication.candidate_legacy_unbound", `candidate "${candidate.id}" is a legacy record`),
     ]);
+  }
+  if (isReversalAction(plan.action)) {
+    // A reversal needs authority, never a fresh decisive review: a later
+    // rejection or evidence invalidation is a reason to reverse, not a bar.
+    const parentReasons = await parentReadiness(context, plan, candidate);
+    if (parentReasons.length > 0) return outcome("blocked", parentReasons);
+  } else {
+    const successor = await candidateSupersededBy(context, candidate);
+    if (successor !== undefined) {
+      return outcome("blocked", [
+        diagnostic(
+          "publication.candidate_superseded",
+          `candidate "${candidate.id}" has been superseded by "${successor}"; publish the successor instead`,
+        ),
+      ]);
+    }
+    const state = await governanceStateOf(context, candidate);
+    const invalidReasons = candidateInvalidDiagnostics(state);
+    if (invalidReasons.length > 0) return outcome("blocked", invalidReasons);
+    if (state.governance.review !== "accepted" && state.governance.review !== "not_required") {
+      return outcome("blocked", [
+        diagnostic(
+          "policy.blocked",
+          `publication requires decisive review; governance review state is "${state.governance.review}"`,
+        ),
+        ...state.governance.reasons.filter((reason) => reason.code !== "policy.blocked"),
+      ]);
+    }
   }
 
   const authority = context.authority;
@@ -416,7 +972,6 @@ export async function runPublish(context: EngineContext, input: PublishInput): P
       ),
     ]);
   }
-  const binding = authorizationBindingForPlan(plan);
   const verification = await authority.verify({ evidence: authorizationEvidence, binding });
   if (verification.status !== "authorized") {
     const status = verification.status === "pending" ? "pending" : "denied";
@@ -430,7 +985,7 @@ export async function runPublish(context: EngineContext, input: PublishInput): P
   }
   const authorization = verification.authorization;
   assertVerifiedAuthorization(authority, authorization, "authorization");
-  if (authorization.bindingDigest !== authorizationBindingDigest(binding)) {
+  if (authorization.bindingDigest !== bindingDigest) {
     return outcome("denied", [
       diagnostic(
         "publication.binding_mismatch",
@@ -444,14 +999,40 @@ export async function runPublish(context: EngineContext, input: PublishInput): P
     ]);
   }
 
-  // Activation-tier gate: every check above is final; the journaled publisher
-  // (issue #10, second half) continues from here. Nothing is written.
-  return outcome("blocked", [
-    diagnostic(
-      "policy.blocked",
-      context.policyRules.publication.blockedPendingActivationTier
-        ? "publication is blocked pending the activation tier: the journaled publisher is not part of this slice (decision 0025, issue #10)"
-        : "publication is unavailable: the journaled publisher is not part of this slice (decision 0025, issue #10)",
-    ),
-  ]);
+  // Consumption is the first durable journal fact; from here the plan is
+  // resumable and authority is never consulted again for it.
+  const ensured = await ensureAuthorizationConsumption(
+    context,
+    buildAuthorizationConsumption(context, plan, bindingDigest, authorization),
+  );
+  return completeJournal(
+    context,
+    plan,
+    destination,
+    ensured.consumption,
+    ensured.preexisting ? "resumed" : "published",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// getIntervention
+
+export async function runGetIntervention(
+  context: EngineContext,
+  input: { readonly interventionId: string },
+): Promise<InterventionRecord | undefined> {
+  const fields = readFields(input, ["getIntervention"]);
+  const interventionId = fields.req("interventionId", parseDurableId);
+  const parent = await loadParent(context, interventionId);
+  if (parent === undefined) return undefined;
+  await loadFoldReceipts(context, parent.record, parent.plan);
+  if (parent.record.authorizationIds.length > 0) {
+    const consumption = await loadAuthorizationConsumption(context, parent.plan.planDigest);
+    if (consumption === undefined || !parent.record.authorizationIds.includes(consumption.id)) {
+      throw invalid("store.corrupt", `intervention "${interventionId}" cites a missing authorization consumption`, [
+        "authorizationIds",
+      ]);
+    }
+  }
+  return Object.freeze(parent.record);
 }

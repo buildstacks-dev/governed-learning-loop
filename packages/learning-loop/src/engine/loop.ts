@@ -4,11 +4,12 @@
 // construction and digested into a registry revision that is bound into every
 // ingest receipt and publication plan. This config and façade are a
 // deliberate narrowing of the contract's full LearningLoopConfig/LearningLoop:
-// decision 0025 adds destinations, the authority port, preparePublication, and
-// the refusal half of publish; the journaled publisher, outcome, and
-// experiment members (outcomeSources, replayExecutors, resolveContext,
-// acknowledgeExposure, declareExperiment, runExperiment, recordOutcomes) do
-// not exist yet — a smaller surface now, additive later.
+// decision 0025 adds destinations, the authority port, and preparePublication;
+// decision 0026 completes publish as the journaled idempotent publisher and
+// adds getIntervention; the resolution, outcome, and experiment members
+// (outcomeSources, replayExecutors, resolveContext, acknowledgeExposure,
+// declareExperiment, runExperiment, recordOutcomes) do not exist yet — a
+// smaller surface now, additive later.
 import { randomUUID } from "node:crypto";
 import { sha256HexOfCanonicalJson } from "../canonical/canonical-json.js";
 import { invalid, parseNonEmptyText } from "../parse/toolkit.js";
@@ -37,8 +38,9 @@ import { identityRegistryProjection } from "./identity.js";
 import { authorityRegistryProjection } from "./authority.js";
 import type { BoundDestination } from "./destination-registration.js";
 import { bindDestinationRegistration } from "./destination-registration.js";
+import type { InterventionRecord } from "../records/intervention.js";
 import type { PreparePublicationInput, PreparedPublication, PublicationOutcome, PublishInput } from "./publication.js";
-import { runPreparePublication, runPublish } from "./publication.js";
+import { runGetIntervention, runPreparePublication, runPublish } from "./publication.js";
 import type { LearningPolicy } from "./policy.js";
 import { bindLearningPolicy } from "./policy.js";
 import type { CandidateInput, ProposeOutcome } from "./propose.js";
@@ -131,6 +133,7 @@ export interface LearningLoop {
   getCandidateView(input: { readonly candidateId: string }): Promise<CandidateView | undefined>;
   preparePublication(input: PreparePublicationInput): Promise<PreparedPublication>;
   publish(input: PublishInput): Promise<PublicationOutcome>;
+  getIntervention(input: { readonly interventionId: string }): Promise<InterventionRecord | undefined>;
   report(input: LearningReportQuery): Promise<LearningReport>;
   runDetector(input: DetectorRunInput): Promise<DetectorRunResult>;
   runDetectorPack(input: DetectorPackRunInput): Promise<DetectorPackRunResult>;
@@ -469,6 +472,7 @@ export function createLearningLoop(config: LearningLoopConfig): LearningLoop {
     getCandidateView: (input) => runGetCandidateView(context, input),
     preparePublication: (input) => runPreparePublication(context, input),
     publish: (input) => runPublish(context, input),
+    getIntervention: (input) => runGetIntervention(context, input),
     report: (input) => runReport(context, input),
     runDetector: (input) => runDetector(context, input),
     runDetectorPack: (input) => runDetectorPack(context, input),

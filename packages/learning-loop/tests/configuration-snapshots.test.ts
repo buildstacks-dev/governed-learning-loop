@@ -31,7 +31,6 @@ describe("createLearningLoop configuration snapshots", () => {
         T2: { independentReview: true, independentDomain: true },
         T3: { independentReview: true, independentDomain: true },
       },
-      publication: { blockedPendingActivationTier: true },
     };
     const policyId = "mutable-policy-snapshot-test";
     const configuredPolicyDigest = learningPolicyDigest(policyId, rules);
@@ -73,7 +72,6 @@ describe("createLearningLoop configuration snapshots", () => {
     mutablePolicy.digest = "0".repeat(64);
     rules.risks.T2.independentReview = false;
     rules.risks.T2.independentDomain = false;
-    rules.publication.blockedPendingActivationTier = false;
     const afterMutation = await learning.ingest(manual, journeyEvidence());
 
     const proposal = await learning.propose(

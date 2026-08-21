@@ -1,8 +1,11 @@
 // GovernanceView (contract §The façade), folded as a pure function so the
-// invariants are testable without a store. In the Observe+Govern milestone
-// publication is ALWAYS blocked — the activation tier does not exist and no
-// destination is registered — and validation is always "untested":
-// authorized ≠ validated, and missing measurement is never a pass.
+// invariants are testable without a store. `review` folds the stored reviews
+// of the CURRENT candidate digest; `publication` says whether policy permits
+// a plan for this content to be published — decisive review, a registered
+// destination, and a configured authority — and never that anything was
+// authorized or published; `validation` is always "untested" here because
+// no evaluation record exists before the Validate tier: authorized ≠
+// validated, and missing measurement is never a pass.
 import type { Diagnostic } from "../diagnostics.js";
 import type { CandidateReview } from "../records/review.js";
 
@@ -20,14 +23,11 @@ export interface GovernanceViewInput {
   readonly requiresIndependentReview: boolean;
   /** Stored reviews of the candidate, oldest first. */
   readonly reviews: readonly CandidateReview[];
+  /** Whether the loop registers the destination the candidate's intervention names. */
+  readonly destinationRegistered: boolean;
+  /** Whether the loop configures an authority port that could authorize a plan. */
+  readonly authorityConfigured: boolean;
 }
-
-const PUBLICATION_BLOCKED: Diagnostic = {
-  code: "policy.blocked",
-  severity: "error",
-  message:
-    "publication is blocked: the activation tier is not implemented in this milestone and no destination is registered",
-};
 
 function findingDiagnostics(review: CandidateReview): readonly Diagnostic[] {
   return review.findings.map((finding, index) => ({
@@ -42,7 +42,9 @@ function findingDiagnostics(review: CandidateReview): readonly Diagnostic[] {
  * Folds stored reviews into the governance view. Only reviews binding the
  * current digest count; the LATEST binding review is decisive. An accepting
  * review of the current digest yields "accepted"; reject/escalate blocks with
- * reasons; "revise" returns the candidate to "required".
+ * reasons; "revise" returns the candidate to "required". Publication is
+ * eligible only with decisive review, a registered destination, and a
+ * configured authority; each missing condition is a stated reason.
  */
 export function computeGovernanceView(input: GovernanceViewInput): GovernanceView {
   const binding = input.reviews.filter((review) => review.candidateDigest === input.candidateDigest);
@@ -77,6 +79,31 @@ export function computeGovernanceView(input: GovernanceViewInput): GovernanceVie
     });
     reasons.push(...findingDiagnostics(decisive));
   }
-  reasons.push(PUBLICATION_BLOCKED);
-  return { review, publication: "blocked", validation: "untested", reasons };
+
+  let publication: GovernanceView["publication"] = "eligible";
+  if (review !== "accepted" && review !== "not_required") {
+    publication = "blocked";
+    reasons.push({
+      code: "policy.blocked",
+      severity: "error",
+      message: `publication requires decisive review; governance review state is "${review}"`,
+    });
+  }
+  if (!input.destinationRegistered) {
+    publication = "blocked";
+    reasons.push({
+      code: "publication.destination_unknown",
+      severity: "error",
+      message: "the destination named by the candidate intervention is not registered on this loop",
+    });
+  }
+  if (!input.authorityConfigured) {
+    publication = "blocked";
+    reasons.push({
+      code: "policy.authority_insufficient",
+      severity: "error",
+      message: "no authority port is configured on this loop; publication cannot be authorized",
+    });
+  }
+  return { review, publication, validation: "untested", reasons };
 }

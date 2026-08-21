@@ -204,6 +204,8 @@ async function candidateGovernanceStateOnce(
     candidateDigest: candidate.contentDigest,
     requiresIndependentReview,
     reviews,
+    destinationRegistered: context.destinationsById?.has(candidate.intervention.destinationId) === true,
+    authorityConfigured: context.authority !== undefined,
   });
   const governance: GovernanceView =
     admissionLineage.status === "invalid"

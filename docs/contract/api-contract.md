@@ -187,7 +187,10 @@ The runner needs only `describe`, `it`, `expect`, and the exact matchers used by
 the suite. That shape remains inline rather than adding a framework-specific
 public type. Existing one-argument callers migrate to the call above; there is
 no optional fallback that would reintroduce an eager or ambient test-framework
-dependency.
+dependency. `runPublicationDestinationConformance(makeDestination, { describe,
+expect, it })` registers the destination suite through the same injected
+shape, and `createInMemoryDestination` is the inert reference destination
+that passes it (decision 0026).
 
 ## Core vocabulary and records
 
@@ -2945,6 +2948,7 @@ export interface PublicationLineage {
     readonly lens: { readonly id: string; readonly version: string; readonly registrationDigest: string };
     readonly pack: { readonly id: string; readonly version: string; readonly manifestDigest: string } | null;
   } | null;
+  readonly parentInterventionId?: string;
 }
 
 export interface PublicationPlan {
@@ -2994,6 +2998,7 @@ export declare function publicationPlanDigest(
 ): string;
 export declare function parseAuthorizationBinding(input: unknown): AuthorizationBinding;
 export declare function authorizationBindingDigest(binding: AuthorizationBinding): string;
+export declare function parsePublicationReceipt(input: unknown): PublicationReceipt;
 ```
 
 The host supplies opaque authorization evidence to its authority adapter. The core receives only a verified, exact binding. If content, base, destination, risk-relevant metadata, or policy changes, the binding changes and the authorization is unusable.
@@ -3021,6 +3026,24 @@ binding digest hashes every binding field under `authorization-binding:v1`.
 exact current plan, or the authorization is unusable.
 
 Disable, rollback and compensation use new content-bound `PublicationPlan` records and the same policy, authority and journal path as initial publication. They are never direct adapter calls. A context destination must provide disable or rollback. An outward proposal may provide compensation, such as closing a ticket. An irreversible destination must declare that fact and therefore receives the host's corresponding risk floor.
+
+A disable, rollback, or compensate plan (decision 0026) binds the exact
+published or failed parent intervention it reverses through
+`lineage.parentInterventionId`; the parser requires the field exactly for
+those actions and refuses it on a publish plan, and the field enters
+`planDigest` and `lineageClosureDigest` only when present, so every publish
+plan keeps its decision-0025 bytes. Its effects are derived from the parent
+plan, never re-prepared by the adapter: one per journaled receipt whose
+declared after-effect kind equals the action, keeping the parent effect id
+and target, carrying the adapter's declared after-effect payload, binding the
+receipt's `finalVersion` as `expectedBase` when the destination reported one,
+and declaring an `irreversible` after-effect — reversing a reversal is a new
+publish plan. Targets are rechecked against the current registration and
+payloads readmitted through the destination's content policy; the after-effect
+matrix applies to forward effects only. The parent is located through the
+candidate's scope; when more than one published intervention of the same
+candidate at the same destination permits the action, the additive
+`preparePublication.interventionId` input names one.
 
 ### Intervention, exposure, and efficacy
 
@@ -3099,6 +3122,32 @@ export interface ExposureSetRecord {
 An intervention may be published but inactive, authorized but untested, active but inconclusive, or disabled after regression. Pairwise-distinct fields make false claims harder than a convenient “approved” status. State history is append-only: the engine folds `InterventionTransition` records into the current view.
 
 The legal-transition table is part of the protocol. At minimum, it forbids active plus unpublished, improved without a bound improved evaluation, and publication using authority that was pending, expired or revoked at consumption time. Whether later revocation requires automatic disable is an explicit host policy and preauthorized effect, not an implied transition. Disable, rollback and compensation create transitions and receipts; they never rewrite the prior state. One resolution containing several interventions produces one exposure set with one entry per exact intervention.
+
+Decision 0026 closes the table for the Activate tier. Every intervention
+starts at `{ unpublished, pending, inactive, untested }`. The legal edges are
+`authorize` (pending → authorized), `publish` (unpublished or failed, inactive
+→ published and active or inactive), `fail` (unpublished → failed), `disable`
+(published or failed, active or inactive → disabled, publication unchanged;
+the compensate action shares this edge), and `rollback` (published or failed
+→ rolled_back and disabled). Every edge keeps `validation` unchanged, only
+`authorize` changes authorization, and no edge mints `revoked` or `expired`;
+over the full state product the table admits exactly 135 edges. Structural
+invariants hold on every state — active ⇒ published, pending ⇒ unpublished
+and inactive, rolled_back ⇒ disabled — and a record claiming any validation
+other than `untested` without a bound evaluation, a published record without a
+receipt, or an authorized record without an authorization is invalid. A
+transition is content-addressed: its id is `transition-<digest>` over
+interventionId, from, to, ordered evidence ids, and occurredAt under
+`intervention-transition:v1`, recomputed on parse, and a pair outside the
+table is refused. Activation follows effect class: a completed publish plan
+is `active` for `context`, `external`, and `authority` destinations and
+`inactive` for a `proposal` destination; a reversal plan's own intervention is
+`published` and `inactive`. The `InterventionRecord` is never persisted as
+such — it is the deterministic fold of a private header and the
+intervention's append-only transition stream, where `authorizationIds` cite
+the durable authorization consumption and `publicationReceiptIds` cite the
+journaled receipts of the intervention's own plan; `evaluationIds` stay empty
+until the Validate tier. `learning.getIntervention` is the pure exact read.
 
 ### Fingerprint and experiment
 
@@ -3624,6 +3673,26 @@ without error diagnostics. The default root package ships no destination.
 Rollback is intentionally absent from the direct port. Disable, rollback and compensation are new bound plans executed through the same `applyEffect`, policy, authority and journal path.
 
 The default root package should ship no destination that silently edits prompts, permissions, external systems, or source repositories.
+
+The journaled publisher (decision 0026) calls `applyEffect` with a frozen
+detached copy of each prepared effect, in plan order, under the kernel
+idempotency key `sha256({ planDigest, effectId })` tagged
+`publication-effect-idempotency:v1`, so a re-prepared plan yields new keys.
+The result is parsed from `unknown` and must name the plan's destination, the
+effect id, target, payload digest, key, and the exact `expectedBase` the
+effect bound; an unparseable result is `publication.receipt_invalid`, a
+non-proving one `publication.receipt_mismatch`, and a thrown adapter error
+`publication.destination_failed`. A receipt is journaled before the next
+effect is attempted; the kernel never re-sends a key whose receipt is durable
+and re-sends the same key after a lost acknowledgement, which is why a
+conforming destination must answer a repeated key with the same receipt and
+no second effect. `/testing` ships `createInMemoryDestination`, an inert
+per-target versioned log that is the reference for these semantics, and
+`runPublicationDestinationConformance(makeDestination, { describe, expect,
+it })`, the injected suite every destination adapter must pass: side-effect-
+free parseable preparation, echoed bases, receipts proving the exact effect,
+same-key idempotency without moving the base, distinct effects under new keys,
+refused key reuse, and stale-base refusal when bases are declared.
 
 ### Semantic judgment
 
@@ -4627,12 +4696,15 @@ export interface LearningLoop {
     readonly destinationId: string;
     readonly expectedBase?: string;
     readonly action?: PublicationPlan["action"];
+    readonly interventionId?: string;
   }): Promise<PreparedPublication>;
 
   publish(input: {
     readonly planId: string;
     readonly authorizationEvidence?: unknown;
   }): Promise<PublicationOutcome>;
+
+  getIntervention(input: { readonly interventionId: string }): Promise<InterventionRecord | undefined>;
 
   resolveContext(input: ResolveContextInput): Promise<ResolvedContext>;
   acknowledgeExposure(input: ExposureInput): Promise<ExposureSetRecord>;
@@ -4654,31 +4726,56 @@ export interface LearningLoop {
 }
 ```
 
-Decision 0025 implements `preparePublication` and the refusal half of
-`publish`; the journaled publisher is the open second half of issue #10.
-`preparePublication` accepts only `action: "publish"` until then, resolves the
-registered destination, loads the candidate (refusing schema-version-1
-records, a candidate whose intervention names another destination, and
-non-ready evidence or invalid derivation/admission lineage), derives the
-lineage, calls the adapter's `prepare` once, validates the effects as
-§Publication destination describes, and persists exactly one create-only,
-content-addressed plan. Repeated preparation returns the first persisted plan
-and writes nothing new; a governance state short of accepted review does not
-refuse preparation and is reported in `governance`. `publish` reloads the
-plan, compares the registry revision, policy, scope policy, destination
+`preparePublication` (decision 0025) resolves the registered destination,
+loads the candidate (refusing schema-version-1 records, a candidate whose
+intervention names another destination, and non-ready evidence or invalid
+derivation/admission lineage), derives the lineage, calls the adapter's
+`prepare` once for a publish plan, validates the effects as §Publication
+destination describes, and persists exactly one create-only, content-addressed
+plan. Repeated preparation returns the first persisted plan and writes nothing
+new; a governance state short of accepted review does not refuse preparation
+and is reported in `governance`. Disable, rollback, and compensate plans are
+prepared as §Publication plan and authorization binding describes, with the
+additive optional `interventionId` input; a caller `expectedBase` on a
+reversal or `interventionId` on a publish is `schema.invalid`.
+
+`publish` (decisions 0025 and 0026) reloads the plan and first looks for its
+durable authorization consumption. A consumed plan never re-consults
+authority: it forward-completes the journal on the destination registered
+with the exact registration digest the plan bound, ignoring other drift, or is
+`blocked` with `publication.binding_mismatch` until the host restores that
+registration; a journal that is already complete returns `no_op`. Otherwise
+it compares the registry revision, policy, scope policy, destination
 registration digest, and candidate digest to the current loop (`blocked`,
-`publication.binding_mismatch`), requires `accepted` or `not_required` review
-with intact lineage (`blocked`, `policy.blocked`), requires a configured
-authority (`blocked`, `policy.authority_insufficient`), and only then consults
-the loop's exact authority port: `pending` is reported as `pending`; `denied`,
-`invalid`, and `expired` as `denied`, each tagged `authority.<status>` ahead of
-the host's diagnostics; a verified authorization whose `bindingDigest` differs
-from the current binding or whose `expiresAt` is not later than the loop clock
-is `denied`. No refusal path writes to a destination or to the store. In this
-slice a fully authorized plan returns `blocked` with `policy.blocked` at the
-activation-tier gate; `PublicationOutcome` is therefore the refusal subset
-`{ status: "pending" | "denied" | "blocked" | "failed", diagnostics }` and the
-publisher widens it additively with the completion variants above.
+`publication.binding_mismatch`); for a publish plan it refuses a superseded
+candidate (`blocked`, `publication.candidate_superseded`) and requires
+`accepted` or `not_required` review with intact lineage (`blocked`,
+`policy.blocked`), while for a reversal plan it instead requires the bound
+parent to exist, match, still permit the action, and hold a receipt for every
+derived effect (`blocked`, `publication.intervention_not_found`,
+`publication.intervention_mismatch`, `publication.parent_state_invalid`); it
+requires a configured authority (`blocked`, `policy.authority_insufficient`),
+and only then consults the loop's exact authority port: `pending` is reported
+as `pending`; `denied`, `invalid`, and `expired` as `denied`, each tagged
+`authority.<status>` ahead of the host's diagnostics; a verified authorization
+whose `bindingDigest` differs from the current binding or whose `expiresAt` is
+not later than the loop clock is `denied`. No refusal path writes to a
+destination or to the store. A verified authorization is then consumed into a
+durable record and the journal runs in a fixed order — consumption, private
+intervention header, scope membership, the `authorize` edge, one journaled
+receipt per applied effect, the parent's reversal edge for a reversal plan,
+and the `publish` edge last — every writer reloading first and
+forward-completing, so a crash before or after any write resumes to the same
+bytes and never re-applies a journaled effect. A failed or non-proving
+`applyEffect` appends the `fail` edge, returns `failed` with transient
+diagnostics, and leaves the same plan resumable. The completion variants
+report `published` (this call created and completed the journal), `resumed`
+(an existing journal was completed), or `no_op` (nothing was written and no
+adapter called), each with the folded `InterventionRecord` and the bare
+receipts in plan order. `getIntervention` folds the private header and
+transition stream, verifies the plan, every cited receipt, and the
+authorization consumption, and returns `undefined` for an unknown id or an
+unborn header.
 
 `IngestReceipt.id` equals `IngestReceipt.importReceipt.id`; it is not a fresh
 attempt identifier. `sourceRevisions` and `pageReceiptIds` are the exact values
@@ -5265,6 +5362,11 @@ Initial error families should cover:
 - `review.not_independent` and `review.binding_mismatch`;
 - `policy.blocked`, `policy.authority_insufficient`, and `policy.risk_floor`;
 - `publication.base_mismatch`, `publication.binding_mismatch`, and `publication.receipt_mismatch`;
+- the publisher refusals `publication.candidate_superseded`,
+  `publication.intervention_not_found`, `publication.intervention_ambiguous`,
+  `publication.intervention_mismatch`, `publication.parent_state_invalid`,
+  `publication.after_effect_unavailable`, `publication.receipt_invalid`,
+  `publication.destination_failed`, and `publication.limit_exceeded`;
 - the preparation refusals `publication.plan_not_found`,
   `publication.destination_unknown`, `publication.destination_mismatch`,
   `publication.candidate_not_found`, `publication.candidate_legacy_unbound`,
@@ -5358,11 +5460,33 @@ The core suite should prove at least:
 - every publish refusal — host pending/denied/invalid/expired, kernel-clock
   expiry, wrong-base or stale approval, missing authority, missing or rejected
   review, registry or registration drift, unregistered destination, unknown
-  plan — and the activation-tier gate perform zero destination and zero store
+  plan, superseded candidate — performs zero destination and zero store
   writes, and authority is consulted only after governance passes;
+- a fully authorized plan applies every effect exactly once under kernel
+  idempotency keys, journals each receipt before the next effect, consumes
+  the authorization durably before any effect, and never re-consults
+  authority for a consumed plan;
 - two concurrent creates cannot both win with different content;
 - a crash before or after each publication step resumes forward or no-ops exactly once;
+- a crash before or after every journal write — consumption, header, scope
+  membership, authorize edge, receipt, parent reversal edge, publish edge —
+  resumes on a reconstructed host to the byte-exact journal of a clean run
+  with each effect applied at the destination exactly once;
+- adapter failure and non-proving receipts are journaled as `failed` and the
+  same plan resumes; resume waits on the exact destination registration and
+  forward-completes across unrelated registry drift;
+- disable, rollback, and compensate plans derive from the parent's journaled
+  receipts and declared after-effects without a second adapter call, bind the
+  parent into the lineage closure, need authority but not a fresh decisive
+  review, transition the parent without rewriting its history, refuse
+  missing, ambiguous, mismatched, or state-invalid parents, and have no side
+  door;
+- the legal-transition table admits exactly its pinned edge set, and a
+  validation claim without a bound evaluation is invalid;
 - publication, authorization, activation, and validation states remain distinct;
+- governance eligibility is never an authorization: a denied publish leaves
+  the candidate eligible and a successful one leaves validation untested;
+- every destination adapter passes `runPublicationDestinationConformance`;
 - a replay with identical control and treatment fingerprints is invalid;
 - missing arms, metrics, guardrails, or grader identity are invalid rather than neutral;
 - a correctness regression defeats cost or speed improvement;
@@ -5576,6 +5700,11 @@ with advisory-review methods and statics and keeps the snapshot at 158.
 Decision 0025 adds nineteen root names for the Activate records, the authority
 port factory, the destination port and registration types, and the
 preparation/publication outcome types; the all-entrypoint snapshot is 177.
+Decision 0026 adds six root names (the intervention state, record, and
+transition types with their parsers, and `parsePublicationReceipt`) and five
+`/testing` names (the in-memory destination and options, its factory, the
+destination factory type, and `runPublicationDestinationConformance`); the
+all-entrypoint snapshot is 188.
 
 Do not export internal folds, every schema helper, Cormidia compatibility code, filesystem path builders, provider-specific event types, CLI functions, or experimental algorithms from the root. An export-ratchet test should require an explicit decision for every new public symbol.
 

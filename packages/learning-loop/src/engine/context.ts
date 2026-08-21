@@ -73,7 +73,10 @@ export type RecordKind =
   | "publication-authorization"
   | "publication-receipt"
   | "intervention"
-  | "intervention-transition";
+  | "intervention-transition"
+  | "context-resolution"
+  | "exposure-set"
+  | "episode-exposure";
 
 export interface EngineContext {
   readonly store: LearningStore;
@@ -214,6 +217,9 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
   if (kind === "intervention-transition" && Array.isArray(value) && value.length > 1_000) {
     throw invalid("store.corrupt", "intervention transition stream exceeds its ceiling", ["value"]);
   }
+  if (kind === "episode-exposure" && Array.isArray(value) && value.length > 1_000) {
+    throw invalid("store.corrupt", "episode exposure index exceeds its ceiling", ["value"]);
+  }
   if (kind === "detector-recurrence-group") {
     if (!Array.isArray(value)) {
       throw invalid("store.corrupt", "detector recurrence group must be a stream-entry array", ["value"]);
@@ -238,7 +244,8 @@ function expectedStoredDigest(kind: RecordKind, value: unknown): string {
     kind === "candidate-review" ||
     kind === "candidate-recurrence-admission" ||
     kind === "detector-recurrence-group" ||
-    kind === "intervention-transition"
+    kind === "intervention-transition" ||
+    kind === "episode-exposure"
   ) {
     const entryIds = parseArrayOf(parseStreamEntryIdAt)(value, ["value"]);
     return sha256HexOfCanonicalJson(entryIds);

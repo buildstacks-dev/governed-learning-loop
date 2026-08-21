@@ -57,6 +57,13 @@ export { createAuthorityPort } from "./engine/authority.js";
 // append-only transitions, and the protocol's legal-transition table.
 export type { InterventionRecord, InterventionState, InterventionTransition } from "./records/intervention.js";
 export { parseInterventionRecord, parseInterventionTransition } from "./records/intervention.js";
+// Context resolution and exposure lineage (decision 0027): active-only,
+// budget-bounded, receipt-frozen resolution and host-evidenced exposure sets.
+export type { ResolvedContext, ResolvedEntry } from "./records/resolution.js";
+export { parseResolvedContext } from "./records/resolution.js";
+export type { ExposureEntry, ExposureSetRecord } from "./records/exposure.js";
+export { parseExposureSetRecord } from "./records/exposure.js";
+export type { ExposureInput, ResolveContextInput } from "./engine/context-resolution.js";
 
 export type { LearningStore, RecordKey, StoredRecord, StreamEntry, WriteResult } from "./ports/store.js";
 export type { EvidencePage, EvidenceSource, ProjectedEpisode } from "./ports/evidence.js";

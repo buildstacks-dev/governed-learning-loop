@@ -4,6 +4,19 @@
   "description": "Transcript source adapters for the governed learning loop (Claude Code, Codex): explicit input, advisory trust, redaction before persistence",
   "private": true,
   "license": "UNLICENSED",
+  "author": {
+    "name": "Bikram Gupta",
+    "url": "https://github.com/bikramgupta"
+  },
+  "homepage": "https://github.com/cormidia/governed-learning-loop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cormidia/governed-learning-loop.git",
+    "directory": "packages/transcript-sources"
+  },
+  "bugs": {
+    "url": "https://github.com/cormidia/governed-learning-loop/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {

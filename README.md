@@ -36,7 +36,7 @@ permanently: an evaluation changes only the `validation` dimension.
 ## Package shape
 
 ```text
-@cormidia/learning-loop          (working name; final npm identity undecided)
+@cormidia/learning-loop          (final npm identity — Decision 0029)
 ├── .          domain records, unknown-first parsers, deterministic engine, ports
 ├── /node      local filesystem (JSON Lines) store adapters
 ├── /testing   runtime-safe stores, inert destination, deterministic fixtures, injected conformance suites
@@ -355,7 +355,11 @@ store by default, and nothing calls a model unless you explicitly opt in.
 
 ## Development
 
-- Node >= 22, pnpm (pinned via `packageManager`).
+- Node >= 22.18 (tested on 22, 24, and 26 in CI), pnpm (pinned via `packageManager`).
+- Development `exports` point at `src/*.ts`; the published shape is `dist/`
+  with declarations via `publishConfig.exports`. Consumers outside this
+  workspace take a vendored tarball from a tagged release (`pnpm pack`);
+  npm publication waits for separate human approval. See Decision 0029.
 - `pnpm install` · `pnpm check` (lint + typecheck + gates) · `pnpm test`.
 - All changes land through a PR and **squash-merge**; see `AGENTS.md`.
 

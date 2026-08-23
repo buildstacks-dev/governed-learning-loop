@@ -1,4 +1,7 @@
-# Approval-gated exact-tag release. This workflow never creates or pushes a tag.
+# Maintainer-gated exact-tag release. This workflow never creates or pushes a tag.
+# publish defaults to false, so the ordinary dispatch can only verify and seal.
+# A publish attempt requires a second deliberate dispatch by @bikramgupta with
+# publish=true; that run repeats every verification before OIDC is available.
 # npm authentication is OIDC trusted publishing; no npm token is accepted.
 # The private source repository cannot request npm provenance, so --provenance
 # is deliberately absent until a separately approved visibility change.
@@ -16,6 +19,11 @@ on:
       tarball_digest:
         description: "Lowercase sha256 of the @cormidia/learning-loop tarball"
         required: true
+      publish:
+        description: "Explicitly allow the publish job after verification"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,11 +43,18 @@ jobs:
           APPROVED_COMMIT: ${{ inputs.commit }}
           APPROVED_TAG: ${{ inputs.tag }}
           APPROVED_TARBALL_DIGEST: ${{ inputs.tarball_digest }}
+          PUBLISH_REQUESTED: ${{ inputs.publish }}
+          RELEASE_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           [[ "$APPROVED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be exactly 40 lowercase hex characters"; exit 2; }
           [[ "$APPROVED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must be exactly vX.Y.Z"; exit 2; }
           [[ "$APPROVED_TARBALL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "tarball digest must be exactly 64 lowercase hex characters"; exit 2; }
+          [[ "$PUBLISH_REQUESTED" =~ ^(true|false)$ ]] || { echo "publish must be a boolean"; exit 2; }
+          if [ "$PUBLISH_REQUESTED" = "true" ] && [ "$RELEASE_ACTOR" != "bikramgupta" ]; then
+            echo "only the ratified maintainer may request publication"
+            exit 2
+          fi
           echo "commit=$APPROVED_COMMIT" >> "$GITHUB_OUTPUT"
           echo "tag=$APPROVED_TAG" >> "$GITHUB_OUTPUT"
           echo "tarball_digest=$APPROVED_TARBALL_DIGEST" >> "$GITHUB_OUTPUT"
@@ -91,6 +106,7 @@ jobs:
           TARBALL_DIGEST=$(sha256sum "$TARBALL" | cut -d' ' -f1)
           echo "tarball sha256: $TARBALL_DIGEST"
           echo "### Sealed npm candidate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Publish requested: ${{ inputs.publish }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Artifact: learning-loop-candidate" >> "$GITHUB_STEP_SUMMARY"
           echo "- File: cormidia-learning-loop-$VERSION.tgz" >> "$GITHUB_STEP_SUMMARY"
           echo "- sha256: $TARBALL_DIGEST" >> "$GITHUB_STEP_SUMMARY"
@@ -106,9 +122,9 @@ jobs:
 
   publish:
     needs: verify
+    if: inputs.publish == true
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: npm-publish
     permissions:
       contents: read
       id-token: write

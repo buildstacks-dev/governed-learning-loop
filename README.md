@@ -12,10 +12,10 @@ storage system.
 > cheaper than the shortcut.
 
 **Status: pre-alpha and work in progress; the source repository remains
-private.** Public npm publication is approval-gated under Decision 0030. This
-is governed adaptation *infrastructure*. It is **not** proven automatic
-self-improvement, and no claim here says a learned intervention has been shown
-to improve later agent work.
+private.** Public npm publication is maintainer-gated under Decisions 0030 and
+0031. This is governed adaptation *infrastructure*. It is **not** proven
+automatic self-improvement, and no claim here says a learned intervention has
+been shown to improve later agent work.
 
 ## What it does
 
@@ -364,9 +364,10 @@ store by default, and nothing calls a model unless you explicitly opt in.
   environment files, or source maps. See Decisions 0029 and 0030.
 - `pnpm install` · `pnpm check` (lint + typecheck + gates) · `pnpm test` ·
   `pnpm test:package` (strict tarball consumer and contents gate).
-- Release publication is exact-tag, approval-gated OIDC through
-  `.github/workflows/release.yml`; agents never create tags, handle npm tokens,
-  or run `npm publish`.
+- Release publication is exact-tag, two-dispatch OIDC through
+  `.github/workflows/release.yml`: verify-only is the default, and an explicit
+  maintainer-only publish dispatch repeats all gates. Agents never create tags,
+  handle npm tokens, dispatch publication, or run `npm publish`.
 - All changes land through a PR and **squash-merge**; see `AGENTS.md`.
 
 ## Provenance

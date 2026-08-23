@@ -42,6 +42,8 @@ misconfigured.
 The root package has zero runtime dependencies and imports only `node:`
 built-ins. Development dependencies are installed with a frozen lockfile behind
 a three-day minimum release age (`pnpm-workspace.yaml`). The exact-tag release
-workflow authenticates to npm only through OIDC trusted publishing, carries no
-npm token, seals and verifies the candidate tarball digest, and refuses an
-existing version unless registry integrity matches exactly.
+workflow defaults to verify-only and requires a second explicit maintainer
+dispatch for publication. That run repeats every gate, authenticates to npm
+only through OIDC trusted publishing, carries no npm token, seals and verifies
+the candidate tarball digest, and refuses an existing version unless registry
+integrity matches exactly.

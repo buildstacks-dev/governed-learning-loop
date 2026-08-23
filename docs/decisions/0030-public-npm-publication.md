@@ -3,7 +3,9 @@
 **Date:** 2026-08-23  
 **Status:** ratified by the maintainer for `@cormidia/learning-loop@0.1.1`;
 amends Decision 0029 R2, R4, R5, R6, and R8 where this decision is more
-specific.
+specific. Decision 0031 later amends this decision's R4 environment approval
+mechanism while retaining every exact-candidate, OIDC, and registry-integrity
+control.
 
 ## Context
 
@@ -55,6 +57,12 @@ The package publishes into the existing maintainer-owned npm scope as
 is created.
 
 ### R4 — OIDC trusted publishing, never an npm token
+
+> **Amended by Decision 0031:** GitHub Team cannot apply required-reviewer
+> protection to a private repository. The current workflow uses a verify-only
+> default dispatch followed by an explicit maintainer-only `publish=true`
+> dispatch that repeats all verification. It does not reference a GitHub
+> environment. The text below records the originally ratified mechanism.
 
 The release workflow is manual-dispatch only and accepts an exact 40-character
 commit, an existing `vX.Y.Z` tag, and the expected lowercase tarball sha256.

@@ -32,9 +32,10 @@ not use a GitHub environment.
 `false`:
 
 - `publish=false` runs the Node 22/24/26 verification matrix, builds and
-  inspects the package, checks the expected sha256, and seals the exact
-  `learning-loop-candidate` artifact. The publish job is skipped and receives
-  no OIDC permission.
+  inspects the package, and seals the exact `learning-loop-candidate` artifact.
+  The digest input may be omitted to discover the canonical GitHub/Linux
+  sha256, or supplied to bind an already reviewed candidate. The publish job is
+  skipped and receives no OIDC permission.
 - `publish=true` is an explicit publication instruction. Only GitHub actor
   `bikramgupta` is admitted for that mode. The new run repeats the complete
   verification matrix before the publish job becomes eligible for
@@ -58,8 +59,8 @@ All other Decision 0030 R4 controls remain mandatory:
 
 - the exact commit must be on `main`;
 - the existing exact tag must resolve to that commit and match package version;
-- the expected lowercase tarball sha256 is a dispatch input and must match the
-  rebuilt artifact;
+- `publish=true` requires the expected lowercase tarball sha256 as a dispatch
+  input and it must match the rebuilt artifact;
 - Node 22, 24, and 26 each run check, test, build, strict tarball consumption,
   and npm dry-run contents validation;
 - every action is pinned by commit SHA;
@@ -83,9 +84,24 @@ tokens.” OIDC remains short-lived and workflow-bound.
 ## Consequences
 
 - GitHub Enterprise is not required for this release.
-- The incomplete, unprotected `npm-publish` environment is unused and should be
-  deleted by the maintainer.
+- The maintainer deleted the incomplete, unprotected `npm-publish` environment.
 - Publication intent is an explicit second maintainer dispatch rather than an
   environment-review click by the same person.
 - The repository remains private, so npm provenance remains unavailable and
   deferred exactly as Decision 0030 records.
+
+## 0.1.1 release evidence
+
+- The maintainer deleted the incomplete environment, bootstrap-published the
+  exact sealed tarball, configured npm trusted publishing with no environment,
+  allowed only `npm publish`, and enabled “Require two-factor authentication
+  and disallow tokens.”
+- Verify-only run `32657463744` passed Node 22/24/26, sealed 400 allowed files,
+  and uploaded `learning-loop-candidate` with sha256
+  `a989d765f75a55328168d51cf3ef0f8c9291e6aaef2b253330a9edffed251cb4`.
+- The public registry tarball has that exact sha256 and npm integrity
+  `sha512-ojnPKpp1TW/o9XvYMZldOLvESRvqyXlt3xdRgjJ/YjBlulqMiA2NizCI4AhXPHhZlOpQ8WYOO/Xoo1lx1h3v9w==`.
+- Publish-intent run `32672996829` passed the same matrix, observed matching
+  registry integrity, skipped `npm publish`, and reconciled successfully.
+- A clean registry consumer installed exactly one package and imported the
+  root and `/testing` entrypoints successfully.

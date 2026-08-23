@@ -17,8 +17,10 @@ on:
         description: "Existing exact tag (vX.Y.Z) at that commit"
         required: true
       tarball_digest:
-        description: "Lowercase sha256 of the @cormidia/learning-loop tarball"
-        required: true
+        description: "Lowercase sha256; leave blank for a verify-only preview"
+        required: false
+        type: string
+        default: ""
       publish:
         description: "Explicitly allow the publish job after verification"
         required: true
@@ -49,8 +51,10 @@ jobs:
           set -euo pipefail
           [[ "$APPROVED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be exactly 40 lowercase hex characters"; exit 2; }
           [[ "$APPROVED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must be exactly vX.Y.Z"; exit 2; }
-          [[ "$APPROVED_TARBALL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "tarball digest must be exactly 64 lowercase hex characters"; exit 2; }
           [[ "$PUBLISH_REQUESTED" =~ ^(true|false)$ ]] || { echo "publish must be a boolean"; exit 2; }
+          if [ "$PUBLISH_REQUESTED" = "true" ] || [ -n "$APPROVED_TARBALL_DIGEST" ]; then
+            [[ "$APPROVED_TARBALL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "publish and digest-bound verification require exactly 64 lowercase hex characters"; exit 2; }
+          fi
           if [ "$PUBLISH_REQUESTED" = "true" ] && [ "$RELEASE_ACTOR" != "bikramgupta" ]; then
             echo "only the ratified maintainer may request publication"
             exit 2
@@ -76,7 +80,7 @@ jobs:
           [ "$(git rev-parse "$APPROVED_TAG^{commit}")" = "$APPROVED_COMMIT" ] || { echo "tag does not point to approved commit"; exit 1; }
           git merge-base --is-ancestor "$APPROVED_COMMIT" "$WORKFLOW_SHA" || { echo "approved commit is not on dispatch-time main"; exit 1; }
           [ -z "$(git status --porcelain --untracked-files=all)" ] || { echo "source checkout is dirty"; exit 1; }
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.10.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -111,7 +115,9 @@ jobs:
           echo "- Artifact: learning-loop-candidate" >> "$GITHUB_STEP_SUMMARY"
           echo "- File: cormidia-learning-loop-$VERSION.tgz" >> "$GITHUB_STEP_SUMMARY"
           echo "- sha256: $TARBALL_DIGEST" >> "$GITHUB_STEP_SUMMARY"
-          [ "$TARBALL_DIGEST" = "$APPROVED_TARBALL_DIGEST" ] || { echo "tarball digest mismatch"; exit 1; }
+          if [ -n "$APPROVED_TARBALL_DIGEST" ]; then
+            [ "$TARBALL_DIGEST" = "$APPROVED_TARBALL_DIGEST" ] || { echo "tarball digest mismatch"; exit 1; }
+          fi
           [ -z "$(git status --porcelain --untracked-files=all)" ] || { echo "source tree is dirty after packing"; exit 1; }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: matrix.node == 24

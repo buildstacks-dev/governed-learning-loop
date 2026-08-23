@@ -386,11 +386,15 @@ between code and contract, open an issue — never silently drift either one.
   receive the caller's minimal `{ describe, expect, it }` API explicitly, and
   every store adapter runs the same suite through that injected seam.
 - **ESM only, strict TypeScript.** Subpath exports (`.`, `/node`, `/testing`,
-  `/reference-detectors`, `/workflows`) with no supported deep imports.
-  Development `exports` resolve to `src/*.ts`; the tarball shape is `dist/`
-  through `publishConfig.exports` (Decision 0029). Do not point the
-  development exports at `dist`, and never remove `"private": true` —
-  publication is a separately approved human action.
+  `/reference-detectors`, `/workflows`) have no supported deep imports.
+  Development `exports` resolve to `src/*.ts`; tarball exports resolve to
+  `dist/` through `publishConfig.exports`, while the matching TypeScript
+  `src/` ships without tests, fixture directories, docs, environment files,
+  or source maps (Decisions 0029 and 0030). The preparation PR retains
+  `"private": true`; only the separately approved publication PR may remove
+  that one field. Humans alone create tags, configure npm, and perform the
+  one-time bootstrap publish. Every later publish uses the approval-gated OIDC
+  workflow with no npm token.
 
 ## Non-negotiable kernel invariants
 

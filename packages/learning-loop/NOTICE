@@ -1,0 +1,9 @@
+@cormidia/learning-loop
+Copyright 2026 Bikram Gupta
+
+This product was extracted from the governed learning-loop proposal originally
+developed in the private Cormidia repository at
+research/2026-08-12_learning-loop-library/. The standalone
+cormidia/governed-learning-loop repository is the source of truth for the
+protocol and implementation. Decision 0029 records that extraction provenance
+and the package identity adopted for this work.

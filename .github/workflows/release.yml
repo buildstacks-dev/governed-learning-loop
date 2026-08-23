@@ -1,0 +1,160 @@
+# Approval-gated exact-tag release. This workflow never creates or pushes a tag.
+# npm authentication is OIDC trusted publishing; no npm token is accepted.
+# The private source repository cannot request npm provenance, so --provenance
+# is deliberately absent until a separately approved visibility change.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Exact 40-character commit SHA from the approval preview"
+        required: true
+      tag:
+        description: "Existing exact tag (vX.Y.Z) at that commit"
+        required: true
+      tarball_digest:
+        description: "Lowercase sha256 of the @cormidia/learning-loop tarball"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      - name: Validate approval inputs before checkout or shell use
+        id: approved
+        env:
+          APPROVED_COMMIT: ${{ inputs.commit }}
+          APPROVED_TAG: ${{ inputs.tag }}
+          APPROVED_TARBALL_DIGEST: ${{ inputs.tarball_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be exactly 40 lowercase hex characters"; exit 2; }
+          [[ "$APPROVED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must be exactly vX.Y.Z"; exit 2; }
+          [[ "$APPROVED_TARBALL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "tarball digest must be exactly 64 lowercase hex characters"; exit 2; }
+          echo "commit=$APPROVED_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "tag=$APPROVED_TAG" >> "$GITHUB_OUTPUT"
+          echo "tarball_digest=$APPROVED_TARBALL_DIGEST" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.approved.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable source and existing tag
+        env:
+          APPROVED_COMMIT: ${{ steps.approved.outputs.commit }}
+          APPROVED_TAG: ${{ steps.approved.outputs.tag }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$APPROVED_COMMIT" ] || { echo "checkout did not resolve to approved commit"; exit 1; }
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$APPROVED_COMMIT" refs/remotes/origin/main || { echo "approved commit is not on main"; exit 1; }
+          git fetch --force origin "refs/tags/$APPROVED_TAG:refs/tags/$APPROVED_TAG"
+          [ "$(git rev-parse "$APPROVED_TAG^{commit}")" = "$APPROVED_COMMIT" ] || { echo "tag does not point to approved commit"; exit 1; }
+          [ -z "$(git status --porcelain --untracked-files=all)" ] || { echo "source checkout is dirty"; exit 1; }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.10.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm test:package
+      - name: Assert npm pack dry-run contents
+        run: pnpm package:dry-run
+      - name: Seal exact tarball and print sha256
+        if: matrix.node == 24
+        env:
+          APPROVED_TAG: ${{ steps.approved.outputs.tag }}
+          APPROVED_TARBALL_DIGEST: ${{ steps.approved.outputs.tarball_digest }}
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/learning-loop/package.json', 'utf8')).version")
+          [ "$APPROVED_TAG" = "v$VERSION" ] || { echo "approved tag does not name v$VERSION"; exit 1; }
+          mkdir -p "$CANDIDATE_DIR"
+          pnpm -C packages/learning-loop pack --pack-destination "$CANDIDATE_DIR"
+          TARBALL="$CANDIDATE_DIR/cormidia-learning-loop-$VERSION.tgz"
+          [ -f "$TARBALL" ] || { echo "expected tarball was not created"; exit 1; }
+          TARBALL_DIGEST=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+          echo "tarball sha256: $TARBALL_DIGEST"
+          echo "### Sealed npm candidate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact: learning-loop-candidate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- File: cormidia-learning-loop-$VERSION.tgz" >> "$GITHUB_STEP_SUMMARY"
+          echo "- sha256: $TARBALL_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          [ "$TARBALL_DIGEST" = "$APPROVED_TARBALL_DIGEST" ] || { echo "tarball digest mismatch"; exit 1; }
+          [ -z "$(git status --porcelain --untracked-files=all)" ] || { echo "source tree is dirty after packing"; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.node == 24
+        with:
+          name: learning-loop-candidate
+          path: ${{ runner.temp }}/candidate/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APPROVED_COMMIT: ${{ inputs.commit }}
+      APPROVED_TAG: ${{ inputs.tag }}
+      APPROVED_TARBALL_DIGEST: ${{ inputs.tarball_digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - name: Re-verify approved commit
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$APPROVED_COMMIT" ]
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Pin trusted-publishing npm CLI
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.19.0
+          [ "$(npm --version)" = "11.19.0" ]
+      - name: Export candidate path
+        run: |
+          set -euo pipefail
+          VERSION="${APPROVED_TAG#v}"
+          echo "TARBALL=$RUNNER_TEMP/candidate/cormidia-learning-loop-$VERSION.tgz" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: learning-loop-candidate
+          path: ${{ runner.temp }}/candidate
+      - name: Re-verify downloaded artifact digest
+        run: |
+          set -euo pipefail
+          [ -f "$TARBALL" ]
+          [ "$(sha256sum "$TARBALL" | cut -d' ' -f1)" = "$APPROVED_TARBALL_DIGEST" ]
+      - name: Inspect registry and plan publication
+        id: registry-plan
+        run: node scripts/release-registry.mjs plan "${APPROVED_TAG#v}" "$TARBALL"
+      - name: Publish only when the exact version is absent
+        if: steps.registry-plan.outputs.publish == 'true'
+        continue-on-error: true
+        run: npm publish "$TARBALL" --access public --ignore-scripts
+      - name: Reconcile exact registry integrity
+        if: always() && steps.registry-plan.outcome == 'success'
+        run: node scripts/release-registry.mjs verify "${APPROVED_TAG#v}" "$TARBALL"

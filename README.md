@@ -11,9 +11,11 @@ storage system.
 > authorization, deterministic publication, rollback, and outcome measurement —
 > cheaper than the shortcut.
 
-**Status: pre-alpha, unpublished, private.** This is governed adaptation
-*infrastructure*. It is **not** proven automatic self-improvement, and no claim
-here says a learned intervention has been shown to improve later agent work.
+**Status: pre-alpha and work in progress; the source repository remains
+private.** Public npm publication is approval-gated under Decision 0030. This
+is governed adaptation *infrastructure*. It is **not** proven automatic
+self-improvement, and no claim here says a learned intervention has been shown
+to improve later agent work.
 
 ## What it does
 
@@ -357,10 +359,14 @@ store by default, and nothing calls a model unless you explicitly opt in.
 
 - Node >= 22.18 (tested on 22, 24, and 26 in CI), pnpm (pinned via `packageManager`).
 - Development `exports` point at `src/*.ts`; the published shape is `dist/`
-  with declarations via `publishConfig.exports`. Consumers outside this
-  workspace take a vendored tarball from a tagged release (`pnpm pack`);
-  npm publication waits for separate human approval. See Decision 0029.
-- `pnpm install` · `pnpm check` (lint + typecheck + gates) · `pnpm test`.
+  with declarations via `publishConfig.exports`. The npm tarball also ships
+  the matching TypeScript `src/`, without tests, fixture directories, docs,
+  environment files, or source maps. See Decisions 0029 and 0030.
+- `pnpm install` · `pnpm check` (lint + typecheck + gates) · `pnpm test` ·
+  `pnpm test:package` (strict tarball consumer and contents gate).
+- Release publication is exact-tag, approval-gated OIDC through
+  `.github/workflows/release.yml`; agents never create tags, handle npm tokens,
+  or run `npm publish`.
 - All changes land through a PR and **squash-merge**; see `AGENTS.md`.
 
 ## Provenance

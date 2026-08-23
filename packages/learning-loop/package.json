@@ -1,14 +1,14 @@
 {
   "name": "@cormidia/learning-loop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Governed adaptation kernel: evidence, inert candidates, independent review, exact activation, measured outcomes",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "author": {
     "name": "Bikram Gupta",
     "url": "https://github.com/bikramgupta"
   },
-  "homepage": "https://github.com/cormidia/governed-learning-loop#readme",
+  "homepage": "https://github.com/cormidia/cormidia-web#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cormidia/governed-learning-loop.git",
@@ -23,7 +23,14 @@
     "node": ">=22.18"
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "!dist/**/*.js.map",
+    "!dist/**/*.d.ts.map",
+    "!src/**/*.test.ts"
   ],
   "exports": {
     ".": "./src/index.ts",

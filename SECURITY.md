@@ -1,8 +1,9 @@
 # Security policy
 
-`@cormidia/learning-loop` is pre-1.0 and unpublished. There are no supported
-release lines: fixes land on `main` and ship in the next tag. Decision 0029
-records the intake policy below.
+`@cormidia/learning-loop` is pre-1.0 and its first public-registry release is
+being prepared. There are no supported release lines yet: fixes land on `main`
+and ship in the next tag. Decisions 0029 and 0030 record the intake and release
+policy below.
 
 ## Reporting a vulnerability
 
@@ -13,7 +14,8 @@ records the intake policy below.
   ("Report a vulnerability" under the Security tab). It is enabled in the same
   action that makes the repository public. Do not open a public issue for an
   unfixed vulnerability.
-- No email intake is published.
+- Email [security@cormidia.dev](mailto:security@cormidia.dev). Do not include
+  credentials, tokens, production data, or raw private transcripts.
 
 Include the affected entrypoint (`.`, `/node`, `/testing`,
 `/reference-detectors`, `/workflows`), a minimal reproduction, and which
@@ -39,5 +41,7 @@ misconfigured.
 
 The root package has zero runtime dependencies and imports only `node:`
 built-ins. Development dependencies are installed with a frozen lockfile behind
-a three-day minimum release age (`pnpm-workspace.yaml`). A scheduled
-dependency audit and secret scanning are deferred to the publication issue.
+a three-day minimum release age (`pnpm-workspace.yaml`). The exact-tag release
+workflow authenticates to npm only through OIDC trusted publishing, carries no
+npm token, seals and verifies the candidate tarball digest, and refuses an
+existing version unless registry integrity matches exactly.

@@ -2,7 +2,6 @@
   "name": "@cormidia/learning-loop",
   "version": "0.1.1",
   "description": "Governed adaptation kernel: evidence, inert candidates, independent review, exact activation, measured outcomes",
-  "private": true,
   "license": "Apache-2.0",
   "author": {
     "name": "Bikram Gupta",

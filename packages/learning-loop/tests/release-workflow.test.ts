@@ -9,6 +9,10 @@ describe("release workflow publication gate", () => {
       /publish:\n\s+description: "Explicitly allow the publish job after verification"\n\s+required: true\n\s+type: boolean\n\s+default: false/u,
     );
     expect(WORKFLOW).toContain("if: inputs.publish == true");
+    expect(WORKFLOW).toMatch(
+      /tarball_digest:\n\s+description: "Lowercase sha256; leave blank for a verify-only preview"\n\s+required: false\n\s+type: string\n\s+default: ""/u,
+    );
+    expect(WORKFLOW).toContain('[ "$PUBLISH_REQUESTED" = "true" ] || [ -n "$APPROVED_TARBALL_DIGEST" ]');
   });
 
   it("admits publish intent only from the ratified maintainer", () => {
@@ -20,6 +24,12 @@ describe("release workflow publication gate", () => {
     expect(WORKFLOW).not.toMatch(/^\s+environment:/mu);
     expect(WORKFLOW.match(/id-token: write/gu)).toHaveLength(1);
     expect(WORKFLOW).toContain('npm publish "$TARBALL" --access public --ignore-scripts');
+  });
+
+  it("allows digest discovery only in verify mode and binds every supplied digest", () => {
+    expect(WORKFLOW).toContain('if [ -n "$APPROVED_TARBALL_DIGEST" ]; then');
+    expect(WORKFLOW).toContain('[ "$TARBALL_DIGEST" = "$APPROVED_TARBALL_DIGEST" ]');
+    expect(WORKFLOW).toContain("publish and digest-bound verification require exactly 64 lowercase hex characters");
   });
 
   it("verifies the tag and dispatch-time main without a post-checkout private fetch", () => {

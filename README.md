@@ -11,11 +11,11 @@ storage system.
 > authorization, deterministic publication, rollback, and outcome measurement —
 > cheaper than the shortcut.
 
-**Status: pre-alpha and work in progress; the source repository remains
-private.** Public npm publication is maintainer-gated under Decisions 0030 and
-0031. This is governed adaptation *infrastructure*. It is **not** proven
-automatic self-improvement, and no claim here says a learned intervention has
-been shown to improve later agent work.
+**Status: pre-alpha and work in progress; `@cormidia/learning-loop@0.1.1` is
+public on npm while the source repository remains private.** Publication is
+maintainer-gated under Decisions 0030 and 0031. This is governed adaptation
+*infrastructure*. It is **not** proven automatic self-improvement, and no claim
+here says a learned intervention has been shown to improve later agent work.
 
 ## What it does
 
@@ -366,8 +366,10 @@ store by default, and nothing calls a model unless you explicitly opt in.
   `pnpm test:package` (strict tarball consumer and contents gate).
 - Release publication is exact-tag, two-dispatch OIDC through
   `.github/workflows/release.yml`: verify-only is the default, and an explicit
-  maintainer-only publish dispatch repeats all gates. Agents never create tags,
-  handle npm tokens, dispatch publication, or run `npm publish`.
+  maintainer-only publish dispatch repeats all gates. The verify-only run may
+  omit `tarball_digest` to print and seal the canonical GitHub/Linux digest;
+  the publish run must supply it. Agents never create tags, handle npm tokens,
+  dispatch publication, or run `npm publish`.
 - All changes land through a PR and **squash-merge**; see `AGENTS.md`.
 
 ## Provenance

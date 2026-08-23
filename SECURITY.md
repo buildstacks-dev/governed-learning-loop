@@ -1,9 +1,8 @@
 # Security policy
 
-`@cormidia/learning-loop` is pre-1.0 and its first public-registry release is
-being prepared. There are no supported release lines yet: fixes land on `main`
-and ship in the next tag. Decisions 0029 and 0030 record the intake and release
-policy below.
+`@cormidia/learning-loop` is published and pre-1.0. There is no long-term
+supported release line yet: fixes land on `main` and ship in the next tag.
+Decisions 0029, 0030, and 0031 record the intake and release policy below.
 
 ## Reporting a vulnerability
 

@@ -394,9 +394,10 @@ between code and contract, open an issue — never silently drift either one.
   `"private": true`; only the separately approved publication PR may remove
   that one field. Humans alone create tags, configure npm, and perform the
   one-time bootstrap publish. Every later publish uses the Decision 0031
-  two-dispatch OIDC workflow with no npm token: `publish=false` verifies and
-  seals only; a second explicit maintainer-only `publish=true` dispatch repeats
-  every gate before OIDC publication.
+  two-dispatch OIDC workflow with no npm token: `publish=false` verifies, seals,
+  and discovers the canonical Linux digest without OIDC; a second explicit
+  maintainer-only `publish=true` dispatch requires that digest and repeats every
+  gate before OIDC publication.
 
 ## Non-negotiable kernel invariants
 

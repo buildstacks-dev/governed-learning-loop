@@ -21,4 +21,12 @@ describe("release workflow publication gate", () => {
     expect(WORKFLOW.match(/id-token: write/gu)).toHaveLength(1);
     expect(WORKFLOW).toContain('npm publish "$TARBALL" --access public --ignore-scripts');
   });
+
+  it("verifies the tag and dispatch-time main without a post-checkout private fetch", () => {
+    const tagCheckoutRef = ["ref: $", "{{ steps.approved.outputs.tag }}"].join("");
+    expect(WORKFLOW).toContain(tagCheckoutRef);
+    expect(WORKFLOW).toContain('[ "$WORKFLOW_REF" = "refs/heads/main" ]');
+    expect(WORKFLOW).toContain('git merge-base --is-ancestor "$APPROVED_COMMIT" "$WORKFLOW_SHA"');
+    expect(WORKFLOW).not.toContain("git fetch");
+  });
 });

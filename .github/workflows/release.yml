@@ -60,20 +60,21 @@ jobs:
           echo "tarball_digest=$APPROVED_TARBALL_DIGEST" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.approved.outputs.commit }}
+          ref: ${{ steps.approved.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify immutable source and existing tag
         env:
           APPROVED_COMMIT: ${{ steps.approved.outputs.commit }}
           APPROVED_TAG: ${{ steps.approved.outputs.tag }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [ "$(git rev-parse HEAD)" = "$APPROVED_COMMIT" ] || { echo "checkout did not resolve to approved commit"; exit 1; }
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$APPROVED_COMMIT" refs/remotes/origin/main || { echo "approved commit is not on main"; exit 1; }
-          git fetch --force origin "refs/tags/$APPROVED_TAG:refs/tags/$APPROVED_TAG"
+          [ "$WORKFLOW_REF" = "refs/heads/main" ] || { echo "release workflow must be dispatched from main"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$APPROVED_COMMIT" ] || { echo "approved tag does not resolve to approved commit"; exit 1; }
           [ "$(git rev-parse "$APPROVED_TAG^{commit}")" = "$APPROVED_COMMIT" ] || { echo "tag does not point to approved commit"; exit 1; }
+          git merge-base --is-ancestor "$APPROVED_COMMIT" "$WORKFLOW_SHA" || { echo "approved commit is not on dispatch-time main"; exit 1; }
           [ -z "$(git status --porcelain --untracked-files=all)" ] || { echo "source checkout is dirty"; exit 1; }
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -135,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ inputs.tag }}
           persist-credentials: false
       - name: Re-verify approved commit
         run: |

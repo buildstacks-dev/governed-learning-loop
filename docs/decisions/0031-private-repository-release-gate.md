@@ -47,6 +47,13 @@ only then dispatches the same exact commit, tag, and digest with
 artifact interactively between those dispatches; the second dispatch must
 observe matching registry integrity and no-op.
 
+The first live verify-only dispatch exposed one private-repository checkout
+defect: checkout correctly removed its credential, but a later `git fetch`
+therefore could not authenticate. The corrected workflow checks out the exact
+tag with full history, verifies that it resolves to the approved commit, and
+proves that commit is an ancestor of the dispatch-time `main` SHA supplied by
+GitHub. It performs no post-checkout fetch and still persists no credential.
+
 All other Decision 0030 R4 controls remain mandatory:
 
 - the exact commit must be on `main`;
